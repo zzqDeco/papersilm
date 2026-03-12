@@ -25,4 +25,3 @@ type StreamEvent struct {
 	Payload   interface{}     `json:"payload,omitempty"`
 	CreatedAt time.Time       `json:"created_at"`
 }
-

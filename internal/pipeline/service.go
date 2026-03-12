@@ -8,7 +8,6 @@ import (
 	"regexp"
 	"sort"
 	"strings"
-	"time"
 
 	"papersilm/internal/config"
 	"papersilm/pkg/protocol"
@@ -108,58 +107,8 @@ func canonicalArxivPDF(in string) (string, error) {
 	return "", fmt.Errorf("not an arxiv source: %s", in)
 }
 
-func (s *Service) BuildPlan(task string, refs []protocol.PaperRef) protocol.PlanResult {
-	toolPlan := []string{"attach_sources", "inspect_sources"}
-	willCompare := len(refs) > 1
-	if willCompare {
-		toolPlan = append(toolPlan, "distill_paper (for each source)", "compare_papers")
-	} else {
-		toolPlan = append(toolPlan, "distill_paper")
-	}
-	risks := make([]string, 0, len(refs)+2)
-	for _, ref := range refs {
-		if !ref.Inspection.ExtractableText && ref.Inspection.FailureReason != "" {
-			risks = append(risks, fmt.Sprintf("%s: %s", ref.PaperID, ref.Inspection.FailureReason))
-		}
-		if ref.Inspection.PageCount > 50 {
-			risks = append(risks, fmt.Sprintf("%s: long paper (%d pages)", ref.PaperID, ref.Inspection.PageCount))
-		}
-	}
-	if len(risks) == 0 {
-		risks = append(risks, "no major inspection risks detected")
-	}
-	return protocol.PlanResult{
-		Goal:               strings.TrimSpace(task),
-		SourceSummary:      refs,
-		ExtractionStrategy: []string{"inspect page-by-page pdf content", "suppress background/related-work heavy chunks", "produce per-paper digest first", "aggregate comparison from structured digests only"},
-		ExpectedSections:   expectedSections(willCompare),
-		Risks:              risks,
-		ToolPlan:           toolPlan,
-		WillCompare:        willCompare,
-		ApprovalRequired:   true,
-		CreatedAt:          time.Now().UTC(),
-	}
-}
-
-func expectedSections(willCompare bool) []string {
-	sections := []string{
-		"一句话总结",
-		"这篇论文做了什么",
-		"方法核心",
-		"实验怎么做",
-		"关键结果与数字",
-		"作者结论",
-		"局限与注意点",
-	}
-	if willCompare {
-		return append([]string{"任务目标", "论文列表", "逐篇一句话总结", "方法对比", "实验设置对比", "关键结果与数字对比", "结论与适用场景", "局限与不确定点"}, sections...)
-	}
-	return sections
-}
-
 func sortDigests(digests []protocol.PaperDigest) {
 	sort.Slice(digests, func(i, j int) bool {
 		return digests[i].PaperID < digests[j].PaperID
 	})
 }
-

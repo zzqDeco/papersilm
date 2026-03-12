@@ -76,4 +76,5 @@ The CLI is intentionally built on a headless core. Future GUI integration should
 ## Notes
 
 - V1 accepts local PDFs and arXiv `abs` / `pdf` URLs.
-- Provider-backed LLM execution is scaffolded; the current default execution path is heuristic and does not require API keys.
+- Planning and execution now run through a real Eino ADK `planner -> executor -> replanner` stack with checkpoint/resume.
+- If no provider model or API key is configured, `papersilm` falls back to a local deterministic tool-calling model so `plan / confirm / approve / run` still work end-to-end.

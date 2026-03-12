@@ -128,9 +128,8 @@ func buildRuntime(ctx context.Context, outputFormat string) (config.Config, *sto
 	out := NewOutputWriter(os.Stdout, protocol.OutputFormat(outputFormat))
 	p := pipeline.New(cfg)
 	registry := tools.New(p)
-	ag := agent.New(registry)
+	ag := agent.New(registry, cfg)
 	svc := core.New(store, ag, out)
 	_ = ctx
 	return cfg, store, svc, out, nil
 }
-

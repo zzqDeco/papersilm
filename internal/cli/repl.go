@@ -86,13 +86,19 @@ func handleSlash(ctx context.Context, svc *core.Service, store *storage.Store, s
 			return fmt.Errorf("usage: /lang <zh|en|both>")
 		}
 		session.Meta.Language = fields[1]
-		return store.SaveMeta(session.Meta)
+		if err := store.SaveMeta(session.Meta); err != nil {
+			return err
+		}
+		return store.InvalidatePlanState(session.Meta.SessionID)
 	case "/style":
 		if len(fields) < 2 {
 			return fmt.Errorf("usage: /style <distill|ultra|reviewer>")
 		}
 		session.Meta.Style = fields[1]
-		return store.SaveMeta(session.Meta)
+		if err := store.SaveMeta(session.Meta); err != nil {
+			return err
+		}
+		return store.InvalidatePlanState(session.Meta.SessionID)
 	case "/session":
 		if len(fields) < 3 || fields[1] != "name" {
 			return fmt.Errorf("usage: /session name <name>")
@@ -119,33 +125,14 @@ func handleSlash(ctx context.Context, svc *core.Service, store *storage.Store, s
 		*session = result.Session
 		return out.PrintResult(result)
 	case "/run":
-		task := session.Meta.LastTask
-		if len(fields) > 1 {
-			task = strings.Join(fields[1:], " ")
-		}
-		if strings.TrimSpace(task) == "" {
-			task = "distill current papers"
-		}
-		result, err := svc.Execute(ctx, protocol.ClientRequest{
-			Task:           task,
-			PermissionMode: protocol.PermissionModeAuto,
-			Language:       session.Meta.Language,
-			Style:          session.Meta.Style,
-			SessionID:      session.Meta.SessionID,
-		})
+		result, err := svc.RunPlanned(ctx, session.Meta.SessionID, session.Meta.Language, session.Meta.Style)
 		if err != nil {
 			return err
 		}
 		*session = result.Session
 		return out.PrintResult(result)
 	case "/approve":
-		result, err := svc.Execute(ctx, protocol.ClientRequest{
-			Task:           "/approve",
-			PermissionMode: protocol.PermissionModeAuto,
-			Language:       session.Meta.Language,
-			Style:          session.Meta.Style,
-			SessionID:      session.Meta.SessionID,
-		})
+		result, err := svc.Approve(ctx, session.Meta.SessionID, true, "")
 		if err != nil {
 			return err
 		}
@@ -175,39 +162,22 @@ func handleSourceCommand(ctx context.Context, svc *core.Service, store *storage.
 		if len(fields) < 3 {
 			return fmt.Errorf("usage: /source add <uri>")
 		}
-		result, err := svc.Execute(ctx, protocol.ClientRequest{
-			Task:           "attach source",
-			Sources:        []string{strings.Join(fields[2:], " ")},
-			PermissionMode: protocol.PermissionModePlan,
-			Language:       session.Meta.Language,
-			Style:          session.Meta.Style,
-			SessionID:      session.Meta.SessionID,
-		})
+		snapshot, err := svc.AttachSources(ctx, session.Meta.SessionID, []string{strings.Join(fields[2:], " ")}, false)
 		if err != nil {
 			return err
 		}
-		*session = result.Session
-		return out.PrintResult(result)
+		*session = snapshot
+		return out.PrintResult(protocol.RunResult{Session: snapshot})
 	case "replace":
 		if len(fields) < 3 {
 			return fmt.Errorf("usage: /source replace <uri>")
 		}
-		if err := store.SaveSources(session.Meta.SessionID, nil); err != nil {
-			return err
-		}
-		result, err := svc.Execute(ctx, protocol.ClientRequest{
-			Task:           "attach source",
-			Sources:        []string{strings.Join(fields[2:], " ")},
-			PermissionMode: protocol.PermissionModePlan,
-			Language:       session.Meta.Language,
-			Style:          session.Meta.Style,
-			SessionID:      session.Meta.SessionID,
-		})
+		snapshot, err := svc.AttachSources(ctx, session.Meta.SessionID, []string{strings.Join(fields[2:], " ")}, true)
 		if err != nil {
 			return err
 		}
-		*session = result.Session
-		return out.PrintResult(result)
+		*session = snapshot
+		return out.PrintResult(protocol.RunResult{Session: snapshot})
 	case "remove":
 		if len(fields) < 3 {
 			return fmt.Errorf("usage: /source remove <paper_id>")
@@ -222,6 +192,9 @@ func handleSourceCommand(ctx context.Context, svc *core.Service, store *storage.
 		if err := store.SaveSources(session.Meta.SessionID, filtered); err != nil {
 			return err
 		}
+		if err := store.InvalidatePlanState(session.Meta.SessionID); err != nil {
+			return err
+		}
 		snapshot, err := store.Snapshot(session.Meta.SessionID)
 		if err != nil {
 			return err
@@ -232,4 +205,3 @@ func handleSourceCommand(ctx context.Context, svc *core.Service, store *storage.
 		return fmt.Errorf("unknown /source action: %s", fields[1])
 	}
 }
-

@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -8,6 +9,8 @@ import (
 	"path/filepath"
 	"sort"
 	"time"
+
+	"github.com/cloudwego/eino/adk"
 
 	"papersilm/pkg/protocol"
 )
@@ -65,13 +68,23 @@ func (s *Store) artifactsDir(sessionID string) string {
 	return filepath.Join(s.SessionDir(sessionID), "artifacts")
 }
 
+func (s *Store) checkpointsDir(sessionID string) string {
+	return filepath.Join(s.SessionDir(sessionID), "checkpoints")
+}
+
 func (s *Store) eventsPath(sessionID string) string {
 	return filepath.Join(s.SessionDir(sessionID), "events.jsonl")
 }
 
 func (s *Store) CreateSession(meta protocol.SessionMeta) error {
 	sessionDir := s.SessionDir(meta.SessionID)
-	for _, dir := range []string{sessionDir, s.digestsDir(meta.SessionID), s.artifactsDir(meta.SessionID), filepath.Join(sessionDir, "cache")} {
+	for _, dir := range []string{
+		sessionDir,
+		s.digestsDir(meta.SessionID),
+		s.artifactsDir(meta.SessionID),
+		s.checkpointsDir(meta.SessionID),
+		filepath.Join(sessionDir, "cache"),
+	} {
 		if err := os.MkdirAll(dir, 0o755); err != nil {
 			return err
 		}
@@ -106,6 +119,14 @@ func (s *Store) LoadSources(sessionID string) ([]protocol.PaperRef, error) {
 
 func (s *Store) SavePlan(sessionID string, plan protocol.PlanResult) error {
 	return s.saveJSON(s.planPath(sessionID), plan)
+}
+
+func (s *Store) DeletePlan(sessionID string) error {
+	err := os.Remove(s.planPath(sessionID))
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	return err
 }
 
 func (s *Store) LoadPlan(sessionID string) (*protocol.PlanResult, error) {
@@ -250,6 +271,53 @@ func (s *Store) Snapshot(sessionID string) (protocol.SessionSnapshot, error) {
 	}, nil
 }
 
+func (s *Store) InvalidatePlanState(sessionID string) error {
+	meta, err := s.LoadMeta(sessionID)
+	if err != nil {
+		return err
+	}
+	if err := s.DeletePlan(sessionID); err != nil {
+		return err
+	}
+	if err := os.RemoveAll(s.digestsDir(sessionID)); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	if err := os.RemoveAll(s.artifactsDir(sessionID)); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	if err := os.RemoveAll(s.checkpointsDir(sessionID)); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	if err := os.MkdirAll(s.digestsDir(sessionID), 0o755); err != nil {
+		return err
+	}
+	if err := os.MkdirAll(s.artifactsDir(sessionID), 0o755); err != nil {
+		return err
+	}
+	if err := os.MkdirAll(s.checkpointsDir(sessionID), 0o755); err != nil {
+		return err
+	}
+	meta.ActivePlanID = ""
+	meta.ActiveCheckpointID = ""
+	meta.PendingInterruptID = ""
+	meta.ApprovalPending = false
+	sources, loadErr := s.LoadSources(sessionID)
+	if loadErr != nil {
+		return loadErr
+	}
+	if len(sources) == 0 {
+		meta.State = protocol.SessionStateIdle
+	} else {
+		meta.State = protocol.SessionStateSourceAttached
+	}
+	meta.UpdatedAt = time.Now().UTC()
+	return s.SaveMeta(meta)
+}
+
+func (s *Store) CheckPointStore(sessionID string) adk.CheckPointStore {
+	return &fileCheckpointStore{dir: s.checkpointsDir(sessionID)}
+}
+
 func (s *Store) LatestSessionID() (string, error) {
 	entries, err := os.ReadDir(s.SessionsDir())
 	if err != nil {
@@ -295,4 +363,30 @@ func (s *Store) loadJSON(path string, v interface{}) error {
 		return err
 	}
 	return json.Unmarshal(raw, v)
+}
+
+type fileCheckpointStore struct {
+	dir string
+}
+
+func (s *fileCheckpointStore) checkpointPath(checkPointID string) string {
+	return filepath.Join(s.dir, checkPointID+".bin")
+}
+
+func (s *fileCheckpointStore) Get(_ context.Context, checkPointID string) ([]byte, bool, error) {
+	raw, err := os.ReadFile(s.checkpointPath(checkPointID))
+	if errors.Is(err, os.ErrNotExist) {
+		return nil, false, nil
+	}
+	if err != nil {
+		return nil, false, err
+	}
+	return raw, true, nil
+}
+
+func (s *fileCheckpointStore) Set(_ context.Context, checkPointID string, checkPoint []byte) error {
+	if err := os.MkdirAll(s.dir, 0o755); err != nil {
+		return err
+	}
+	return os.WriteFile(s.checkpointPath(checkPointID), checkPoint, 0o644)
 }

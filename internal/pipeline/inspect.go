@@ -11,10 +11,10 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/cloudwego/eino/components/document"
-	einoschema "github.com/cloudwego/eino/schema"
 	fileloader "github.com/cloudwego/eino-ext/components/document/loader/file"
 	pdfparser "github.com/cloudwego/eino-ext/components/document/parser/pdf"
+	"github.com/cloudwego/eino/components/document"
+	einoschema "github.com/cloudwego/eino/schema"
 
 	"papersilm/pkg/protocol"
 )
@@ -257,4 +257,3 @@ func (s *Service) readPagesCache(sessionID, paperID string) ([]Page, error) {
 	}
 	return pages, nil
 }
-

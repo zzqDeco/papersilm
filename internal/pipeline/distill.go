@@ -9,8 +9,8 @@ import (
 	"time"
 	"unicode"
 
-	"github.com/cloudwego/eino/schema"
 	recursive "github.com/cloudwego/eino-ext/components/document/transformer/splitter/recursive"
+	"github.com/cloudwego/eino/schema"
 
 	"papersilm/pkg/protocol"
 )
@@ -42,19 +42,19 @@ func (s *Service) Distill(ctx context.Context, sessionID string, ref protocol.Pa
 	}
 	oneLine := buildOneLine(title, problem, method, results)
 	digest := protocol.PaperDigest{
-		PaperID:             ref.PaperID,
-		Title:               title,
-		Problem:             fallback(problem, "该论文的核心问题需要从原文进一步确认。"),
-		OneLineSummary:      oneLine,
-		MethodSummary:       fallbackSlice(method, "方法细节未在可提取文本中清晰呈现。"),
-		ExperimentSummary:   fallbackSlice(experiments, "实验设计细节未在可提取文本中清晰呈现。"),
-		KeyResults:          fallbackResults(results),
-		Conclusions:         fallbackSlice(conclusions, "作者结论未在可提取文本中清晰呈现。"),
-		Limitations:         limitations,
-		Citations:           collectDigestCitations(results),
-		Language:            lang,
-		Style:               style,
-		GeneratedAt:         time.Now().UTC(),
+		PaperID:              ref.PaperID,
+		Title:                title,
+		Problem:              fallback(problem, "该论文的核心问题需要从原文进一步确认。"),
+		OneLineSummary:       oneLine,
+		MethodSummary:        fallbackSlice(method, "方法细节未在可提取文本中清晰呈现。"),
+		ExperimentSummary:    fallbackSlice(experiments, "实验设计细节未在可提取文本中清晰呈现。"),
+		KeyResults:           fallbackResults(results),
+		Conclusions:          fallbackSlice(conclusions, "作者结论未在可提取文本中清晰呈现。"),
+		Limitations:          limitations,
+		Citations:            collectDigestCitations(results),
+		Language:             lang,
+		Style:                style,
+		GeneratedAt:          time.Now().UTC(),
 		HasBackgroundOmitted: true,
 	}
 	digest.Markdown = renderPaperDigest(digest)

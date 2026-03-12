@@ -77,21 +77,22 @@ type KeyResult struct {
 }
 
 type PaperDigest struct {
-	PaperID             string      `json:"paper_id"`
-	Title               string      `json:"title"`
-	Problem             string      `json:"problem"`
-	OneLineSummary      string      `json:"one_line_summary"`
-	MethodSummary       []string    `json:"method_summary"`
-	ExperimentSummary   []string    `json:"experiment_summary"`
-	KeyResults          []KeyResult `json:"key_results"`
-	Conclusions         []string    `json:"conclusions"`
-	Limitations         []string    `json:"limitations"`
-	Citations           []Citation  `json:"citations"`
-	Markdown            string      `json:"markdown,omitempty"`
-	Language            string      `json:"language"`
-	Style               string      `json:"style"`
-	GeneratedAt         time.Time   `json:"generated_at"`
-	HasBackgroundOmitted bool       `json:"has_background_omitted"`
+	PaperID              string      `json:"paper_id"`
+	Title                string      `json:"title"`
+	Problem              string      `json:"problem"`
+	OneLineSummary       string      `json:"one_line_summary"`
+	MethodSummary        []string    `json:"method_summary"`
+	ExperimentSummary    []string    `json:"experiment_summary"`
+	KeyResults           []KeyResult `json:"key_results"`
+	Conclusions          []string    `json:"conclusions"`
+	Limitations          []string    `json:"limitations"`
+	Citations            []Citation  `json:"citations"`
+	Markdown             string      `json:"markdown,omitempty"`
+	ArtifactID           string      `json:"artifact_id,omitempty"`
+	Language             string      `json:"language"`
+	Style                string      `json:"style"`
+	GeneratedAt          time.Time   `json:"generated_at"`
+	HasBackgroundOmitted bool        `json:"has_background_omitted"`
 }
 
 type ComparisonMatrixRow struct {
@@ -110,21 +111,57 @@ type ComparisonDigest struct {
 	Synthesis        []string              `json:"synthesis"`
 	Limitations      []string              `json:"limitations"`
 	Markdown         string                `json:"markdown,omitempty"`
+	ArtifactID       string                `json:"artifact_id,omitempty"`
 	Language         string                `json:"language"`
 	Style            string                `json:"style"`
 	GeneratedAt      time.Time             `json:"generated_at"`
 }
 
+type PlanStep struct {
+	ID               string   `json:"id"`
+	Tool             string   `json:"tool"`
+	PaperIDs         []string `json:"paper_ids,omitempty"`
+	Goal             string   `json:"goal"`
+	ExpectedArtifact string   `json:"expected_artifact"`
+}
+
 type PlanResult struct {
-	Goal              string     `json:"goal"`
-	SourceSummary     []PaperRef `json:"source_summary"`
-	ExtractionStrategy []string  `json:"extraction_strategy"`
-	ExpectedSections  []string   `json:"expected_sections"`
-	Risks             []string   `json:"risks"`
-	ToolPlan          []string   `json:"tool_plan"`
-	WillCompare       bool       `json:"will_compare"`
-	ApprovalRequired  bool       `json:"approval_required"`
-	CreatedAt         time.Time  `json:"created_at"`
+	PlanID           string     `json:"plan_id"`
+	Goal             string     `json:"goal"`
+	SourceSummary    []PaperRef `json:"source_summary"`
+	Steps            []PlanStep `json:"steps"`
+	WillCompare      bool       `json:"will_compare"`
+	Risks            []string   `json:"risks"`
+	ApprovalRequired bool       `json:"approval_required"`
+	CreatedAt        time.Time  `json:"created_at"`
+}
+
+type ApprovalRequest struct {
+	PlanID        string    `json:"plan_id"`
+	CheckpointID  string    `json:"checkpoint_id"`
+	InterruptID   string    `json:"interrupt_id"`
+	Summary       string    `json:"summary"`
+	RequiresInput bool      `json:"requires_input"`
+	CreatedAt     time.Time `json:"created_at"`
+}
+
+type PlanProgressStatus string
+
+const (
+	PlanProgressStarted   PlanProgressStatus = "started"
+	PlanProgressCompleted PlanProgressStatus = "completed"
+	PlanProgressFailed    PlanProgressStatus = "failed"
+	PlanProgressReplanned PlanProgressStatus = "replanned"
+)
+
+type PlanProgress struct {
+	PlanID    string             `json:"plan_id"`
+	StepID    string             `json:"step_id,omitempty"`
+	Tool      string             `json:"tool,omitempty"`
+	Status    PlanProgressStatus `json:"status"`
+	Message   string             `json:"message,omitempty"`
+	Error     string             `json:"error,omitempty"`
+	CreatedAt time.Time          `json:"created_at"`
 }
 
 type ArtifactManifest struct {
@@ -152,25 +189,28 @@ const (
 )
 
 type SessionMeta struct {
-	SessionID       string         `json:"session_id"`
-	Name            string         `json:"name,omitempty"`
-	State           SessionState   `json:"state"`
-	PermissionMode  PermissionMode `json:"permission_mode"`
-	Language        string         `json:"language"`
-	Style           string         `json:"style"`
-	LastTask        string         `json:"last_task,omitempty"`
-	ApprovalPending bool           `json:"approval_pending"`
-	CreatedAt       time.Time      `json:"created_at"`
-	UpdatedAt       time.Time      `json:"updated_at"`
+	SessionID          string         `json:"session_id"`
+	Name               string         `json:"name,omitempty"`
+	State              SessionState   `json:"state"`
+	PermissionMode     PermissionMode `json:"permission_mode"`
+	Language           string         `json:"language"`
+	Style              string         `json:"style"`
+	LastTask           string         `json:"last_task,omitempty"`
+	ApprovalPending    bool           `json:"approval_pending"`
+	ActivePlanID       string         `json:"active_plan_id,omitempty"`
+	ActiveCheckpointID string         `json:"active_checkpoint_id,omitempty"`
+	PendingInterruptID string         `json:"pending_interrupt_id,omitempty"`
+	CreatedAt          time.Time      `json:"created_at"`
+	UpdatedAt          time.Time      `json:"updated_at"`
 }
 
 type SessionSnapshot struct {
-	Meta      SessionMeta         `json:"meta"`
-	Sources   []PaperRef          `json:"sources"`
-	Plan      *PlanResult         `json:"plan,omitempty"`
-	Digests   []PaperDigest       `json:"digests,omitempty"`
-	Compare   *ComparisonDigest   `json:"comparison,omitempty"`
-	Artifacts []ArtifactManifest  `json:"artifacts,omitempty"`
+	Meta      SessionMeta        `json:"meta"`
+	Sources   []PaperRef         `json:"sources"`
+	Plan      *PlanResult        `json:"plan,omitempty"`
+	Digests   []PaperDigest      `json:"digests,omitempty"`
+	Compare   *ComparisonDigest  `json:"comparison,omitempty"`
+	Artifacts []ArtifactManifest `json:"artifacts,omitempty"`
 }
 
 type ClientRequest struct {
@@ -183,10 +223,10 @@ type ClientRequest struct {
 }
 
 type RunResult struct {
-	Session    SessionSnapshot     `json:"session"`
-	Plan       *PlanResult         `json:"plan,omitempty"`
-	Digests    []PaperDigest       `json:"digests,omitempty"`
-	Comparison *ComparisonDigest   `json:"comparison,omitempty"`
-	Artifacts  []ArtifactManifest  `json:"artifacts,omitempty"`
+	Session    SessionSnapshot    `json:"session"`
+	Plan       *PlanResult        `json:"plan,omitempty"`
+	Approval   *ApprovalRequest   `json:"approval,omitempty"`
+	Digests    []PaperDigest      `json:"digests,omitempty"`
+	Comparison *ComparisonDigest  `json:"comparison,omitempty"`
+	Artifacts  []ArtifactManifest `json:"artifacts,omitempty"`
 }
-

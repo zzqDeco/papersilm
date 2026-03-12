@@ -76,6 +76,18 @@ func (s *Service) Execute(ctx context.Context, req protocol.ClientRequest) (prot
 	return s.agent.Execute(ctx, s.store, s.sink, req)
 }
 
+func (s *Service) RunPlanned(ctx context.Context, sessionID, lang, style string) (protocol.RunResult, error) {
+	return s.agent.RunPlanned(ctx, s.store, s.sink, sessionID, lang, style)
+}
+
+func (s *Service) Approve(ctx context.Context, sessionID string, approved bool, comment string) (protocol.RunResult, error) {
+	return s.agent.Approve(ctx, s.store, s.sink, sessionID, approved, comment)
+}
+
+func (s *Service) AttachSources(ctx context.Context, sessionID string, sources []string, replace bool) (protocol.SessionSnapshot, error) {
+	return s.agent.AttachSources(ctx, s.store, s.sink, sessionID, sources, replace)
+}
+
 func (s *Service) emit(sessionID string, eventType protocol.StreamEventType, message string, payload interface{}) error {
 	event := protocol.StreamEvent{
 		Type:      eventType,
@@ -100,4 +112,3 @@ func newSessionID() string {
 	}
 	return "sess_" + base32.StdEncoding.WithPadding(base32.NoPadding).EncodeToString(b[:])
 }
-

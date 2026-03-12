@@ -3,19 +3,23 @@ package providers
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
-	"github.com/cloudwego/eino/components/model"
 	arkmodel "github.com/cloudwego/eino-ext/components/model/ark"
 	deepseekmodel "github.com/cloudwego/eino-ext/components/model/deepseek"
 	ollamamodel "github.com/cloudwego/eino-ext/components/model/ollama"
 	openaimodel "github.com/cloudwego/eino-ext/components/model/openai"
 	qwenmodel "github.com/cloudwego/eino-ext/components/model/qwen"
+	"github.com/cloudwego/eino/components/model"
 
 	"papersilm/internal/config"
 )
 
 func BuildChatModel(ctx context.Context, cfg config.ProviderConfig, timeout time.Duration) (model.ToolCallingChatModel, error) {
+	if useLocalAgentModel(cfg) {
+		return NewLocalToolCallingChatModel(), nil
+	}
 	switch cfg.Provider {
 	case config.ProviderOpenAI:
 		return openaimodel.NewChatModel(ctx, &openaimodel.ChatModelConfig{
@@ -56,3 +60,14 @@ func BuildChatModel(ctx context.Context, cfg config.ProviderConfig, timeout time
 	}
 }
 
+func useLocalAgentModel(cfg config.ProviderConfig) bool {
+	if cfg.Model == "" {
+		return true
+	}
+	switch cfg.Provider {
+	case config.ProviderOllama:
+		return strings.TrimSpace(cfg.BaseURL) == ""
+	default:
+		return strings.TrimSpace(cfg.APIKey) == ""
+	}
+}
