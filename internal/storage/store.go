@@ -12,7 +12,7 @@ import (
 
 	"github.com/cloudwego/eino/adk"
 
-	"papersilm/pkg/protocol"
+	"github.com/zzqDeco/papersilm/pkg/protocol"
 )
 
 type Store struct {

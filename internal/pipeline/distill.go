@@ -12,7 +12,7 @@ import (
 	recursive "github.com/cloudwego/eino-ext/components/document/transformer/splitter/recursive"
 	"github.com/cloudwego/eino/schema"
 
-	"papersilm/pkg/protocol"
+	"github.com/zzqDeco/papersilm/pkg/protocol"
 )
 
 type chunk struct {

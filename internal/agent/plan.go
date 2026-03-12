@@ -12,7 +12,7 @@ import (
 	"github.com/cloudwego/eino/adk/prebuilt/planexecute"
 	"github.com/cloudwego/eino/schema"
 
-	"papersilm/pkg/protocol"
+	"github.com/zzqDeco/papersilm/pkg/protocol"
 )
 
 func init() {

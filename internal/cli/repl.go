@@ -8,9 +8,9 @@ import (
 	"os"
 	"strings"
 
-	"papersilm/internal/storage"
-	"papersilm/pkg/core"
-	"papersilm/pkg/protocol"
+	"github.com/zzqDeco/papersilm/internal/storage"
+	"github.com/zzqDeco/papersilm/pkg/core"
+	"github.com/zzqDeco/papersilm/pkg/protocol"
 )
 
 func RunREPL(ctx context.Context, svc *core.Service, store *storage.Store, current protocol.SessionSnapshot, out *OutputWriter) error {

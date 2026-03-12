@@ -4,7 +4,7 @@ import (
 	"testing"
 	"time"
 
-	"papersilm/pkg/protocol"
+	"github.com/zzqDeco/papersilm/pkg/protocol"
 )
 
 func TestStoreSnapshotRoundTrip(t *testing.T) {
@@ -47,4 +47,3 @@ func TestStoreSnapshotRoundTrip(t *testing.T) {
 		t.Fatalf("unexpected snapshot: %+v", snapshot)
 	}
 }
-

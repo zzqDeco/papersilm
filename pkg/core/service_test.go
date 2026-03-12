@@ -9,12 +9,12 @@ import (
 	"strings"
 	"testing"
 
-	"papersilm/internal/agent"
-	"papersilm/internal/config"
-	"papersilm/internal/pipeline"
-	"papersilm/internal/storage"
-	"papersilm/internal/tools"
-	"papersilm/pkg/protocol"
+	"github.com/zzqDeco/papersilm/internal/agent"
+	"github.com/zzqDeco/papersilm/internal/config"
+	"github.com/zzqDeco/papersilm/internal/pipeline"
+	"github.com/zzqDeco/papersilm/internal/storage"
+	"github.com/zzqDeco/papersilm/internal/tools"
+	"github.com/zzqDeco/papersilm/pkg/protocol"
 )
 
 type testSink struct {

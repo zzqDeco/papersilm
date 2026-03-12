@@ -10,7 +10,7 @@ import (
 	"github.com/cloudwego/eino/components/model"
 	"github.com/cloudwego/eino/schema"
 
-	"papersilm/pkg/protocol"
+	"github.com/zzqDeco/papersilm/pkg/protocol"
 )
 
 type LocalToolCallingChatModel struct {

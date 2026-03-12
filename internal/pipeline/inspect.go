@@ -16,7 +16,7 @@ import (
 	"github.com/cloudwego/eino/components/document"
 	einoschema "github.com/cloudwego/eino/schema"
 
-	"papersilm/pkg/protocol"
+	"github.com/zzqDeco/papersilm/pkg/protocol"
 )
 
 type Page struct {

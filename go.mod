@@ -1,4 +1,4 @@
-module papersilm
+module github.com/zzqDeco/papersilm
 
 go 1.24.4
 

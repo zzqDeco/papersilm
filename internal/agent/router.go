@@ -12,11 +12,11 @@ import (
 	"github.com/cloudwego/eino/compose"
 	"github.com/cloudwego/eino/schema"
 
-	"papersilm/internal/config"
-	"papersilm/internal/providers"
-	"papersilm/internal/storage"
-	"papersilm/internal/tools"
-	"papersilm/pkg/protocol"
+	"github.com/zzqDeco/papersilm/internal/config"
+	"github.com/zzqDeco/papersilm/internal/providers"
+	"github.com/zzqDeco/papersilm/internal/storage"
+	"github.com/zzqDeco/papersilm/internal/tools"
+	"github.com/zzqDeco/papersilm/pkg/protocol"
 )
 
 type EventSink interface {

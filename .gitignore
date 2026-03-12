@@ -2,7 +2,7 @@
 .papersilm/
 /dist/
 /bin/
+/papersilm
 /coverage.out
 /tmp/
 /artifacts/
-

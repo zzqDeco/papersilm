@@ -9,7 +9,7 @@ import (
 
 	"gopkg.in/yaml.v3"
 
-	"papersilm/pkg/protocol"
+	"github.com/zzqDeco/papersilm/pkg/protocol"
 )
 
 type ProviderType string
@@ -31,11 +31,11 @@ type ProviderConfig struct {
 }
 
 type Config struct {
-	BaseDir        string               `yaml:"base_dir" json:"base_dir"`
-	DefaultLang    string               `yaml:"default_lang" json:"default_lang"`
-	DefaultStyle   string               `yaml:"default_style" json:"default_style"`
+	BaseDir        string                  `yaml:"base_dir" json:"base_dir"`
+	DefaultLang    string                  `yaml:"default_lang" json:"default_lang"`
+	DefaultStyle   string                  `yaml:"default_style" json:"default_style"`
 	PermissionMode protocol.PermissionMode `yaml:"permission_mode" json:"permission_mode"`
-	Provider       ProviderConfig       `yaml:"provider" json:"provider"`
+	Provider       ProviderConfig          `yaml:"provider" json:"provider"`
 }
 
 func Default() Config {
@@ -103,4 +103,3 @@ func (c Config) ProviderTimeout() time.Duration {
 	}
 	return d
 }
-

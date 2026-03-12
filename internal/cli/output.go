@@ -6,7 +6,7 @@ import (
 	"io"
 	"strings"
 
-	"papersilm/pkg/protocol"
+	"github.com/zzqDeco/papersilm/pkg/protocol"
 )
 
 type OutputWriter struct {

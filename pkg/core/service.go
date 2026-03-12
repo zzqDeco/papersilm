@@ -7,9 +7,9 @@ import (
 	"fmt"
 	"time"
 
-	"papersilm/internal/agent"
-	"papersilm/internal/storage"
-	"papersilm/pkg/protocol"
+	"github.com/zzqDeco/papersilm/internal/agent"
+	"github.com/zzqDeco/papersilm/internal/storage"
+	"github.com/zzqDeco/papersilm/pkg/protocol"
 )
 
 type EventSink interface {

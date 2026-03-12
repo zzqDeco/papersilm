@@ -4,8 +4,8 @@ import (
 	"context"
 	"testing"
 
-	"papersilm/internal/config"
-	"papersilm/pkg/protocol"
+	"github.com/zzqDeco/papersilm/internal/config"
+	"github.com/zzqDeco/papersilm/pkg/protocol"
 )
 
 func TestDistillFromCachedPages(t *testing.T) {
@@ -43,4 +43,3 @@ func TestDistillFromCachedPages(t *testing.T) {
 		t.Fatalf("expected markdown output")
 	}
 }
-

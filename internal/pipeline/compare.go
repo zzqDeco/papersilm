@@ -5,7 +5,7 @@ import (
 	"strings"
 	"time"
 
-	"papersilm/pkg/protocol"
+	"github.com/zzqDeco/papersilm/pkg/protocol"
 )
 
 func (s *Service) Compare(goal string, digests []protocol.PaperDigest, lang, style string) protocol.ComparisonDigest {

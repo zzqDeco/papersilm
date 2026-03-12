@@ -8,13 +8,14 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"papersilm/internal/agent"
-	"papersilm/internal/config"
-	"papersilm/internal/pipeline"
-	"papersilm/internal/storage"
-	"papersilm/internal/tools"
-	"papersilm/pkg/core"
-	"papersilm/pkg/protocol"
+	"github.com/zzqDeco/papersilm/internal/agent"
+	"github.com/zzqDeco/papersilm/internal/config"
+	"github.com/zzqDeco/papersilm/internal/pipeline"
+	"github.com/zzqDeco/papersilm/internal/storage"
+	"github.com/zzqDeco/papersilm/internal/tools"
+	"github.com/zzqDeco/papersilm/internal/version"
+	"github.com/zzqDeco/papersilm/pkg/core"
+	"github.com/zzqDeco/papersilm/pkg/protocol"
 )
 
 func NewRootCommand(ctx context.Context) *cobra.Command {
@@ -31,8 +32,9 @@ func NewRootCommand(ctx context.Context) *cobra.Command {
 	)
 
 	cmd := &cobra.Command{
-		Use:   "papersilm",
-		Short: "Paper-focused document agent CLI",
+		Use:     "papersilm",
+		Short:   "Paper-focused document agent CLI",
+		Version: version.Version,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cfg, store, svc, out, err := buildRuntime(ctx, outputFormat)
 			if err != nil {
@@ -112,7 +114,20 @@ func NewRootCommand(ctx context.Context) *cobra.Command {
 	cmd.Flags().StringVar(&lang, "lang", "", "output language")
 	cmd.Flags().StringVar(&style, "style", "", "output style")
 	cmd.Flags().BoolVar(&configOnly, "config-init", false, "write default config and exit")
+	cmd.AddCommand(newVersionCommand())
 	return cmd
+}
+
+func newVersionCommand() *cobra.Command {
+	return &cobra.Command{
+		Use:   "version",
+		Short: "Print version information",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			_, err := fmt.Fprint(cmd.OutOrStdout(), version.Lines())
+			return err
+		},
+	}
 }
 
 func buildRuntime(ctx context.Context, outputFormat string) (config.Config, *storage.Store, *core.Service, *OutputWriter, error) {

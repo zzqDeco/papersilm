@@ -1,23 +1,54 @@
 # papersilm
 
-`papersilm` is a paper-focused document agent CLI. It supports one or more paper sources, builds a plan first, and then produces:
+`papersilm` is a paper-focused document agent CLI for distilling one or more paper sources into high-signal outputs:
 
 - single-paper digests
 - multi-paper comparisons
-- persistent session artifacts for future GUI reuse
+- persistent session artifacts that future GUI tools can reuse
 
-## Current Scope
+V1 is intentionally CLI-first and core-first: the headless core, session store, event protocol, and artifacts are the product surface. The current release does not include GUI, OCR, or package-manager distribution.
 
-This repository contains the V1 core-first implementation:
+## Installation
 
-- headless `pkg/core` and `pkg/protocol`
-- local session storage and artifact persistence
-- CLI with REPL and `-p/--print` modes
-- internal tool registry
-- source normalization and inspection
-- heuristic single-paper distillation
-- digest-driven paper comparison
-- `plan | confirm | auto` permission flow
+### Build from source
+
+```bash
+git clone https://github.com/zzqDeco/papersilm.git
+cd papersilm
+go build -o ./bin/papersilm ./cmd/papersilm
+```
+
+### Install with Go
+
+After `v0.1.0` is tagged:
+
+```bash
+go install github.com/zzqDeco/papersilm/cmd/papersilm@v0.1.0
+```
+
+### Download release binaries
+
+The `v0.1.0` release is designed to ship these artifacts:
+
+- `papersilm_v0.1.0_darwin_arm64.tar.gz`
+- `papersilm_v0.1.0_darwin_amd64.tar.gz`
+- `papersilm_v0.1.0_linux_arm64.tar.gz`
+- `papersilm_v0.1.0_linux_amd64.tar.gz`
+- `papersilm_v0.1.0_windows_arm64.zip`
+- `papersilm_v0.1.0_windows_amd64.zip`
+- `checksums.txt`
+
+## Quick Start
+
+Initialize config:
+
+```bash
+papersilm --config-init
+```
+
+The config file is written to `~/.papersilm/config.yaml`.
+
+If no external provider is configured, `papersilm` falls back to a local deterministic tool-calling model so `plan`, `confirm`, `approve`, and `run` still work end-to-end.
 
 ## CLI Modes
 
@@ -29,13 +60,7 @@ This repository contains the V1 core-first implementation:
 
 ## Usage
 
-Initialize config:
-
-```bash
-papersilm --config-init
-```
-
-Plan a single paper:
+Print mode with one paper:
 
 ```bash
 papersilm -p "plan current paper" \
@@ -44,7 +69,7 @@ papersilm -p "plan current paper" \
   --output-format json
 ```
 
-Compare multiple papers:
+Print mode with multiple sources:
 
 ```bash
 papersilm -p "compare these papers" \
@@ -59,22 +84,65 @@ Interactive mode:
 papersilm
 ```
 
-Then use slash commands:
+Useful slash commands:
 
 - `/source add <uri>`
+- `/source replace <uri>`
+- `/source list`
 - `/plan [task]`
+- `/run`
 - `/approve`
-- `/run [task]`
 - `/lang <zh|en|both>`
 - `/style <distill|ultra|reviewer>`
 - `/export`
+- `/exit`
 
-## Future GUI Direction
+## Version
 
-The CLI is intentionally built on a headless core. Future GUI integration should consume the same session store, artifacts, and `stream-json` event protocol instead of re-implementing document logic.
+`papersilm version` prints build metadata:
 
-## Notes
+```text
+version=v0.1.0
+commit=<git-sha>
+date=<build-date>
+```
 
-- V1 accepts local PDFs and arXiv `abs` / `pdf` URLs.
-- Planning and execution now run through a real Eino ADK `planner -> executor -> replanner` stack with checkpoint/resume.
-- If no provider model or API key is configured, `papersilm` falls back to a local deterministic tool-calling model so `plan / confirm / approve / run` still work end-to-end.
+Release builds inject these fields with linker flags so downloaded binaries remain traceable to a tag and commit.
+
+## Current Scope
+
+This repository currently includes:
+
+- headless `pkg/core` and `pkg/protocol`
+- local session storage and artifact persistence
+- CLI with REPL and `-p/--print` modes
+- internal tool registry
+- source normalization and inspection
+- heuristic single-paper distillation
+- digest-driven paper comparison
+- `plan | confirm | auto` permission flow
+
+## Release Notes
+
+`v0.1.0` is the first public CLI release. It is intentionally scoped as:
+
+- GitHub Release + multi-platform binaries
+- `go install` support
+- no Homebrew formula
+- no codesign or notarization
+- no OCR
+- no GUI build
+
+## Development
+
+Run tests:
+
+```bash
+go test ./...
+```
+
+Build the CLI:
+
+```bash
+go build ./cmd/papersilm
+```

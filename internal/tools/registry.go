@@ -16,10 +16,10 @@ import (
 	"github.com/cloudwego/eino/compose"
 	"github.com/cloudwego/eino/schema"
 
-	"papersilm/internal/pipeline"
-	"papersilm/internal/storage"
-	"papersilm/internal/tools/graphtool"
-	"papersilm/pkg/protocol"
+	"github.com/zzqDeco/papersilm/internal/pipeline"
+	"github.com/zzqDeco/papersilm/internal/storage"
+	"github.com/zzqDeco/papersilm/internal/tools/graphtool"
+	"github.com/zzqDeco/papersilm/pkg/protocol"
 )
 
 type Registry struct {

@@ -6,7 +6,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"papersilm/internal/config"
+	"github.com/zzqDeco/papersilm/internal/config"
 )
 
 func TestNormalizeSources(t *testing.T) {
@@ -40,4 +40,3 @@ func TestNormalizeSources(t *testing.T) {
 		t.Fatalf("unexpected arxiv pdf ref: %+v", refs[2])
 	}
 }
-

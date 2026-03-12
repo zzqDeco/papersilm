@@ -13,7 +13,7 @@ import (
 	qwenmodel "github.com/cloudwego/eino-ext/components/model/qwen"
 	"github.com/cloudwego/eino/components/model"
 
-	"papersilm/internal/config"
+	"github.com/zzqDeco/papersilm/internal/config"
 )
 
 func BuildChatModel(ctx context.Context, cfg config.ProviderConfig, timeout time.Duration) (model.ToolCallingChatModel, error) {

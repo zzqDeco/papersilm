@@ -4,7 +4,7 @@ import (
 	"context"
 	"os"
 
-	"papersilm/internal/cli"
+	"github.com/zzqDeco/papersilm/internal/cli"
 )
 
 func main() {

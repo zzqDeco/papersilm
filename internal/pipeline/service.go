@@ -9,8 +9,8 @@ import (
 	"sort"
 	"strings"
 
-	"papersilm/internal/config"
-	"papersilm/pkg/protocol"
+	"github.com/zzqDeco/papersilm/internal/config"
+	"github.com/zzqDeco/papersilm/pkg/protocol"
 )
 
 type Service struct {
