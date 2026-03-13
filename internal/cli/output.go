@@ -89,12 +89,21 @@ func (o *OutputWriter) PrintResult(result protocol.RunResult) error {
 }
 
 func (o *OutputWriter) printPlan(plan protocol.PlanResult) error {
-	_, err := fmt.Fprintf(o.w, "Plan ID: %s\nGoal: %s\nWill compare: %t\n\nTool plan:\n", plan.PlanID, plan.Goal, plan.WillCompare)
+	ready := make([]string, 0, len(plan.DAG.Nodes))
+	_, err := fmt.Fprintf(o.w, "Plan ID: %s\nGoal: %s\nWill compare: %t\nNodes: %d\n\nDAG:\n", plan.PlanID, plan.Goal, plan.WillCompare, len(plan.DAG.Nodes))
 	if err != nil {
 		return err
 	}
-	for _, step := range plan.Steps {
-		if _, err := fmt.Fprintf(o.w, "- %s: %s [%s]\n", step.ID, step.Goal, step.Tool); err != nil {
+	for _, node := range plan.DAG.Nodes {
+		if node.Status == protocol.NodeStatusReady {
+			ready = append(ready, node.ID)
+		}
+		if _, err := fmt.Fprintf(o.w, "- %s: %s [%s, worker=%s, depends_on=%s]\n", node.ID, node.Goal, node.Kind, node.WorkerProfile, strings.Join(node.DependsOn, ",")); err != nil {
+			return err
+		}
+	}
+	if len(ready) > 0 {
+		if _, err := fmt.Fprintf(o.w, "\nReady nodes: %s\n", strings.Join(ready, ", ")); err != nil {
 			return err
 		}
 	}
@@ -118,6 +127,6 @@ func (o *OutputWriter) printPlan(plan protocol.PlanResult) error {
 }
 
 func (o *OutputWriter) printApproval(approval protocol.ApprovalRequest) error {
-	_, err := fmt.Fprintf(o.w, "Approval required\nPlan: %s\nCheckpoint: %s\nInterrupt: %s\nSummary: %s\n\n", approval.PlanID, approval.CheckpointID, approval.InterruptID, approval.Summary)
+	_, err := fmt.Fprintf(o.w, "Approval required\nPlan: %s\nCheckpoint: %s\nInterrupt: %s\nPending nodes: %s\nSummary: %s\n\n", approval.PlanID, approval.CheckpointID, approval.InterruptID, strings.Join(approval.PendingNodeIDs, ", "), approval.Summary)
 	return err
 }

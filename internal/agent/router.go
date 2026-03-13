@@ -2,18 +2,13 @@ package agent
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
+	"sort"
 	"strings"
+	"sync"
 	"time"
 
-	"github.com/cloudwego/eino/adk"
-	"github.com/cloudwego/eino/adk/prebuilt/planexecute"
-	"github.com/cloudwego/eino/compose"
-	"github.com/cloudwego/eino/schema"
-
 	"github.com/zzqDeco/papersilm/internal/config"
-	"github.com/zzqDeco/papersilm/internal/providers"
 	"github.com/zzqDeco/papersilm/internal/storage"
 	"github.com/zzqDeco/papersilm/internal/tools"
 	"github.com/zzqDeco/papersilm/pkg/protocol"
@@ -86,7 +81,7 @@ func (a *Agent) Execute(ctx context.Context, store *storage.Store, sink EventSin
 		return protocol.RunResult{}, fmt.Errorf("task is required")
 	}
 
-	planResult, execPlan, _, err := a.planSession(ctx, store, sink, req.SessionID, goal, req.PermissionMode == protocol.PermissionModeConfirm)
+	planResult, execState, err := a.planSession(ctx, store, sink, req.SessionID, goal, req.PermissionMode == protocol.PermissionModeConfirm)
 	if err != nil {
 		return protocol.RunResult{}, err
 	}
@@ -99,28 +94,29 @@ func (a *Agent) Execute(ctx context.Context, store *storage.Store, sink EventSin
 	meta.ActivePlanID = planResult.PlanID
 	meta.PermissionMode = req.PermissionMode
 	meta.UpdatedAt = time.Now().UTC()
-	if req.PermissionMode == protocol.PermissionModePlan {
-		meta.State = protocol.SessionStatePlanned
-		meta.ApprovalPending = false
-	} else {
-		meta.State = protocol.SessionStateRunning
-		meta.ApprovalPending = false
-	}
-	if err := store.SaveMeta(meta); err != nil {
-		return protocol.RunResult{}, err
-	}
-
 	switch req.PermissionMode {
 	case protocol.PermissionModePlan:
+		meta.State = protocol.SessionStatePlanned
+		meta.ApprovalPending = false
+		meta.ActiveCheckpointID = ""
+		meta.PendingInterruptID = ""
+		if err := store.SaveMeta(meta); err != nil {
+			return protocol.RunResult{}, err
+		}
 		snapshot, err := store.Snapshot(req.SessionID)
 		if err != nil {
 			return protocol.RunResult{}, err
 		}
 		return protocol.RunResult{Session: snapshot, Plan: &planResult}, nil
 	case protocol.PermissionModeConfirm:
-		return a.startConfirmExecution(ctx, store, sink, req.SessionID, meta, planResult, execPlan, req.Language, req.Style)
+		return a.startConfirmExecution(store, req.SessionID, meta, planResult, execState)
 	default:
-		return a.runExecution(ctx, store, sink, req.SessionID, meta, planResult, execPlan, req.Language, req.Style, false)
+		meta.State = protocol.SessionStateRunning
+		meta.ApprovalPending = false
+		if err := store.SaveMeta(meta); err != nil {
+			return protocol.RunResult{}, err
+		}
+		return a.runDAGExecution(ctx, store, sink, req.SessionID, meta, planResult, execState, goal, req.Language, req.Style)
 	}
 }
 
@@ -139,17 +135,29 @@ func (a *Agent) RunPlanned(ctx context.Context, store *storage.Store, sink Event
 	if planResult == nil {
 		return protocol.RunResult{}, fmt.Errorf("no saved plan available")
 	}
+	execState, err := store.LoadExecutionState(sessionID)
+	if err != nil {
+		return protocol.RunResult{}, err
+	}
+	if execState == nil {
+		state := buildExecutionState(planResult.PlanID, planResult.DAG)
+		execState = &state
+		if err := store.SaveExecutionState(sessionID, *execState); err != nil {
+			return protocol.RunResult{}, err
+		}
+	}
 	meta, err = a.syncSessionConfig(store, meta, lang, style)
 	if err != nil {
 		return protocol.RunResult{}, err
 	}
 	meta.State = protocol.SessionStateRunning
 	meta.PermissionMode = protocol.PermissionModeAuto
+	meta.ApprovalPending = false
 	meta.UpdatedAt = time.Now().UTC()
 	if err := store.SaveMeta(meta); err != nil {
 		return protocol.RunResult{}, err
 	}
-	return a.runExecution(ctx, store, sink, sessionID, meta, *planResult, newExecutionPlan(planResult.Steps), lang, style, false)
+	return a.runDAGExecution(ctx, store, sink, sessionID, meta, *planResult, execState, meta.LastTask, meta.Language, meta.Style)
 }
 
 func (a *Agent) Approve(ctx context.Context, store *storage.Store, sink EventSink, sessionID string, approved bool, comment string) (protocol.RunResult, error) {
@@ -164,6 +172,13 @@ func (a *Agent) Approve(ctx context.Context, store *storage.Store, sink EventSin
 	if planResult == nil {
 		return protocol.RunResult{}, fmt.Errorf("no saved plan available")
 	}
+	execState, err := store.LoadExecutionState(sessionID)
+	if err != nil {
+		return protocol.RunResult{}, err
+	}
+	if execState == nil {
+		return protocol.RunResult{}, fmt.Errorf("session has no pending execution state")
+	}
 	if meta.ActiveCheckpointID == "" || meta.PendingInterruptID == "" {
 		return protocol.RunResult{}, fmt.Errorf("session has no pending approval")
 	}
@@ -173,6 +188,10 @@ func (a *Agent) Approve(ctx context.Context, store *storage.Store, sink EventSin
 		meta.ActiveCheckpointID = ""
 		meta.PendingInterruptID = ""
 		meta.UpdatedAt = time.Now().UTC()
+		execState.PendingNodeIDs = nil
+		if err := store.SaveExecutionState(sessionID, *execState); err != nil {
+			return protocol.RunResult{}, err
+		}
 		if err := store.SaveMeta(meta); err != nil {
 			return protocol.RunResult{}, err
 		}
@@ -183,27 +202,15 @@ func (a *Agent) Approve(ctx context.Context, store *storage.Store, sink EventSin
 		return protocol.RunResult{Session: snapshot, Plan: planResult}, nil
 	}
 
-	runner, err := a.buildExecutionRunner(ctx, store, sessionID, prependApprovalStep(newExecutionPlan(planResult.Steps), planResult.PlanID, approvalSummary(*planResult)), meta.LastTask, meta.Language, meta.Style, true)
-	if err != nil {
-		return protocol.RunResult{}, err
-	}
-
 	meta.State = protocol.SessionStateRunning
 	meta.ApprovalPending = false
+	meta.ActiveCheckpointID = ""
+	meta.PendingInterruptID = ""
 	meta.UpdatedAt = time.Now().UTC()
 	if err := store.SaveMeta(meta); err != nil {
 		return protocol.RunResult{}, err
 	}
-
-	iter, err := runner.ResumeWithParams(ctx, meta.ActiveCheckpointID, &adk.ResumeParams{
-		Targets: map[string]any{
-			meta.PendingInterruptID: "approved",
-		},
-	})
-	if err != nil {
-		return protocol.RunResult{}, err
-	}
-	return a.finalizeExecution(ctx, store, sink, sessionID, meta, *planResult, iter)
+	return a.runDAGExecution(ctx, store, sink, sessionID, meta, *planResult, execState, meta.LastTask, meta.Language, meta.Style)
 }
 
 func (a *Agent) syncSessionConfig(store *storage.Store, meta protocol.SessionMeta, lang, style string) (protocol.SessionMeta, error) {
@@ -228,76 +235,61 @@ func (a *Agent) syncSessionConfig(store *storage.Store, meta protocol.SessionMet
 	return store.LoadMeta(meta.SessionID)
 }
 
-func (a *Agent) planSession(ctx context.Context, store *storage.Store, sink EventSink, sessionID, goal string, approvalRequired bool) (protocol.PlanResult, *executionPlan, []protocol.PaperRef, error) {
+func (a *Agent) planSession(ctx context.Context, store *storage.Store, sink EventSink, sessionID, goal string, approvalRequired bool) (protocol.PlanResult, *protocol.ExecutionState, error) {
 	if err := store.InvalidatePlanState(sessionID); err != nil {
-		return protocol.PlanResult{}, nil, nil, err
+		return protocol.PlanResult{}, nil, err
 	}
 	refs, err := a.tools.InspectSources(ctx, store, sessionID, nil)
 	if err != nil {
-		return protocol.PlanResult{}, nil, nil, err
+		return protocol.PlanResult{}, nil, err
 	}
 	if len(refs) == 0 {
-		return protocol.PlanResult{}, nil, nil, fmt.Errorf("no sources attached")
+		return protocol.PlanResult{}, nil, fmt.Errorf("no sources attached")
 	}
 	if err := a.emit(store, sink, sessionID, protocol.EventAnalysis, "source inspection complete", refs); err != nil {
-		return protocol.PlanResult{}, nil, nil, err
+		return protocol.PlanResult{}, nil, err
 	}
 
-	model, err := providers.BuildChatModel(ctx, a.cfg.Provider, a.cfg.ProviderTimeout())
-	if err != nil {
-		return protocol.PlanResult{}, nil, nil, err
+	specs := buildTaskSpecs(goal, refs)
+	dag := compileDAG(goal, refs, specs)
+	planResult := protocol.PlanResult{
+		PlanID:           newPlanID(),
+		Goal:             strings.TrimSpace(goal),
+		SourceSummary:    refs,
+		DAG:              dag,
+		Steps:            projectSteps(dag),
+		WillCompare:      hasComparisonNode(dag),
+		Risks:            planRisks(refs),
+		ApprovalRequired: approvalRequired,
+		CreatedAt:        time.Now().UTC(),
 	}
-	planner, err := planexecute.NewPlanner(ctx, &planexecute.PlannerConfig{
-		ToolCallingChatModel: model,
-		ToolInfo:             executionPlanToolInfo(),
-		NewPlan: func(context.Context) planexecute.Plan {
-			return &executionPlan{}
-		},
-		GenInputFn: func(ctx context.Context, _ []adk.Message) ([]adk.Message, error) {
-			return plannerInputMessages(goal, refs)
-		},
-	})
-	if err != nil {
-		return protocol.PlanResult{}, nil, nil, err
-	}
-	runner := adk.NewRunner(ctx, adk.RunnerConfig{Agent: planner})
-	iter := runner.Run(ctx, []adk.Message{schema.UserMessage(goal)})
-
-	execPlan, err := parsePlanFromIterator(iter)
-	if err != nil {
-		return protocol.PlanResult{}, nil, nil, err
-	}
-	planResult := toProtocolPlan(goal, refs, execPlan, approvalRequired)
+	state := buildExecutionState(planResult.PlanID, dag)
 	if err := store.SavePlan(sessionID, planResult); err != nil {
-		return protocol.PlanResult{}, nil, nil, err
+		return protocol.PlanResult{}, nil, err
+	}
+	if err := store.SaveExecutionState(sessionID, state); err != nil {
+		return protocol.PlanResult{}, nil, err
 	}
 	if err := a.emit(store, sink, sessionID, protocol.EventPlan, "plan ready", planResult); err != nil {
-		return protocol.PlanResult{}, nil, nil, err
+		return protocol.PlanResult{}, nil, err
 	}
-	return planResult, execPlan, refs, nil
+	return planResult, &state, nil
 }
 
-func (a *Agent) startConfirmExecution(ctx context.Context, store *storage.Store, sink EventSink, sessionID string, meta protocol.SessionMeta, planResult protocol.PlanResult, execPlan *executionPlan, lang, style string) (protocol.RunResult, error) {
-	approvalPlan := prependApprovalStep(execPlan, planResult.PlanID, approvalSummary(planResult))
+func (a *Agent) startConfirmExecution(store *storage.Store, sessionID string, meta protocol.SessionMeta, planResult protocol.PlanResult, execState *protocol.ExecutionState) (protocol.RunResult, error) {
+	batch := selectBatch(planResult.DAG)
 	checkpointID := fmt.Sprintf("%s_confirm_%d", sessionID, time.Now().UnixNano())
-
-	runner, err := a.buildExecutionRunner(ctx, store, sessionID, approvalPlan, meta.LastTask, lang, style, true)
-	if err != nil {
+	interruptID := fmt.Sprintf("approval_%d", time.Now().UnixNano())
+	execState.PendingNodeIDs = append([]string(nil), batch...)
+	execState.CurrentBatchID = fmt.Sprintf("batch_%d", time.Now().UnixNano())
+	execState.UpdatedAt = time.Now().UTC()
+	if err := store.SaveExecutionState(sessionID, *execState); err != nil {
 		return protocol.RunResult{}, err
 	}
-	iter := runner.Run(ctx, []adk.Message{schema.UserMessage(meta.LastTask)}, adk.WithCheckPointID(checkpointID))
-	approval, err := a.consumeExecutionEvents(store, sink, sessionID, planResult.PlanID, checkpointID, iter)
-	if err != nil {
-		return protocol.RunResult{}, err
-	}
-	if approval == nil {
-		return a.finalizeExecution(ctx, store, sink, sessionID, meta, planResult, nil)
-	}
-
 	meta.State = protocol.SessionStateAwaitingApproval
 	meta.ApprovalPending = true
-	meta.ActiveCheckpointID = approval.CheckpointID
-	meta.PendingInterruptID = approval.InterruptID
+	meta.ActiveCheckpointID = checkpointID
+	meta.PendingInterruptID = interruptID
 	meta.UpdatedAt = time.Now().UTC()
 	if err := store.SaveMeta(meta); err != nil {
 		return protocol.RunResult{}, err
@@ -307,44 +299,135 @@ func (a *Agent) startConfirmExecution(ctx context.Context, store *storage.Store,
 		return protocol.RunResult{}, err
 	}
 	return protocol.RunResult{
-		Session:  snapshot,
-		Plan:     &planResult,
-		Approval: approval,
+		Session: snapshot,
+		Plan:    &planResult,
+		Approval: &protocol.ApprovalRequest{
+			PlanID:         planResult.PlanID,
+			CheckpointID:   checkpointID,
+			InterruptID:    interruptID,
+			PendingNodeIDs: append([]string(nil), batch...),
+			Summary:        approvalSummary(planResult, batch),
+			RequiresInput:  true,
+			CreatedAt:      time.Now().UTC(),
+		},
 	}, nil
 }
 
-func (a *Agent) runExecution(ctx context.Context, store *storage.Store, sink EventSink, sessionID string, meta protocol.SessionMeta, planResult protocol.PlanResult, execPlan *executionPlan, lang, style string, includeApproval bool) (protocol.RunResult, error) {
-	runner, err := a.buildExecutionRunner(ctx, store, sessionID, execPlan, meta.LastTask, lang, style, includeApproval)
-	if err != nil {
-		return protocol.RunResult{}, err
-	}
-	iter := runner.Run(ctx, []adk.Message{schema.UserMessage(meta.LastTask)})
-	return a.finalizeExecution(ctx, store, sink, sessionID, meta, planResult, iter)
-}
+func (a *Agent) runDAGExecution(ctx context.Context, store *storage.Store, sink EventSink, sessionID string, meta protocol.SessionMeta, planResult protocol.PlanResult, execState *protocol.ExecutionState, goal, lang, style string) (protocol.RunResult, error) {
+	for {
+		refreshReadyNodes(&planResult.DAG)
+		batch := selectBatch(planResult.DAG)
+		if len(batch) == 0 {
+			patch := deriveDagPatch(goal, planResult.DAG, *execState)
+			if hasPatchWork(patch) {
+				if err := applyDagPatch(&planResult.DAG, execState, patch); err != nil {
+					return protocol.RunResult{}, err
+				}
+				planResult.Steps = projectSteps(planResult.DAG)
+				planResult.WillCompare = hasComparisonNode(planResult.DAG)
+				if err := store.SavePlan(sessionID, planResult); err != nil {
+					return protocol.RunResult{}, err
+				}
+				if err := store.SaveExecutionState(sessionID, *execState); err != nil {
+					return protocol.RunResult{}, err
+				}
+				if err := a.emit(store, sink, sessionID, protocol.EventProgress, "plan replanned", protocol.PlanProgress{
+					PlanID:    planResult.PlanID,
+					Status:    protocol.PlanProgressReplanned,
+					Message:   fallbackPatchReason(patch.Reason),
+					CreatedAt: time.Now().UTC(),
+				}); err != nil {
+					return protocol.RunResult{}, err
+				}
+				if execState.Finalized {
+					break
+				}
+				continue
+			}
+			if execState.Finalized || planFullySettled(planResult.DAG) {
+				break
+			}
+			return protocol.RunResult{}, fmt.Errorf("dag execution stalled with no ready nodes")
+		}
 
-func (a *Agent) finalizeExecution(ctx context.Context, store *storage.Store, sink EventSink, sessionID string, meta protocol.SessionMeta, planResult protocol.PlanResult, iter *adk.AsyncIterator[*adk.AgentEvent]) (protocol.RunResult, error) {
-	if iter != nil {
-		approval, err := a.consumeExecutionEvents(store, sink, sessionID, planResult.PlanID, meta.ActiveCheckpointID, iter)
-		if err != nil {
-			meta.State = protocol.SessionStateFailed
-			meta.UpdatedAt = time.Now().UTC()
-			_ = store.SaveMeta(meta)
+		batchID := fmt.Sprintf("batch_%d", time.Now().UnixNano())
+		execState.CurrentBatchID = batchID
+		execState.PendingNodeIDs = append([]string(nil), batch...)
+		execState.BatchHistory = append(execState.BatchHistory, protocol.ExecutionBatch{
+			BatchID:   batchID,
+			NodeIDs:   append([]string(nil), batch...),
+			Status:    protocol.BatchStatusRunning,
+			StartedAt: time.Now().UTC(),
+		})
+		for _, nodeID := range batch {
+			setNodeStatus(&planResult.DAG, nodeID, protocol.NodeStatusRunning)
+			node, _ := dagNode(planResult.DAG, nodeID)
+			updateExecutionNode(execState, nodeID, protocol.NodeStatusRunning, "", nil)
+			if err := a.emit(store, sink, sessionID, protocol.EventProgress, "node execution started", protocol.PlanProgress{
+				PlanID:        planResult.PlanID,
+				NodeID:        nodeID,
+				Tool:          string(node.Kind),
+				WorkerProfile: node.WorkerProfile,
+				BatchID:       batchID,
+				Status:        protocol.PlanProgressStarted,
+				Message:       "node execution started",
+				CreatedAt:     time.Now().UTC(),
+			}); err != nil {
+				return protocol.RunResult{}, err
+			}
+		}
+		if err := store.SavePlan(sessionID, planResult); err != nil {
 			return protocol.RunResult{}, err
 		}
-		if approval != nil {
-			meta.State = protocol.SessionStateAwaitingApproval
-			meta.ApprovalPending = true
-			meta.ActiveCheckpointID = approval.CheckpointID
-			meta.PendingInterruptID = approval.InterruptID
-			meta.UpdatedAt = time.Now().UTC()
-			if err := store.SaveMeta(meta); err != nil {
+		if err := store.SaveExecutionState(sessionID, *execState); err != nil {
+			return protocol.RunResult{}, err
+		}
+
+		results := a.executeBatch(ctx, store, sessionID, goal, lang, style, execState, planResult.DAG, batch)
+		for _, result := range results {
+			node, _ := dagNode(planResult.DAG, result.nodeID)
+			if result.err != nil {
+				setNodeStatus(&planResult.DAG, result.nodeID, protocol.NodeStatusFailed)
+				updateExecutionNode(execState, result.nodeID, protocol.NodeStatusFailed, result.err.Error(), nil)
+				if err := a.emit(store, sink, sessionID, protocol.EventProgress, "node execution failed", protocol.PlanProgress{
+					PlanID:        planResult.PlanID,
+					NodeID:        result.nodeID,
+					Tool:          string(node.Kind),
+					WorkerProfile: node.WorkerProfile,
+					BatchID:       batchID,
+					Status:        protocol.PlanProgressFailed,
+					Message:       "node execution failed",
+					Error:         result.err.Error(),
+					CreatedAt:     time.Now().UTC(),
+				}); err != nil {
+					return protocol.RunResult{}, err
+				}
+				continue
+			}
+			setNodeStatus(&planResult.DAG, result.nodeID, protocol.NodeStatusCompleted)
+			updateExecutionNode(execState, result.nodeID, protocol.NodeStatusCompleted, "", result.outputs)
+			execState.Outputs = append(execState.Outputs, result.outputs...)
+			if err := a.emit(store, sink, sessionID, protocol.EventProgress, "node execution completed", protocol.PlanProgress{
+				PlanID:        planResult.PlanID,
+				NodeID:        result.nodeID,
+				Tool:          string(node.Kind),
+				WorkerProfile: node.WorkerProfile,
+				BatchID:       batchID,
+				Status:        protocol.PlanProgressCompleted,
+				Message:       "node execution completed",
+				CreatedAt:     time.Now().UTC(),
+			}); err != nil {
 				return protocol.RunResult{}, err
 			}
-			snapshot, err := store.Snapshot(sessionID)
-			if err != nil {
-				return protocol.RunResult{}, err
-			}
-			return protocol.RunResult{Session: snapshot, Plan: &planResult, Approval: approval}, nil
+		}
+		execState.PendingNodeIDs = nil
+		markBatchCompleted(execState, batchID)
+		refreshReadyNodes(&planResult.DAG)
+		if err := store.SavePlan(sessionID, planResult); err != nil {
+			return protocol.RunResult{}, err
+		}
+		if err := store.SaveExecutionState(sessionID, *execState); err != nil {
+			return protocol.RunResult{}, err
 		}
 	}
 
@@ -354,6 +437,12 @@ func (a *Agent) finalizeExecution(ctx context.Context, store *storage.Store, sin
 	meta.PendingInterruptID = ""
 	meta.UpdatedAt = time.Now().UTC()
 	if err := store.SaveMeta(meta); err != nil {
+		return protocol.RunResult{}, err
+	}
+	if err := store.SavePlan(sessionID, planResult); err != nil {
+		return protocol.RunResult{}, err
+	}
+	if err := store.SaveExecutionState(sessionID, *execState); err != nil {
 		return protocol.RunResult{}, err
 	}
 	snapshot, err := store.Snapshot(sessionID)
@@ -376,206 +465,207 @@ func (a *Agent) finalizeExecution(ctx context.Context, store *storage.Store, sin
 	}, nil
 }
 
-func (a *Agent) buildExecutionRunner(ctx context.Context, store *storage.Store, sessionID string, execPlan *executionPlan, goal, lang, style string, includeApproval bool) (*adk.Runner, error) {
-	model, err := providers.BuildChatModel(ctx, a.cfg.Provider, a.cfg.ProviderTimeout())
-	if err != nil {
-		return nil, err
-	}
-	toolset, err := a.tools.BuildExecutionTools(ctx, store, sessionID, includeApproval)
-	if err != nil {
-		return nil, err
-	}
-	executor, err := planexecute.NewExecutor(ctx, &planexecute.ExecutorConfig{
-		Model: model,
-		ToolsConfig: adk.ToolsConfig{
-			ToolsNodeConfig: compose.ToolsNodeConfig{
-				Tools: toolset,
-			},
-		},
-		MaxIterations: 8,
-		GenInputFn: func(ctx context.Context, in *planexecute.ExecutionContext) ([]adk.Message, error) {
-			return executorInputMessages(goal, lang, style, in)
-		},
-	})
-	if err != nil {
-		return nil, err
-	}
-
-	replanner, err := planexecute.NewReplanner(ctx, &planexecute.ReplannerConfig{
-		ChatModel: model,
-		PlanTool:  executionPlanToolInfo(),
-		NewPlan: func(context.Context) planexecute.Plan {
-			return &executionPlan{}
-		},
-		GenInputFn: func(ctx context.Context, in *planexecute.ExecutionContext) ([]adk.Message, error) {
-			digestIDs, hasComparison, assetsErr := currentAssets(store, sessionID)
-			if assetsErr != nil {
-				return nil, assetsErr
-			}
-			basePlan, _ := in.Plan.(*executionPlan)
-			storedPlan, loadErr := store.LoadPlan(sessionID)
-			if loadErr != nil {
-				return nil, loadErr
-			}
-			if storedPlan != nil {
-				basePlan = newExecutionPlan(storedPlan.Steps)
-			}
-			return replannerInputMessages(goal, basePlan, digestIDs, hasComparison, len(in.ExecutedSteps), lastExecutedStepID(in.ExecutedSteps), executedStepIDs(in.ExecutedSteps))
-		},
-	})
-	if err != nil {
-		return nil, err
-	}
-
-	agent, err := planexecute.New(ctx, &planexecute.Config{
-		Planner:       &savedPlanPlannerAgent{plan: execPlan},
-		Executor:      executor,
-		Replanner:     replanner,
-		MaxIterations: 16,
-	})
-	if err != nil {
-		return nil, err
-	}
-
-	return adk.NewRunner(ctx, adk.RunnerConfig{
-		Agent:           agent,
-		EnableStreaming: true,
-		CheckPointStore: store.CheckPointStore(sessionID),
-	}), nil
-}
-
-func currentAssets(store *storage.Store, sessionID string) ([]string, bool, error) {
-	digests, err := store.LoadDigests(sessionID)
-	if err != nil {
-		return nil, false, err
-	}
-	out := make([]string, 0, len(digests))
-	for _, digest := range digests {
-		out = append(out, digest.PaperID)
-	}
-	cmp, err := store.LoadComparison(sessionID)
-	if err != nil {
-		return nil, false, err
-	}
-	return out, cmp != nil, nil
-}
-
-func parsePlanFromIterator(iter *adk.AsyncIterator[*adk.AgentEvent]) (*executionPlan, error) {
-	for {
-		event, ok := iter.Next()
+func (a *Agent) executeBatch(ctx context.Context, store *storage.Store, sessionID, goal, lang, style string, execState *protocol.ExecutionState, dag protocol.PlanDAG, batch []string) []nodeResult {
+	results := make([]nodeResult, 0, len(batch))
+	ch := make(chan nodeResult, len(batch))
+	var wg sync.WaitGroup
+	for _, nodeID := range batch {
+		node, ok := dagNode(dag, nodeID)
 		if !ok {
-			break
-		}
-		if event.Err != nil {
-			return nil, event.Err
-		}
-		msg, _, err := adk.GetMessage(event)
-		if err != nil {
+			ch <- nodeResult{nodeID: nodeID, err: fmt.Errorf("node not found: %s", nodeID)}
 			continue
 		}
-		var plan executionPlan
-		if err := json.Unmarshal([]byte(msg.Content), &plan); err == nil {
-			return &plan, nil
-		}
+		wg.Add(1)
+		go func(node protocol.PlanNode) {
+			defer wg.Done()
+			outputs, err := a.executeNode(ctx, store, sessionID, goal, lang, style, execState, node)
+			ch <- nodeResult{nodeID: node.ID, outputs: outputs, err: err}
+		}(node)
 	}
-	return nil, fmt.Errorf("planner did not produce a valid plan")
+	wg.Wait()
+	close(ch)
+	for result := range ch {
+		results = append(results, result)
+	}
+	sort.Slice(results, func(i, j int) bool {
+		return results[i].nodeID < results[j].nodeID
+	})
+	return results
 }
 
-func (a *Agent) consumeExecutionEvents(store *storage.Store, sink EventSink, sessionID, planID, checkpointID string, iter *adk.AsyncIterator[*adk.AgentEvent]) (*protocol.ApprovalRequest, error) {
-	var (
-		currentTool string
-		stepIndex   int
-	)
-	for {
-		event, ok := iter.Next()
-		if !ok {
-			break
-		}
-		if event.Err != nil {
-			return nil, event.Err
-		}
-		if event.Action != nil && event.Action.Interrupted != nil {
-			approval := approvalFromInterrupt(planID, checkpointID, event)
-			if err := a.emit(store, sink, sessionID, protocol.EventApprovalRequired, "approval required", approval); err != nil {
-				return nil, err
+func deriveDagPatch(goal string, dag protocol.PlanDAG, state protocol.ExecutionState) protocol.DagPatch {
+	patch := protocol.DagPatch{}
+	if goalNeedsMath(goal) {
+		for _, node := range dag.Nodes {
+			if node.Kind != protocol.NodeKindMergeDigest || node.Status == protocol.NodeStatusCompleted {
+				continue
 			}
-			return approval, nil
-		}
-		msg, _, err := adk.GetMessage(event)
-		if err != nil {
-			continue
-		}
-		if msg == nil {
-			continue
-		}
-		if len(msg.ToolCalls) > 0 {
-			currentTool = msg.ToolCalls[0].Function.Name
-			stepIndex++
-			progress := protocol.PlanProgress{
-				PlanID:    planID,
-				StepID:    fmt.Sprintf("run_%02d", stepIndex),
-				Tool:      currentTool,
-				Status:    protocol.PlanProgressStarted,
-				Message:   "tool execution started",
-				CreatedAt: time.Now().UTC(),
+			paperID := node.PaperIDs[0]
+			mathID := "math_reasoner_" + paperID
+			if _, ok := dagNode(dag, mathID); ok {
+				continue
 			}
-			if err := a.emit(store, sink, sessionID, protocol.EventProgress, "step started", progress); err != nil {
-				return nil, err
-			}
-			continue
-		}
-		if msg.Role == schema.Assistant && strings.HasPrefix(strings.ToLower(strings.TrimSpace(msg.Content)), "step completed") {
-			progress := protocol.PlanProgress{
-				PlanID:    planID,
-				StepID:    fmt.Sprintf("run_%02d", stepIndex),
-				Tool:      currentTool,
-				Status:    protocol.PlanProgressCompleted,
-				Message:   msg.Content,
-				CreatedAt: time.Now().UTC(),
-			}
-			if err := a.emit(store, sink, sessionID, protocol.EventProgress, "step completed", progress); err != nil {
-				return nil, err
+			patch.AddNodes = append(patch.AddNodes, protocol.PlanNode{
+				ID:            mathID,
+				Kind:          protocol.NodeKindMathReasoner,
+				Goal:          node.Goal,
+				PaperIDs:      []string{paperID},
+				WorkerProfile: protocol.WorkerProfileMathReasoner,
+				Required:      false,
+				Status:        protocol.NodeStatusPending,
+				ParallelGroup: "research",
+			})
+			patch.AddEdges = append(patch.AddEdges, protocol.PlanEdge{From: mathID, To: node.ID})
+			if patch.Reason == "" {
+				patch.Reason = "added missing math reasoning nodes for detail-oriented request"
 			}
 		}
 	}
-	return nil, nil
+
+	if shouldPruneCompare(dag) {
+		for _, node := range dag.Nodes {
+			switch node.Kind {
+			case protocol.NodeKindMethodCompare, protocol.NodeKindExperimentCompare, protocol.NodeKindResultsCompare, protocol.NodeKindFinalSynthesis, protocol.NodeKind("compare_papers"):
+				patch.MarkSkipped = append(patch.MarkSkipped, node.ID)
+			}
+		}
+		if patch.Reason == "" {
+			patch.Reason = "pruned comparison branch because fewer than two digest branches remain viable"
+		}
+	}
+
+	if allTerminalNodesSettled(dag) {
+		patch.Finalize = true
+		if patch.Reason == "" {
+			patch.Reason = "all terminal nodes settled"
+		}
+	}
+	_ = state
+	return patch
 }
 
-func approvalFromInterrupt(planID, checkpointID string, event *adk.AgentEvent) *protocol.ApprovalRequest {
-	request := &protocol.ApprovalRequest{
-		PlanID:        planID,
-		CheckpointID:  checkpointID,
-		Summary:       "approval required",
-		RequiresInput: true,
-		CreatedAt:     time.Now().UTC(),
-	}
-	if event == nil || event.Action == nil || event.Action.Interrupted == nil {
-		return request
-	}
-	for _, interrupt := range event.Action.Interrupted.InterruptContexts {
-		if request.InterruptID == "" || interrupt.IsRootCause {
-			request.InterruptID = interrupt.ID
+func shouldPruneCompare(dag protocol.PlanDAG) bool {
+	possible := 0
+	for _, node := range dag.Nodes {
+		if node.Kind != protocol.NodeKindMergeDigest && node.Kind != protocol.NodeKind("distill_paper") {
+			continue
 		}
-		if info, ok := interrupt.Info.(map[string]string); ok {
-			if summary := strings.TrimSpace(info["summary"]); summary != "" {
-				request.Summary = summary
-			}
-		}
-		if info, ok := interrupt.Info.(map[string]any); ok {
-			if summary, ok := info["summary"].(string); ok && strings.TrimSpace(summary) != "" {
-				request.Summary = summary
+		switch node.Status {
+		case protocol.NodeStatusCompleted, protocol.NodeStatusReady, protocol.NodeStatusPending, protocol.NodeStatusRunning:
+			possible++
+		case protocol.NodeStatusFailed:
+			if !node.Required {
+				possible++
 			}
 		}
 	}
-	return request
+	hasCompare := false
+	for _, node := range dag.Nodes {
+		switch node.Kind {
+		case protocol.NodeKindMethodCompare, protocol.NodeKindExperimentCompare, protocol.NodeKindResultsCompare, protocol.NodeKindFinalSynthesis, protocol.NodeKind("compare_papers"):
+			hasCompare = true
+		}
+	}
+	return hasCompare && possible < 2
 }
 
-func approvalSummary(plan protocol.PlanResult) string {
-	parts := make([]string, 0, len(plan.Steps))
-	for _, step := range plan.Steps {
-		parts = append(parts, fmt.Sprintf("%s:%s", step.Tool, step.Goal))
+func allTerminalNodesSettled(dag protocol.PlanDAG) bool {
+	for _, node := range dag.Nodes {
+		if len(outgoingNodeIDs(dag, node.ID)) > 0 {
+			continue
+		}
+		switch node.Status {
+		case protocol.NodeStatusCompleted, protocol.NodeStatusSkipped:
+		default:
+			return false
+		}
 	}
-	return strings.Join(parts, " | ")
+	return true
+}
+
+func outgoingNodeIDs(dag protocol.PlanDAG, nodeID string) []string {
+	out := make([]string, 0, 2)
+	for _, edge := range dag.Edges {
+		if edge.From == nodeID {
+			out = append(out, edge.To)
+		}
+	}
+	return out
+}
+
+func markBatchCompleted(state *protocol.ExecutionState, batchID string) {
+	now := time.Now().UTC()
+	for i := range state.BatchHistory {
+		if state.BatchHistory[i].BatchID != batchID {
+			continue
+		}
+		state.BatchHistory[i].Status = protocol.BatchStatusCompleted
+		state.BatchHistory[i].CompletedAt = now
+	}
+	state.CurrentBatchID = ""
+	state.UpdatedAt = now
+}
+
+func hasComparisonNode(dag protocol.PlanDAG) bool {
+	for _, node := range dag.Nodes {
+		switch node.Kind {
+		case protocol.NodeKindMethodCompare, protocol.NodeKindExperimentCompare, protocol.NodeKindResultsCompare, protocol.NodeKindFinalSynthesis, protocol.NodeKind("compare_papers"):
+			return true
+		}
+	}
+	return false
+}
+
+func planRisks(refs []protocol.PaperRef) []string {
+	risks := make([]string, 0, len(refs))
+	for _, ref := range refs {
+		if ref.Inspection.FailureReason != "" {
+			risks = append(risks, fmt.Sprintf("%s: %s", ref.PaperID, ref.Inspection.FailureReason))
+			continue
+		}
+		if !ref.Inspection.ExtractableText {
+			risks = append(risks, fmt.Sprintf("%s: pdf text extraction produced too little text", ref.PaperID))
+		}
+	}
+	if len(risks) == 0 {
+		risks = append(risks, "no major inspection risks detected")
+	}
+	return risks
+}
+
+func newPlanID() string {
+	return fmt.Sprintf("plan_%d", time.Now().UnixNano())
+}
+
+func approvalSummary(plan protocol.PlanResult, nodeIDs []string) string {
+	if len(nodeIDs) == 0 {
+		return fmt.Sprintf("Plan %s is ready to execute.", plan.PlanID)
+	}
+	return fmt.Sprintf("Plan %s is ready to execute next batch: %s", plan.PlanID, strings.Join(nodeIDs, ", "))
+}
+
+func hasPatchWork(patch protocol.DagPatch) bool {
+	return len(patch.AddNodes) > 0 || len(patch.AddEdges) > 0 || len(patch.RemoveNodes) > 0 ||
+		len(patch.RemoveEdges) > 0 || len(patch.MarkSkipped) > 0 || len(patch.MarkComplete) > 0 || patch.Finalize
+}
+
+func fallbackPatchReason(reason string) string {
+	reason = strings.TrimSpace(reason)
+	if reason == "" {
+		return "dag updated"
+	}
+	return reason
+}
+
+func planFullySettled(dag protocol.PlanDAG) bool {
+	for _, node := range dag.Nodes {
+		switch node.Status {
+		case protocol.NodeStatusCompleted, protocol.NodeStatusSkipped, protocol.NodeStatusFailed:
+		default:
+			return false
+		}
+	}
+	return true
 }
 
 func (a *Agent) emit(store *storage.Store, sink EventSink, sessionID string, eventType protocol.StreamEventType, message string, payload any) error {

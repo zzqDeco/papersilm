@@ -60,6 +60,10 @@ func (s *Store) planPath(sessionID string) string {
 	return filepath.Join(s.SessionDir(sessionID), "plan.json")
 }
 
+func (s *Store) executionStatePath(sessionID string) string {
+	return filepath.Join(s.SessionDir(sessionID), "execution_state.json")
+}
+
 func (s *Store) digestsDir(sessionID string) string {
 	return filepath.Join(s.SessionDir(sessionID), "digests")
 }
@@ -118,6 +122,9 @@ func (s *Store) LoadSources(sessionID string) ([]protocol.PaperRef, error) {
 }
 
 func (s *Store) SavePlan(sessionID string, plan protocol.PlanResult) error {
+	if len(plan.DAG.Nodes) == 0 && len(plan.Steps) > 0 {
+		plan.DAG = legacyStepsToDAG(plan.Steps)
+	}
 	return s.saveJSON(s.planPath(sessionID), plan)
 }
 
@@ -138,7 +145,34 @@ func (s *Store) LoadPlan(sessionID string) (*protocol.PlanResult, error) {
 	if err != nil {
 		return nil, err
 	}
+	if len(plan.DAG.Nodes) == 0 && len(plan.Steps) > 0 {
+		plan.DAG = legacyStepsToDAG(plan.Steps)
+	}
 	return &plan, nil
+}
+
+func (s *Store) SaveExecutionState(sessionID string, state protocol.ExecutionState) error {
+	return s.saveJSON(s.executionStatePath(sessionID), state)
+}
+
+func (s *Store) DeleteExecutionState(sessionID string) error {
+	err := os.Remove(s.executionStatePath(sessionID))
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	return err
+}
+
+func (s *Store) LoadExecutionState(sessionID string) (*protocol.ExecutionState, error) {
+	var state protocol.ExecutionState
+	err := s.loadJSON(s.executionStatePath(sessionID), &state)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &state, nil
 }
 
 func (s *Store) SaveDigest(sessionID string, digest protocol.PaperDigest) error {
@@ -249,6 +283,10 @@ func (s *Store) Snapshot(sessionID string) (protocol.SessionSnapshot, error) {
 	if err != nil {
 		return protocol.SessionSnapshot{}, err
 	}
+	execution, err := s.LoadExecutionState(sessionID)
+	if err != nil {
+		return protocol.SessionSnapshot{}, err
+	}
 	digests, err := s.LoadDigests(sessionID)
 	if err != nil {
 		return protocol.SessionSnapshot{}, err
@@ -265,6 +303,7 @@ func (s *Store) Snapshot(sessionID string) (protocol.SessionSnapshot, error) {
 		Meta:      meta,
 		Sources:   sources,
 		Plan:      plan,
+		Execution: execution,
 		Digests:   digests,
 		Compare:   cmp,
 		Artifacts: artifacts,
@@ -277,6 +316,9 @@ func (s *Store) InvalidatePlanState(sessionID string) error {
 		return err
 	}
 	if err := s.DeletePlan(sessionID); err != nil {
+		return err
+	}
+	if err := s.DeleteExecutionState(sessionID); err != nil {
 		return err
 	}
 	if err := os.RemoveAll(s.digestsDir(sessionID)); err != nil && !errors.Is(err, os.ErrNotExist) {
@@ -389,4 +431,34 @@ func (s *fileCheckpointStore) Set(_ context.Context, checkPointID string, checkP
 		return err
 	}
 	return os.WriteFile(s.checkpointPath(checkPointID), checkPoint, 0o644)
+}
+
+func legacyStepsToDAG(steps []protocol.PlanStep) protocol.PlanDAG {
+	nodes := make([]protocol.PlanNode, 0, len(steps))
+	edges := make([]protocol.PlanEdge, 0, len(steps))
+	var previous string
+	for idx, step := range steps {
+		status := protocol.NodeStatusPending
+		if idx == 0 {
+			status = protocol.NodeStatusReady
+		}
+		node := protocol.PlanNode{
+			ID:            step.ID,
+			Kind:          protocol.NodeKind(step.Tool),
+			Goal:          step.Goal,
+			PaperIDs:      append([]string(nil), step.PaperIDs...),
+			WorkerProfile: protocol.WorkerProfileSupervisor,
+			Produces:      []string{step.ExpectedArtifact},
+			Required:      true,
+			Status:        status,
+			ParallelGroup: "legacy_chain",
+		}
+		if previous != "" {
+			node.DependsOn = []string{previous}
+			edges = append(edges, protocol.PlanEdge{From: previous, To: step.ID})
+		}
+		nodes = append(nodes, node)
+		previous = step.ID
+	}
+	return protocol.PlanDAG{Nodes: nodes, Edges: edges}
 }

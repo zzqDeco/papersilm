@@ -54,9 +54,11 @@ If no external provider is configured, `papersilm` falls back to a local determi
 
 `papersilm` supports three execution modes:
 
-- `plan`: inspect sources and output the proposed tool plan only
+- `plan`: inspect sources and output the proposed DAG only
 - `confirm`: stop after plan and wait for approval
 - `auto`: run through to final artifacts
+
+The current planner compiles work into an explicit DAG with role-scoped worker nodes such as `paper_summary_worker`, `experiment_worker`, `math_reasoner_worker`, and compare workers. `json` and `stream-json` outputs expose the full DAG so future GUI clients can consume the same execution graph.
 
 ## Usage
 
@@ -131,8 +133,10 @@ This repository currently includes:
 - internal tool registry
 - source normalization and inspection
 - AlphaXiv-first lookup for arXiv-compatible sources
-- heuristic single-paper distillation
-- digest-driven paper comparison
+- explicit DAG planning and execution state
+- role-scoped multi-worker execution with parallel ready-node batches
+- worker-composed single-paper distillation
+- digest-driven paper comparison and final synthesis
 - `plan | confirm | auto` permission flow
 
 ## Release Notes

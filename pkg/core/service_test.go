@@ -51,11 +51,20 @@ func TestPlanModeCreatesStructuredPlan(t *testing.T) {
 	if result.Session.Meta.State != protocol.SessionStatePlanned {
 		t.Fatalf("unexpected state: %s", result.Session.Meta.State)
 	}
-	if len(result.Plan.Steps) != 3 {
-		t.Fatalf("expected 3 steps, got %d", len(result.Plan.Steps))
+	if len(result.Plan.DAG.Nodes) != 10 {
+		t.Fatalf("expected 10 dag nodes, got %d", len(result.Plan.DAG.Nodes))
 	}
-	if result.Plan.Steps[0].Tool != "distill_paper" || result.Plan.Steps[2].Tool != "compare_papers" {
-		t.Fatalf("unexpected steps: %+v", result.Plan.Steps)
+	if !result.Plan.WillCompare {
+		t.Fatalf("expected compare branch in dag")
+	}
+	readyNodes := 0
+	for _, node := range result.Plan.DAG.Nodes {
+		if node.Status == protocol.NodeStatusReady {
+			readyNodes++
+		}
+	}
+	if readyNodes == 0 {
+		t.Fatalf("expected ready dag nodes")
 	}
 	if len(result.Digests) != 0 || result.Comparison != nil {
 		t.Fatalf("plan mode should not produce artifacts")
@@ -83,6 +92,9 @@ func TestConfirmModeInterruptAndApproveResumes(t *testing.T) {
 	}
 	if planned.Approval == nil {
 		t.Fatalf("expected approval payload")
+	}
+	if len(planned.Approval.PendingNodeIDs) == 0 {
+		t.Fatalf("expected pending node ids")
 	}
 	if planned.Session.Meta.State != protocol.SessionStateAwaitingApproval {
 		t.Fatalf("unexpected state: %s", planned.Session.Meta.State)
@@ -127,11 +139,72 @@ func TestRunPlannedExecutesSavedPlan(t *testing.T) {
 	if result.Session.Meta.State != protocol.SessionStateCompleted {
 		t.Fatalf("unexpected state: %s", result.Session.Meta.State)
 	}
+	if result.Session.Execution == nil || !result.Session.Execution.Finalized {
+		t.Fatalf("expected finalized execution state")
+	}
 	if len(result.Digests) != 1 {
 		t.Fatalf("expected 1 digest, got %d", len(result.Digests))
 	}
 	if result.Comparison != nil {
 		t.Fatalf("single paper run should not produce comparison")
+	}
+}
+
+func TestPlanModeAddsMathWorkerForDetailRequests(t *testing.T) {
+	t.Parallel()
+
+	svc, _ := newTestService(t)
+	ctx := context.Background()
+
+	pdf := writeTestPDF(t, filepath.Join(t.TempDir(), "paper.pdf"), "Paper Math")
+	result, err := svc.Execute(ctx, protocol.ClientRequest{
+		Task:           "explain the key equation and proof in this paper",
+		Sources:        []string{pdf},
+		PermissionMode: protocol.PermissionModePlan,
+		Language:       "zh",
+		Style:          "distill",
+	})
+	if err != nil {
+		t.Fatalf("Execute(plan): %v", err)
+	}
+	found := false
+	for _, node := range result.Plan.DAG.Nodes {
+		if node.Kind == protocol.NodeKindMathReasoner {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected math_reasoner node in dag")
+	}
+}
+
+func TestPlanModeAddsWebWorkerForExternalRequests(t *testing.T) {
+	t.Parallel()
+
+	svc, _ := newTestService(t)
+	ctx := context.Background()
+
+	pdf := writeTestPDF(t, filepath.Join(t.TempDir(), "paper.pdf"), "Paper Web")
+	result, err := svc.Execute(ctx, protocol.ClientRequest{
+		Task:           "summarize this paper and include latest external landscape",
+		Sources:        []string{pdf},
+		PermissionMode: protocol.PermissionModePlan,
+		Language:       "zh",
+		Style:          "distill",
+	})
+	if err != nil {
+		t.Fatalf("Execute(plan): %v", err)
+	}
+	found := false
+	for _, node := range result.Plan.DAG.Nodes {
+		if node.Kind == protocol.NodeKindWebResearch {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected web_research node in dag")
 	}
 }
 

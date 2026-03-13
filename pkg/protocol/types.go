@@ -54,6 +54,44 @@ const (
 	ContentSourceArxivPDFFallback ContentSource = "arxiv_pdf_fallback"
 )
 
+type WorkerProfile string
+
+const (
+	WorkerProfileSupervisor        WorkerProfile = "supervisor"
+	WorkerProfilePaperSummary      WorkerProfile = "paper_summary_worker"
+	WorkerProfileExperiment        WorkerProfile = "experiment_worker"
+	WorkerProfileMathReasoner      WorkerProfile = "math_reasoner_worker"
+	WorkerProfileWebResearch       WorkerProfile = "web_research_worker"
+	WorkerProfileMethodCompare     WorkerProfile = "method_compare_worker"
+	WorkerProfileExperimentCompare WorkerProfile = "experiment_compare_worker"
+	WorkerProfileResultsCompare    WorkerProfile = "results_compare_worker"
+)
+
+type NodeKind string
+
+const (
+	NodeKindPaperSummary      NodeKind = "paper_summary"
+	NodeKindExperiment        NodeKind = "experiment"
+	NodeKindMathReasoner      NodeKind = "math_reasoner"
+	NodeKindWebResearch       NodeKind = "web_research"
+	NodeKindMergeDigest       NodeKind = "merge_digest"
+	NodeKindMethodCompare     NodeKind = "method_compare"
+	NodeKindExperimentCompare NodeKind = "experiment_compare"
+	NodeKindResultsCompare    NodeKind = "results_compare"
+	NodeKindFinalSynthesis    NodeKind = "final_synthesis"
+)
+
+type NodeStatus string
+
+const (
+	NodeStatusPending   NodeStatus = "pending"
+	NodeStatusReady     NodeStatus = "ready"
+	NodeStatusRunning   NodeStatus = "running"
+	NodeStatusCompleted NodeStatus = "completed"
+	NodeStatusFailed    NodeStatus = "failed"
+	NodeStatusSkipped   NodeStatus = "skipped"
+)
+
 type SourceInspection struct {
 	PageCount          int      `json:"page_count"`
 	Title              string   `json:"title,omitempty"`
@@ -133,6 +171,86 @@ type ComparisonDigest struct {
 	GeneratedAt      time.Time             `json:"generated_at"`
 }
 
+type PlanNode struct {
+	ID            string        `json:"id"`
+	Kind          NodeKind      `json:"kind"`
+	Goal          string        `json:"goal"`
+	PaperIDs      []string      `json:"paper_ids,omitempty"`
+	WorkerProfile WorkerProfile `json:"worker_profile"`
+	DependsOn     []string      `json:"depends_on,omitempty"`
+	Produces      []string      `json:"produces,omitempty"`
+	Required      bool          `json:"required"`
+	Status        NodeStatus    `json:"status"`
+	ParallelGroup string        `json:"parallel_group,omitempty"`
+}
+
+type PlanEdge struct {
+	From string `json:"from"`
+	To   string `json:"to"`
+}
+
+type PlanDAG struct {
+	Nodes []PlanNode `json:"nodes"`
+	Edges []PlanEdge `json:"edges,omitempty"`
+}
+
+type NodeOutputRef struct {
+	NodeID     string         `json:"node_id"`
+	Kind       string         `json:"kind"`
+	Ref        string         `json:"ref,omitempty"`
+	ArtifactID string         `json:"artifact_id,omitempty"`
+	Data       map[string]any `json:"data,omitempty"`
+	CreatedAt  time.Time      `json:"created_at"`
+}
+
+type DagPatch struct {
+	AddNodes     []PlanNode `json:"add_nodes,omitempty"`
+	AddEdges     []PlanEdge `json:"add_edges,omitempty"`
+	RemoveNodes  []string   `json:"remove_nodes,omitempty"`
+	RemoveEdges  []PlanEdge `json:"remove_edges,omitempty"`
+	MarkSkipped  []string   `json:"mark_skipped,omitempty"`
+	MarkComplete []string   `json:"mark_complete,omitempty"`
+	Finalize     bool       `json:"finalize,omitempty"`
+	Reason       string     `json:"reason,omitempty"`
+}
+
+type BatchStatus string
+
+const (
+	BatchStatusPending   BatchStatus = "pending"
+	BatchStatusRunning   BatchStatus = "running"
+	BatchStatusCompleted BatchStatus = "completed"
+)
+
+type ExecutionBatch struct {
+	BatchID     string      `json:"batch_id"`
+	NodeIDs     []string    `json:"node_ids"`
+	Status      BatchStatus `json:"status"`
+	StartedAt   time.Time   `json:"started_at"`
+	CompletedAt time.Time   `json:"completed_at,omitempty"`
+}
+
+type NodeExecutionState struct {
+	NodeID        string          `json:"node_id"`
+	WorkerProfile WorkerProfile   `json:"worker_profile"`
+	Status        NodeStatus      `json:"status"`
+	Error         string          `json:"error,omitempty"`
+	Outputs       []NodeOutputRef `json:"outputs,omitempty"`
+	StartedAt     time.Time       `json:"started_at,omitempty"`
+	CompletedAt   time.Time       `json:"completed_at,omitempty"`
+}
+
+type ExecutionState struct {
+	PlanID         string               `json:"plan_id"`
+	CurrentBatchID string               `json:"current_batch_id,omitempty"`
+	PendingNodeIDs []string             `json:"pending_node_ids,omitempty"`
+	Nodes          []NodeExecutionState `json:"nodes,omitempty"`
+	Outputs        []NodeOutputRef      `json:"outputs,omitempty"`
+	BatchHistory   []ExecutionBatch     `json:"batch_history,omitempty"`
+	Finalized      bool                 `json:"finalized"`
+	UpdatedAt      time.Time            `json:"updated_at"`
+}
+
 type PlanStep struct {
 	ID               string   `json:"id"`
 	Tool             string   `json:"tool"`
@@ -145,6 +263,7 @@ type PlanResult struct {
 	PlanID           string     `json:"plan_id"`
 	Goal             string     `json:"goal"`
 	SourceSummary    []PaperRef `json:"source_summary"`
+	DAG              PlanDAG    `json:"dag"`
 	Steps            []PlanStep `json:"steps"`
 	WillCompare      bool       `json:"will_compare"`
 	Risks            []string   `json:"risks"`
@@ -153,12 +272,13 @@ type PlanResult struct {
 }
 
 type ApprovalRequest struct {
-	PlanID        string    `json:"plan_id"`
-	CheckpointID  string    `json:"checkpoint_id"`
-	InterruptID   string    `json:"interrupt_id"`
-	Summary       string    `json:"summary"`
-	RequiresInput bool      `json:"requires_input"`
-	CreatedAt     time.Time `json:"created_at"`
+	PlanID         string    `json:"plan_id"`
+	CheckpointID   string    `json:"checkpoint_id"`
+	InterruptID    string    `json:"interrupt_id"`
+	PendingNodeIDs []string  `json:"pending_node_ids,omitempty"`
+	Summary        string    `json:"summary"`
+	RequiresInput  bool      `json:"requires_input"`
+	CreatedAt      time.Time `json:"created_at"`
 }
 
 type PlanProgressStatus string
@@ -171,13 +291,16 @@ const (
 )
 
 type PlanProgress struct {
-	PlanID    string             `json:"plan_id"`
-	StepID    string             `json:"step_id,omitempty"`
-	Tool      string             `json:"tool,omitempty"`
-	Status    PlanProgressStatus `json:"status"`
-	Message   string             `json:"message,omitempty"`
-	Error     string             `json:"error,omitempty"`
-	CreatedAt time.Time          `json:"created_at"`
+	PlanID        string             `json:"plan_id"`
+	StepID        string             `json:"step_id,omitempty"`
+	NodeID        string             `json:"node_id,omitempty"`
+	Tool          string             `json:"tool,omitempty"`
+	WorkerProfile WorkerProfile      `json:"worker_profile,omitempty"`
+	BatchID       string             `json:"batch_id,omitempty"`
+	Status        PlanProgressStatus `json:"status"`
+	Message       string             `json:"message,omitempty"`
+	Error         string             `json:"error,omitempty"`
+	CreatedAt     time.Time          `json:"created_at"`
 }
 
 type ArtifactManifest struct {
@@ -224,6 +347,7 @@ type SessionSnapshot struct {
 	Meta      SessionMeta        `json:"meta"`
 	Sources   []PaperRef         `json:"sources"`
 	Plan      *PlanResult        `json:"plan,omitempty"`
+	Execution *ExecutionState    `json:"execution,omitempty"`
 	Digests   []PaperDigest      `json:"digests,omitempty"`
 	Compare   *ComparisonDigest  `json:"comparison,omitempty"`
 	Artifacts []ArtifactManifest `json:"artifacts,omitempty"`

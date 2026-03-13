@@ -3,36 +3,12 @@ package pipeline
 import (
 	"sort"
 	"strings"
-	"time"
 
 	"github.com/zzqDeco/papersilm/pkg/protocol"
 )
 
 func (s *Service) Compare(goal string, digests []protocol.PaperDigest, lang, style string) protocol.ComparisonDigest {
-	sortDigests(digests)
-	methodRow := protocol.ComparisonMatrixRow{Dimension: "method", Values: map[string]string{}}
-	experimentRow := protocol.ComparisonMatrixRow{Dimension: "experiment", Values: map[string]string{}}
-	resultRow := protocol.ComparisonMatrixRow{Dimension: "results", Values: map[string]string{}}
-	for _, digest := range digests {
-		methodRow.Values[digest.PaperID] = firstLine(digest.MethodSummary)
-		experimentRow.Values[digest.PaperID] = firstLine(digest.ExperimentSummary)
-		resultRow.Values[digest.PaperID] = firstResult(digest.KeyResults)
-	}
-	cmp := protocol.ComparisonDigest{
-		PaperIDs:         collectPaperIDs(digests),
-		Goal:             goal,
-		PaperSummaries:   digests,
-		MethodMatrix:     []protocol.ComparisonMatrixRow{methodRow},
-		ExperimentMatrix: []protocol.ComparisonMatrixRow{experimentRow},
-		ResultMatrix:     []protocol.ComparisonMatrixRow{resultRow},
-		Synthesis:        buildSynthesis(digests),
-		Limitations:      []string{"该对比基于单篇结构化摘要聚合而来，建议对关键实验和统计显著性回到原文核对。"},
-		Language:         lang,
-		Style:            style,
-		GeneratedAt:      time.Now().UTC(),
-	}
-	cmp.Markdown = renderComparison(cmp)
-	return cmp
+	return s.BuildFinalComparison(goal, digests, s.BuildMethodMatrix(digests), s.BuildExperimentMatrix(digests), s.BuildResultsMatrix(digests), lang, style)
 }
 
 func collectPaperIDs(digests []protocol.PaperDigest) []string {

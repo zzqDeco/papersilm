@@ -22,23 +22,18 @@ type chunk struct {
 }
 
 func (s *Service) Distill(ctx context.Context, sessionID string, ref protocol.PaperRef, goal, lang, style string) (protocol.PaperDigest, error) {
-	if supportsAlphaXiv(ref) {
-		if digest, ok, err := s.distillFromAlphaXiv(ctx, sessionID, ref, goal, lang, style); err != nil {
-			return protocol.PaperDigest{}, err
-		} else if ok {
-			return digest, nil
-		}
-	}
-
-	pages, err := s.readPagesCache(sessionID, ref.PaperID)
+	material, err := s.LoadSourceMaterial(ctx, sessionID, ref, goal)
 	if err != nil {
 		return protocol.PaperDigest{}, err
 	}
-	provenance := protocol.ContentSourceUnknown
-	if supportsAlphaXiv(ref) {
-		provenance = protocol.ContentSourceArxivPDFFallback
+	summary := s.BuildPaperSummary(ctx, material, lang, style)
+	experiment := s.BuildExperimentOutput(ctx, material)
+	var mathOutput *MathReasoningOutput
+	if needsDetailedContent(goal) {
+		math := s.BuildMathReasoning(ctx, material, goal)
+		mathOutput = &math
 	}
-	return s.digestFromChunks(ctx, ref, s.buildChunks(ctx, pages), extractTitle(pages), lang, style, provenance), nil
+	return s.MergePaperDigest(summary, experiment, mathOutput, nil, lang, style), nil
 }
 
 func (s *Service) distillFromAlphaXiv(ctx context.Context, sessionID string, ref protocol.PaperRef, goal, lang, style string) (protocol.PaperDigest, bool, error) {

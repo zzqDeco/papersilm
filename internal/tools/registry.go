@@ -30,6 +30,10 @@ func New(p *pipeline.Service) *Registry {
 	return &Registry{pipeline: p}
 }
 
+func (r *Registry) Pipeline() *pipeline.Service {
+	return r.pipeline
+}
+
 type DistillToolInput struct {
 	PaperID string `json:"paper_id"`
 	Goal    string `json:"goal,omitempty"`
