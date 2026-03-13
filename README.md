@@ -78,6 +78,18 @@ papersilm -p "compare these papers" \
   --permission-mode auto
 ```
 
+You can also pass a raw paper ID or an AlphaXiv URL. For arXiv-capable inputs, `papersilm` now prefers `AlphaXiv overview -> AlphaXiv full text -> arXiv PDF fallback`:
+
+```bash
+papersilm -p "summarize this paper" \
+  --source 1706.03762 \
+  --permission-mode auto
+
+papersilm -p "explain equation 3 in this paper" \
+  --source https://alphaxiv.org/overview/1706.03762 \
+  --permission-mode auto
+```
+
 Interactive mode:
 
 ```bash
@@ -118,6 +130,7 @@ This repository currently includes:
 - CLI with REPL and `-p/--print` modes
 - internal tool registry
 - source normalization and inspection
+- AlphaXiv-first lookup for arXiv-compatible sources
 - heuristic single-paper distillation
 - digest-driven paper comparison
 - `plan | confirm | auto` permission flow

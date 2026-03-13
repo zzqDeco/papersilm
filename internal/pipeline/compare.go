@@ -78,6 +78,11 @@ func renderComparison(c protocol.ComparisonDigest) string {
 	writeSection(&b, "论文列表", c.PaperIDs)
 	summaries := make([]string, 0, len(c.PaperSummaries))
 	for _, digest := range c.PaperSummaries {
+		label := provenanceLabel(digest.ContentProvenance)
+		if label != "" {
+			summaries = append(summaries, digest.PaperID+" ["+label+"]: "+digest.OneLineSummary)
+			continue
+		}
 		summaries = append(summaries, digest.PaperID+": "+digest.OneLineSummary)
 	}
 	writeSection(&b, "逐篇一句话总结", summaries)

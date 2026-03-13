@@ -2,6 +2,7 @@ package pipeline
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"github.com/zzqDeco/papersilm/internal/config"
@@ -29,7 +30,7 @@ func TestDistillFromCachedPages(t *testing.T) {
 			Title: "A Strong Paper Title",
 		},
 	}
-	digest, err := svc.Distill(context.Background(), "sess_1", ref, "zh", "distill")
+	digest, err := svc.Distill(context.Background(), "sess_1", ref, "summarize this paper", "zh", "distill")
 	if err != nil {
 		t.Fatalf("Distill: %v", err)
 	}
@@ -41,5 +42,11 @@ func TestDistillFromCachedPages(t *testing.T) {
 	}
 	if digest.Markdown == "" {
 		t.Fatalf("expected markdown output")
+	}
+	if digest.ContentProvenance != protocol.ContentSourceUnknown {
+		t.Fatalf("expected local pdf path to keep unknown provenance, got %s", digest.ContentProvenance)
+	}
+	if strings.Contains(digest.Markdown, "来源：") {
+		t.Fatalf("expected local pdf markdown to omit provenance label, got %q", digest.Markdown)
 	}
 }

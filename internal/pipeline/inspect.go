@@ -25,6 +25,28 @@ type Page struct {
 }
 
 func (s *Service) InspectSource(ctx context.Context, sessionID string, ref protocol.PaperRef) (protocol.PaperRef, []Page, error) {
+	if supportsAlphaXiv(ref) {
+		if overview, ok, err := s.LookupAlphaXivOverview(ctx, sessionID, ref); err != nil {
+			ref.Status = protocol.SourceStatusFailed
+			ref.Inspection.ExtractableText = false
+			ref.Inspection.FailureReason = err.Error()
+			return ref, nil, err
+		} else if ok {
+			ref = inspectMarkdownContent(ref, overview, protocol.ContentSourceAlphaXivOverview)
+			return ref, nil, nil
+		}
+
+		if fullText, ok, err := s.LookupAlphaXivFullText(ctx, sessionID, ref); err != nil {
+			ref.Status = protocol.SourceStatusFailed
+			ref.Inspection.ExtractableText = false
+			ref.Inspection.FailureReason = err.Error()
+			return ref, nil, err
+		} else if ok {
+			ref = inspectMarkdownContent(ref, fullText, protocol.ContentSourceAlphaXivFullText)
+			return ref, nil, nil
+		}
+	}
+
 	path, err := s.ensureLocalPDF(ctx, sessionID, ref)
 	if err != nil {
 		ref.Status = protocol.SourceStatusFailed
@@ -33,6 +55,11 @@ func (s *Service) InspectSource(ctx context.Context, sessionID string, ref proto
 		return ref, nil, err
 	}
 	ref.LocalPath = path
+	if supportsAlphaXiv(ref) {
+		ref.ContentProvenance = protocol.ContentSourceArxivPDFFallback
+	} else {
+		ref.ContentProvenance = protocol.ContentSourceUnknown
+	}
 
 	pages, err := s.loadPages(ctx, path)
 	if err != nil {
@@ -58,11 +85,26 @@ func (s *Service) InspectSource(ctx context.Context, sessionID string, ref proto
 	return ref, pages, nil
 }
 
+func inspectMarkdownContent(ref protocol.PaperRef, markdown string, provenance protocol.ContentSource) protocol.PaperRef {
+	ref.Status = protocol.SourceStatusInspected
+	ref.ContentProvenance = provenance
+	ref.Inspection.PageCount = 0
+	ref.Inspection.ExtractableText = hasEnoughMarkdownText(markdown)
+	ref.Inspection.Title = fallback(extractAlphaTitle(markdown), ref.ResolvedPaperID)
+	ref.Inspection.SectionHints = extractAlphaSectionHints(markdown)
+	ref.Inspection.Comparable = ref.Inspection.ExtractableText
+	ref.Inspection.SampleIntroduction = alphaIntroSnippet(markdown)
+	if !ref.Inspection.ExtractableText {
+		ref.Inspection.FailureReason = "alphaxiv markdown extraction produced too little text"
+	}
+	return ref
+}
+
 func (s *Service) ensureLocalPDF(ctx context.Context, sessionID string, ref protocol.PaperRef) (string, error) {
 	if ref.LocalPath != "" {
 		return ref.LocalPath, nil
 	}
-	url, err := canonicalArxivPDF(ref.URI)
+	url, err := canonicalArxivPDF(s.arxivBaseURL, ref)
 	if err != nil {
 		return "", err
 	}
@@ -77,7 +119,11 @@ func (s *Service) ensureLocalPDF(ctx context.Context, sessionID string, ref prot
 	if err != nil {
 		return "", err
 	}
-	resp, err := http.DefaultClient.Do(req)
+	client := s.httpClient
+	if client == nil {
+		client = http.DefaultClient
+	}
+	resp, err := client.Do(req)
 	if err != nil {
 		return "", err
 	}

@@ -167,7 +167,7 @@ func plannerInputMessages(goal string, refs []protocol.PaperRef) ([]adk.Message,
 		return nil, err
 	}
 	return []adk.Message{
-		schema.SystemMessage("You are a paper workflow planner. Create only executable tool steps. Never add background-writing or literature-review steps."),
+		schema.SystemMessage("You are a paper workflow planner. For arXiv paper IDs, arXiv URLs, and AlphaXiv URLs, assume an AlphaXiv-first lookup policy exists behind the tools. Create only executable high-level tool steps. Never add download-PDF, background-writing, or literature-review steps."),
 		schema.UserMessage(string(raw)),
 	}, nil
 }
@@ -191,7 +191,7 @@ func executorInputMessages(goal, lang, style string, in *planexecute.ExecutionCo
 		return nil, err
 	}
 	return []adk.Message{
-		schema.SystemMessage("You are a paper execution agent. Execute exactly one tool step at a time."),
+		schema.SystemMessage("You are a paper execution agent. Execute exactly one tool step at a time. When executing distill_paper, pass the original user goal to the tool. For arXiv-capable sources, the tool must prefer AlphaXiv overview, escalate to AlphaXiv full text for equation/table/figure/appendix/proof/derivation/section detail requests or insufficient overview, and only fall back to arXiv PDF when AlphaXiv content is unavailable. Final outputs must preserve provenance."),
 		schema.UserMessage(string(raw)),
 	}, nil
 }
@@ -212,7 +212,7 @@ func replannerInputMessages(goal string, plan *executionPlan, digestIDs []string
 		return nil, err
 	}
 	return []adk.Message{
-		schema.SystemMessage("You are a replanner. Remove completed steps, prune impossible compare steps, and respond when no steps remain."),
+		schema.SystemMessage("You are a replanner. Remove completed steps, prune impossible compare steps, and keep distill_paper steps even when AlphaXiv content is unavailable because they may still succeed through arXiv PDF fallback. Respond when no steps remain."),
 		schema.UserMessage(string(raw)),
 	}, nil
 }

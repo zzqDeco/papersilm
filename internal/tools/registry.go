@@ -32,6 +32,7 @@ func New(p *pipeline.Service) *Registry {
 
 type DistillToolInput struct {
 	PaperID string `json:"paper_id"`
+	Goal    string `json:"goal,omitempty"`
 	Lang    string `json:"lang,omitempty"`
 	Style   string `json:"style,omitempty"`
 }
@@ -258,6 +259,14 @@ func (r *Registry) BuildExecutionTools(ctx context.Context, store *storage.Store
 	return out, nil
 }
 
+func (r *Registry) LookupAlphaXivOverview(ctx context.Context, sessionID string, ref protocol.PaperRef) (string, bool, error) {
+	return r.pipeline.LookupAlphaXivOverview(ctx, sessionID, ref)
+}
+
+func (r *Registry) LookupAlphaXivFullText(ctx context.Context, sessionID string, ref protocol.PaperRef) (string, bool, error) {
+	return r.pipeline.LookupAlphaXivFullText(ctx, sessionID, ref)
+}
+
 func (r *Registry) buildDistillTool(ctx context.Context, store *storage.Store, sessionID string) (tool.BaseTool, error) {
 	workflow := compose.NewWorkflow[*DistillToolInput, *DistillToolResult]()
 	workflow.AddLambdaNode("distill", compose.InvokableLambda(func(ctx context.Context, input *DistillToolInput) (*DistillToolResult, error) {
@@ -271,7 +280,7 @@ func (r *Registry) buildDistillTool(ctx context.Context, store *storage.Store, s
 		}
 		lang := fallbackValue(input.Lang, "zh")
 		style := fallbackValue(input.Style, "distill")
-		digest, err := r.pipeline.Distill(ctx, sessionID, ref, lang, style)
+		digest, err := r.pipeline.Distill(ctx, sessionID, ref, input.Goal, lang, style)
 		if err != nil {
 			return &DistillToolResult{PaperID: input.PaperID, Status: "failed", Error: err.Error()}, nil
 		}
@@ -291,7 +300,7 @@ func (r *Registry) buildDistillTool(ctx context.Context, store *storage.Store, s
 		}, nil
 	})).AddInput(compose.START)
 	workflow.End().AddInput("distill")
-	return graphtool.NewInvokableGraphTool[*DistillToolInput, *DistillToolResult](workflow, "distill_paper", "Distill a single paper into a structured digest artifact.")
+	return graphtool.NewInvokableGraphTool[*DistillToolInput, *DistillToolResult](workflow, "distill_paper", "Distill a single paper into a structured digest artifact using AlphaXiv overview first for arXiv-capable sources, then AlphaXiv full text, and finally arXiv PDF fallback.")
 }
 
 func (r *Registry) buildCompareTool(ctx context.Context, store *storage.Store, sessionID string) (tool.BaseTool, error) {

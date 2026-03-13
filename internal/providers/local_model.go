@@ -137,6 +137,7 @@ func (m *LocalToolCallingChatModel) generateExecutor(raw string) (*schema.Messag
 	case "distill_paper":
 		args := map[string]any{
 			"paper_id": in.Step.PaperIDs[0],
+			"goal":     in.Goal,
 			"lang":     in.Lang,
 			"style":    in.Style,
 		}

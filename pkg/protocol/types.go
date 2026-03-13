@@ -5,9 +5,12 @@ import "time"
 type SourceType string
 
 const (
-	SourceTypeLocalPDF SourceType = "local_pdf"
-	SourceTypeArxivAbs SourceType = "arxiv_abs"
-	SourceTypeArxivPDF SourceType = "arxiv_pdf"
+	SourceTypeLocalPDF         SourceType = "local_pdf"
+	SourceTypePaperID          SourceType = "paper_id"
+	SourceTypeArxivAbs         SourceType = "arxiv_abs"
+	SourceTypeArxivPDF         SourceType = "arxiv_pdf"
+	SourceTypeAlphaXivOverview SourceType = "alphaxiv_overview"
+	SourceTypeAlphaXivAbs      SourceType = "alphaxiv_abs"
 )
 
 type SourceStatus string
@@ -42,6 +45,15 @@ const (
 	ArtifactFormatJSON     ArtifactFormat = "json"
 )
 
+type ContentSource string
+
+const (
+	ContentSourceUnknown          ContentSource = "unknown"
+	ContentSourceAlphaXivOverview ContentSource = "alphaxiv_overview"
+	ContentSourceAlphaXivFullText ContentSource = "alphaxiv_full_text"
+	ContentSourceArxivPDFFallback ContentSource = "arxiv_pdf_fallback"
+)
+
 type SourceInspection struct {
 	PageCount          int      `json:"page_count"`
 	Title              string   `json:"title,omitempty"`
@@ -53,13 +65,16 @@ type SourceInspection struct {
 }
 
 type PaperRef struct {
-	PaperID    string           `json:"paper_id"`
-	URI        string           `json:"uri"`
-	LocalPath  string           `json:"local_path,omitempty"`
-	SourceType SourceType       `json:"source_type"`
-	Label      string           `json:"label,omitempty"`
-	Status     SourceStatus     `json:"status"`
-	Inspection SourceInspection `json:"inspection,omitempty"`
+	PaperID                string           `json:"paper_id"`
+	URI                    string           `json:"uri"`
+	LocalPath              string           `json:"local_path,omitempty"`
+	ResolvedPaperID        string           `json:"resolved_paper_id,omitempty"`
+	SourceType             SourceType       `json:"source_type"`
+	Label                  string           `json:"label,omitempty"`
+	Status                 SourceStatus     `json:"status"`
+	PreferredContentSource ContentSource    `json:"preferred_content_source,omitempty"`
+	ContentProvenance      ContentSource    `json:"content_provenance,omitempty"`
+	Inspection             SourceInspection `json:"inspection,omitempty"`
 }
 
 type Citation struct {
@@ -77,22 +92,23 @@ type KeyResult struct {
 }
 
 type PaperDigest struct {
-	PaperID              string      `json:"paper_id"`
-	Title                string      `json:"title"`
-	Problem              string      `json:"problem"`
-	OneLineSummary       string      `json:"one_line_summary"`
-	MethodSummary        []string    `json:"method_summary"`
-	ExperimentSummary    []string    `json:"experiment_summary"`
-	KeyResults           []KeyResult `json:"key_results"`
-	Conclusions          []string    `json:"conclusions"`
-	Limitations          []string    `json:"limitations"`
-	Citations            []Citation  `json:"citations"`
-	Markdown             string      `json:"markdown,omitempty"`
-	ArtifactID           string      `json:"artifact_id,omitempty"`
-	Language             string      `json:"language"`
-	Style                string      `json:"style"`
-	GeneratedAt          time.Time   `json:"generated_at"`
-	HasBackgroundOmitted bool        `json:"has_background_omitted"`
+	PaperID              string        `json:"paper_id"`
+	Title                string        `json:"title"`
+	Problem              string        `json:"problem"`
+	OneLineSummary       string        `json:"one_line_summary"`
+	MethodSummary        []string      `json:"method_summary"`
+	ExperimentSummary    []string      `json:"experiment_summary"`
+	KeyResults           []KeyResult   `json:"key_results"`
+	Conclusions          []string      `json:"conclusions"`
+	Limitations          []string      `json:"limitations"`
+	Citations            []Citation    `json:"citations"`
+	Markdown             string        `json:"markdown,omitempty"`
+	ArtifactID           string        `json:"artifact_id,omitempty"`
+	Language             string        `json:"language"`
+	Style                string        `json:"style"`
+	ContentProvenance    ContentSource `json:"content_provenance"`
+	GeneratedAt          time.Time     `json:"generated_at"`
+	HasBackgroundOmitted bool          `json:"has_background_omitted"`
 }
 
 type ComparisonMatrixRow struct {

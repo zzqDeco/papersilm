@@ -21,15 +21,65 @@ type chunk struct {
 	Content string
 }
 
-func (s *Service) Distill(ctx context.Context, sessionID string, ref protocol.PaperRef, lang, style string) (protocol.PaperDigest, error) {
+func (s *Service) Distill(ctx context.Context, sessionID string, ref protocol.PaperRef, goal, lang, style string) (protocol.PaperDigest, error) {
+	if supportsAlphaXiv(ref) {
+		if digest, ok, err := s.distillFromAlphaXiv(ctx, sessionID, ref, goal, lang, style); err != nil {
+			return protocol.PaperDigest{}, err
+		} else if ok {
+			return digest, nil
+		}
+	}
+
 	pages, err := s.readPagesCache(sessionID, ref.PaperID)
 	if err != nil {
 		return protocol.PaperDigest{}, err
 	}
-	chunks := s.buildChunks(ctx, pages)
+	provenance := protocol.ContentSourceUnknown
+	if supportsAlphaXiv(ref) {
+		provenance = protocol.ContentSourceArxivPDFFallback
+	}
+	return s.digestFromChunks(ctx, ref, s.buildChunks(ctx, pages), extractTitle(pages), lang, style, provenance), nil
+}
+
+func (s *Service) distillFromAlphaXiv(ctx context.Context, sessionID string, ref protocol.PaperRef, goal, lang, style string) (protocol.PaperDigest, bool, error) {
+	preferFullText := ref.PreferredContentSource == protocol.ContentSourceAlphaXivFullText
+	detailRequested := needsDetailedContent(goal)
+
+	if !preferFullText {
+		if overview, ok, err := s.LookupAlphaXivOverview(ctx, sessionID, ref); err != nil {
+			return protocol.PaperDigest{}, false, err
+		} else if ok {
+			if !detailRequested || alphaOverviewSupportsDetail(goal, overview) {
+				return s.digestFromChunks(ctx, ref, alphaMarkdownToChunks(overview), extractAlphaTitle(overview), lang, style, protocol.ContentSourceAlphaXivOverview), true, nil
+			}
+		}
+	}
+
+	if fullText, ok, err := s.LookupAlphaXivFullText(ctx, sessionID, ref); err != nil {
+		return protocol.PaperDigest{}, false, err
+	} else if ok {
+		return s.digestFromChunks(ctx, ref, s.buildChunks(ctx, []Page{{Page: 0, Content: fullText}}), extractAlphaTitle(fullText), lang, style, protocol.ContentSourceAlphaXivFullText), true, nil
+	}
+
+	if preferFullText {
+		if overview, ok, err := s.LookupAlphaXivOverview(ctx, sessionID, ref); err != nil {
+			return protocol.PaperDigest{}, false, err
+		} else if ok {
+			return s.digestFromChunks(ctx, ref, alphaMarkdownToChunks(overview), extractAlphaTitle(overview), lang, style, protocol.ContentSourceAlphaXivOverview), true, nil
+		}
+	}
+
+	return protocol.PaperDigest{}, false, nil
+}
+
+func (s *Service) digestFromChunks(ctx context.Context, ref protocol.PaperRef, chunks []chunk, fallbackTitle, lang, style string, provenance protocol.ContentSource) protocol.PaperDigest {
+	_ = ctx
 	title := ref.Inspection.Title
 	if title == "" {
-		title = extractTitle(pages)
+		title = fallbackTitle
+	}
+	if title == "" {
+		title = fallback(ref.ResolvedPaperID, ref.PaperID)
 	}
 	problem := firstSentence(preferredContent(chunks, "abstract", "introduction"))
 	method := topSentences(preferredContent(chunks, "method", "abstract"), 4)
@@ -54,11 +104,12 @@ func (s *Service) Distill(ctx context.Context, sessionID string, ref protocol.Pa
 		Citations:            collectDigestCitations(results),
 		Language:             lang,
 		Style:                style,
+		ContentProvenance:    provenance,
 		GeneratedAt:          time.Now().UTC(),
 		HasBackgroundOmitted: true,
 	}
 	digest.Markdown = renderPaperDigest(digest)
-	return digest, nil
+	return digest
 }
 
 func (s *Service) buildChunks(ctx context.Context, pages []Page) []chunk {
@@ -330,6 +381,11 @@ func renderPaperDigest(d protocol.PaperDigest) string {
 	b.WriteString("# ")
 	b.WriteString(d.Title)
 	b.WriteString("\n\n")
+	if label := provenanceLabel(d.ContentProvenance); label != "" {
+		b.WriteString("来源：")
+		b.WriteString(label)
+		b.WriteString("\n\n")
+	}
 	writeSection(&b, "一句话总结", []string{d.OneLineSummary})
 	writeSection(&b, "这篇论文做了什么", []string{d.Problem})
 	writeSection(&b, "方法核心", d.MethodSummary)
@@ -363,4 +419,60 @@ func writeSection(b *strings.Builder, title string, lines []string) {
 		b.WriteString("\n")
 	}
 	b.WriteString("\n")
+}
+
+func provenanceLabel(source protocol.ContentSource) string {
+	switch source {
+	case protocol.ContentSourceAlphaXivOverview:
+		return "AlphaXiv overview"
+	case protocol.ContentSourceAlphaXivFullText:
+		return "AlphaXiv full text"
+	case protocol.ContentSourceArxivPDFFallback:
+		return "arXiv PDF fallback"
+	default:
+		return ""
+	}
+}
+
+func needsDetailedContent(goal string) bool {
+	l := strings.ToLower(strings.TrimSpace(goal))
+	if l == "" {
+		return false
+	}
+	for _, keyword := range []string{
+		"equation", "table", "figure", "appendix", "proof", "derivation", "section",
+		"公式", "表格", "图", "附录", "证明", "推导", "某一节",
+	} {
+		if strings.Contains(l, keyword) {
+			return true
+		}
+	}
+	return false
+}
+
+func alphaOverviewSupportsDetail(goal, overview string) bool {
+	if !needsDetailedContent(goal) {
+		return true
+	}
+	required := make([]string, 0, 4)
+	lowerGoal := strings.ToLower(goal)
+	lowerOverview := strings.ToLower(overview)
+	for _, keyword := range []string{
+		"equation", "table", "figure", "appendix", "proof", "derivation", "section",
+		"公式", "表格", "图", "附录", "证明", "推导", "某一节",
+	} {
+		if strings.Contains(lowerGoal, keyword) {
+			required = append(required, keyword)
+		}
+	}
+	required = append(required, numberPattern.FindAllString(lowerGoal, -1)...)
+	if len(required) == 0 {
+		return false
+	}
+	for _, token := range required {
+		if !strings.Contains(lowerOverview, token) {
+			return false
+		}
+	}
+	return true
 }
