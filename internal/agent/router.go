@@ -118,7 +118,7 @@ func (a *Agent) Execute(ctx context.Context, store *storage.Store, sink EventSin
 		if err != nil {
 			return protocol.RunResult{}, err
 		}
-		return protocol.RunResult{Session: snapshot, Plan: &planResult}, nil
+		return protocol.RunResult{Session: snapshot, Plan: snapshot.Plan}, nil
 	case protocol.PermissionModeConfirm:
 		return a.startConfirmExecution(store, req.SessionID, meta, planResult, execState)
 	default:
@@ -210,7 +210,7 @@ func (a *Agent) Approve(ctx context.Context, store *storage.Store, sink EventSin
 		if err != nil {
 			return protocol.RunResult{}, err
 		}
-		return protocol.RunResult{Session: snapshot, Plan: planResult}, nil
+		return protocol.RunResult{Session: snapshot, Plan: snapshot.Plan}, nil
 	}
 
 	meta.State = protocol.SessionStateRunning
@@ -281,6 +281,11 @@ func (a *Agent) planSession(ctx context.Context, store *storage.Store, sink Even
 	if err := store.SaveExecutionState(sessionID, state); err != nil {
 		return protocol.PlanResult{}, nil, err
 	}
+	snapshot, err := store.Snapshot(sessionID)
+	if err != nil {
+		return protocol.PlanResult{}, nil, err
+	}
+	planResult.TaskBoard = snapshot.TaskBoard
 	if err := a.emit(store, sink, sessionID, protocol.EventPlan, "plan ready", planResult); err != nil {
 		return protocol.PlanResult{}, nil, err
 	}
@@ -311,7 +316,7 @@ func (a *Agent) startConfirmExecution(store *storage.Store, sessionID string, me
 	}
 	return protocol.RunResult{
 		Session: snapshot,
-		Plan:    &planResult,
+		Plan:    snapshot.Plan,
 		Approval: &protocol.ApprovalRequest{
 			PlanID:         planResult.PlanID,
 			CheckpointID:   checkpointID,
@@ -469,7 +474,7 @@ func (a *Agent) runDAGExecution(ctx context.Context, store *storage.Store, sink 
 	}
 	return protocol.RunResult{
 		Session:    snapshot,
-		Plan:       &planResult,
+		Plan:       snapshot.Plan,
 		Digests:    snapshot.Digests,
 		Comparison: snapshot.Compare,
 		Artifacts:  snapshot.Artifacts,
