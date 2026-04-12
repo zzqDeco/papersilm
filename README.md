@@ -150,6 +150,12 @@ This repository currently includes:
 - no OCR
 - no GUI build
 
+## Documentation
+
+- `doc/` contains project-level technical documentation.
+- `doc/src/` mirrors non-test source paths with per-file technical docs such as `doc/src/internal/pipeline/service.go.plan.md`.
+- `plan/` is reserved for current actionable implementation plans and currently contains only a placeholder `README.md`.
+
 ## Development
 
 Run tests:
