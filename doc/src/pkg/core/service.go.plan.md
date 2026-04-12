@@ -9,17 +9,18 @@
 
 ## 2. 核心职责
 - 提供核心服务门面，把存储层、Agent 和事件 sink 组装成会话级公共操作接口。
-- 负责新建会话、加载会话、执行任务、审批、运行已规划任务和附加来源。
+- 负责新建会话、加载会话、执行任务、审批、运行已规划任务、附加来源，以及对 paper workspace 的最小读写操作。
 
 ## 3. 输入与输出
-- 输入来源: 上层 CLI/REPL 传入的 `ClientRequest`、会话 ID、来源列表与审批结果。
-- 输出结果: `RunResult`、`SessionMeta`、`SessionSnapshot` 以及追加到存储层的事件。
+- 输入来源: 上层 CLI/REPL 传入的 `ClientRequest`、会话 ID、来源列表、审批结果，以及 workspace note/annotation 内容。
+- 输出结果: `RunResult`、`SessionMeta`、`SessionSnapshot`、`PaperWorkspace` 列表，以及追加到存储层的事件。
 
 ## 4. 关键实现细节
 - 主要类型: `EventSink`、`Service`。
-- 关键函数/方法: `New`、`NewSession`、`LoadSession`、`LatestSession`、`Execute`、`RunPlanned`、`Approve`、`AttachSources` 等。
+- 关键函数/方法: `New`、`NewSession`、`LoadSession`、`LatestSession`、`Execute`、`RunPlanned`、`Approve`、`AttachSources`、`LoadWorkspaces`、`AddWorkspaceNote`、`AddWorkspaceAnnotation` 等。
 - `NewSession()` 负责生成 session ID、写入初始元数据并发送初始化事件。
 - `Execute()` 会在缺少 session ID 时先创建会话，再把请求交给 Agent。
+- workspace 相关方法负责校验 paper 是否存在、生成 note/annotation 元数据，并通过存储层回写人工状态。
 - `emit()` 同时向 sink 和 session event log 写入事件。
 
 ## 5. 依赖关系

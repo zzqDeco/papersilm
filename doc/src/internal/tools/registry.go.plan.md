@@ -9,11 +9,11 @@
 
 ## 2. 核心职责
 - 维护 `papersilm` 可用工具集合，把 pipeline 能力包装成 attach/inspect/distill/compare/export/list assets 等工具。
-- 为审批场景、artifact 导出和会话资产查询提供统一的工具层入口。
+- 为审批场景、artifact 导出、会话资产查询和 workspace 暴露提供统一的工具层入口。
 
 ## 3. 输入与输出
 - 输入来源: `pipeline.Service`、会话存储、session ID、工具输入结构以及 tool runtime 上下文。
-- 输出结果: `tool.BaseTool` 列表、来源列表、摘要/对比产物、artifact manifest 和会话资产集合。
+- 输出结果: `tool.BaseTool` 列表、来源列表、摘要/对比产物、artifact manifest 和包含 workspace 的会话资产集合。
 
 ## 4. 关键实现细节
 - 主要类型: `Registry`、`DistillToolInput`、`DistillToolResult`、`CompareToolInput`、`CompareToolResult`、`ExportArtifactInput`、`ExportArtifactResult`、`SessionAssets`、`approvalToolInput`。
@@ -21,6 +21,7 @@
 - `AttachSources()` / `InspectSources()` 负责来源去重、检查与计划失效。
 - `BuildExecutionTools()` 根据是否需要审批，组装审批、distill、compare、export、list assets 等工具。
 - `buildDistillTool()` 与 `buildCompareTool()` 用 graph tool 包装具体 workflow。
+- `list_session_assets` 会直接返回 `SessionSnapshot` 中已经 hydration 的 `workspaces`。
 - `writeArtifact()` 在工具层也复用统一的 artifact 落盘约定。
 
 ## 5. 依赖关系

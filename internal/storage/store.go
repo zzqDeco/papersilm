@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/cloudwego/eino/adk"
@@ -17,6 +18,15 @@ import (
 
 type Store struct {
 	baseDir string
+}
+
+type workspaceState struct {
+	PaperID     string                     `json:"paper_id"`
+	Notes       []protocol.PaperNote       `json:"notes,omitempty"`
+	Annotations []protocol.PaperAnnotation `json:"annotations,omitempty"`
+	Similar     []protocol.SimilarPaperRef `json:"similar,omitempty"`
+	CreatedAt   time.Time                  `json:"created_at"`
+	UpdatedAt   time.Time                  `json:"updated_at"`
 }
 
 func New(baseDir string) *Store {
@@ -76,6 +86,14 @@ func (s *Store) checkpointsDir(sessionID string) string {
 	return filepath.Join(s.SessionDir(sessionID), "checkpoints")
 }
 
+func (s *Store) workspacesDir(sessionID string) string {
+	return filepath.Join(s.SessionDir(sessionID), "workspaces")
+}
+
+func (s *Store) workspacePath(sessionID, paperID string) string {
+	return filepath.Join(s.workspacesDir(sessionID), paperID+".json")
+}
+
 func (s *Store) eventsPath(sessionID string) string {
 	return filepath.Join(s.SessionDir(sessionID), "events.jsonl")
 }
@@ -87,6 +105,7 @@ func (s *Store) CreateSession(meta protocol.SessionMeta) error {
 		s.digestsDir(meta.SessionID),
 		s.artifactsDir(meta.SessionID),
 		s.checkpointsDir(meta.SessionID),
+		s.workspacesDir(meta.SessionID),
 		filepath.Join(sessionDir, "cache"),
 	} {
 		if err := os.MkdirAll(dir, 0o755); err != nil {
@@ -224,6 +243,87 @@ func (s *Store) SaveArtifactManifest(sessionID string, manifest protocol.Artifac
 	return s.saveJSON(filepath.Join(s.artifactsDir(sessionID), manifest.ArtifactID+".manifest.json"), manifest)
 }
 
+func (s *Store) SaveWorkspaceState(sessionID string, workspace protocol.PaperWorkspace) error {
+	state := workspaceState{
+		PaperID:     workspace.PaperID,
+		Notes:       append([]protocol.PaperNote(nil), workspace.Notes...),
+		Annotations: append([]protocol.PaperAnnotation(nil), workspace.Annotations...),
+		Similar:     append([]protocol.SimilarPaperRef(nil), workspace.Similar...),
+		CreatedAt:   workspace.CreatedAt,
+		UpdatedAt:   workspace.UpdatedAt,
+	}
+	return s.saveJSON(s.workspacePath(sessionID, workspace.PaperID), state)
+}
+
+func (s *Store) LoadWorkspaceState(sessionID, paperID string) (*protocol.PaperWorkspace, error) {
+	var state workspaceState
+	err := s.loadJSON(s.workspacePath(sessionID, paperID), &state)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	workspace := protocol.PaperWorkspace{
+		PaperID:     state.PaperID,
+		Notes:       append([]protocol.PaperNote(nil), state.Notes...),
+		Annotations: append([]protocol.PaperAnnotation(nil), state.Annotations...),
+		Similar:     append([]protocol.SimilarPaperRef(nil), state.Similar...),
+		CreatedAt:   state.CreatedAt,
+		UpdatedAt:   state.UpdatedAt,
+	}
+	return &workspace, nil
+}
+
+func (s *Store) LoadWorkspaceStates(sessionID string) ([]protocol.PaperWorkspace, error) {
+	entries, err := os.ReadDir(s.workspacesDir(sessionID))
+	if errors.Is(err, os.ErrNotExist) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	out := make([]protocol.PaperWorkspace, 0, len(entries))
+	for _, entry := range entries {
+		if entry.IsDir() || filepath.Ext(entry.Name()) != ".json" {
+			continue
+		}
+		paperID := strings.TrimSuffix(entry.Name(), ".json")
+		workspace, err := s.LoadWorkspaceState(sessionID, paperID)
+		if err != nil {
+			return nil, err
+		}
+		if workspace == nil {
+			continue
+		}
+		out = append(out, *workspace)
+	}
+	sort.Slice(out, func(i, j int) bool {
+		return out[i].PaperID < out[j].PaperID
+	})
+	return out, nil
+}
+
+func (s *Store) DeleteWorkspaceState(sessionID, paperID string) error {
+	err := os.Remove(s.workspacePath(sessionID, paperID))
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	return err
+}
+
+func (s *Store) DeleteWorkspaceStates(sessionID string, paperIDs []string) error {
+	for _, paperID := range paperIDs {
+		if strings.TrimSpace(paperID) == "" {
+			continue
+		}
+		if err := s.DeleteWorkspaceState(sessionID, paperID); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 func (s *Store) LoadArtifactManifests(sessionID string) ([]protocol.ArtifactManifest, error) {
 	entries, err := os.ReadDir(s.artifactsDir(sessionID))
 	if errors.Is(err, os.ErrNotExist) {
@@ -299,14 +399,19 @@ func (s *Store) Snapshot(sessionID string) (protocol.SessionSnapshot, error) {
 	if err != nil {
 		return protocol.SessionSnapshot{}, err
 	}
+	workspaces, err := s.LoadWorkspaces(sessionID, meta, sources, digests, artifacts)
+	if err != nil {
+		return protocol.SessionSnapshot{}, err
+	}
 	return protocol.SessionSnapshot{
-		Meta:      meta,
-		Sources:   sources,
-		Plan:      plan,
-		Execution: execution,
-		Digests:   digests,
-		Compare:   cmp,
-		Artifacts: artifacts,
+		Meta:       meta,
+		Sources:    sources,
+		Plan:       plan,
+		Execution:  execution,
+		Digests:    digests,
+		Compare:    cmp,
+		Artifacts:  artifacts,
+		Workspaces: workspaces,
 	}, nil
 }
 
@@ -461,4 +566,104 @@ func legacyStepsToDAG(steps []protocol.PlanStep) protocol.PlanDAG {
 		previous = step.ID
 	}
 	return protocol.PlanDAG{Nodes: nodes, Edges: edges}
+}
+
+func (s *Store) LoadWorkspaces(sessionID string, meta protocol.SessionMeta, sources []protocol.PaperRef, digests []protocol.PaperDigest, artifacts []protocol.ArtifactManifest) ([]protocol.PaperWorkspace, error) {
+	if len(sources) == 0 {
+		return nil, nil
+	}
+	states, err := s.LoadWorkspaceStates(sessionID)
+	if err != nil {
+		return nil, err
+	}
+	stateByPaperID := make(map[string]protocol.PaperWorkspace, len(states))
+	for _, state := range states {
+		stateByPaperID[state.PaperID] = state
+	}
+	digestByPaperID := make(map[string]protocol.PaperDigest, len(digests))
+	for _, digest := range digests {
+		digestByPaperID[digest.PaperID] = digest
+	}
+	out := make([]protocol.PaperWorkspace, 0, len(sources))
+	for _, source := range sources {
+		state, hasState := stateByPaperID[source.PaperID]
+		workspace := protocol.PaperWorkspace{
+			PaperID:     source.PaperID,
+			Notes:       []protocol.PaperNote{},
+			Annotations: []protocol.PaperAnnotation{},
+			Resources:   []protocol.PaperResource{},
+			Similar:     []protocol.SimilarPaperRef{},
+			CreatedAt:   meta.CreatedAt,
+			UpdatedAt:   meta.UpdatedAt,
+		}
+		sourceCopy := source
+		workspace.Source = &sourceCopy
+		if hasState {
+			workspace.Notes = append(workspace.Notes, state.Notes...)
+			workspace.Annotations = append(workspace.Annotations, state.Annotations...)
+			workspace.Similar = append(workspace.Similar, state.Similar...)
+			if !state.CreatedAt.IsZero() {
+				workspace.CreatedAt = state.CreatedAt
+			}
+			if !state.UpdatedAt.IsZero() {
+				workspace.UpdatedAt = state.UpdatedAt
+			}
+		}
+		if digest, ok := digestByPaperID[source.PaperID]; ok {
+			digestCopy := digest
+			workspace.Digest = &digestCopy
+		}
+		workspace.Resources = buildWorkspaceResources(source, artifacts)
+		out = append(out, workspace)
+	}
+	return out, nil
+}
+
+func buildWorkspaceResources(source protocol.PaperRef, artifacts []protocol.ArtifactManifest) []protocol.PaperResource {
+	const (
+		arxivBase    = "https://arxiv.org"
+		alphaXivBase = "https://alphaxiv.org"
+	)
+
+	out := make([]protocol.PaperResource, 0, 7)
+	seen := make(map[string]struct{}, 7)
+	addResource := func(id, kind, title, uri string) {
+		uri = strings.TrimSpace(uri)
+		if uri == "" {
+			return
+		}
+		if _, ok := seen[uri]; ok {
+			return
+		}
+		seen[uri] = struct{}{}
+		out = append(out, protocol.PaperResource{
+			ID:    id,
+			Kind:  kind,
+			Title: title,
+			URI:   uri,
+		})
+	}
+
+	sourceURI := source.URI
+	if source.LocalPath != "" {
+		sourceURI = source.LocalPath
+	}
+	addResource(source.PaperID+":source", "source", "Original source", sourceURI)
+
+	if resolvedPaperID := strings.TrimSpace(source.ResolvedPaperID); resolvedPaperID != "" {
+		addResource(source.PaperID+":arxiv_abs", "arxiv_abs", "arXiv abs", arxivBase+"/abs/"+resolvedPaperID)
+		addResource(source.PaperID+":arxiv_pdf", "arxiv_pdf", "arXiv PDF", arxivBase+"/pdf/"+resolvedPaperID+".pdf")
+		addResource(source.PaperID+":alphaxiv_overview", "alphaxiv_overview", "AlphaXiv overview", alphaXivBase+"/overview/"+resolvedPaperID)
+		addResource(source.PaperID+":alphaxiv_full_text", "alphaxiv_full_text", "AlphaXiv full text", alphaXivBase+"/abs/"+resolvedPaperID)
+	}
+
+	for _, manifest := range artifacts {
+		if manifest.Kind != "paper_digest" || manifest.ArtifactID != source.PaperID {
+			continue
+		}
+		addResource(source.PaperID+":artifact_markdown", "artifact_markdown", "Digest markdown", manifest.Paths["markdown"])
+		addResource(source.PaperID+":artifact_json", "artifact_json", "Digest JSON", manifest.Paths["json"])
+	}
+
+	return out
 }

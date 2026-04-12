@@ -32,6 +32,17 @@ func New(registry *tools.Registry, cfg config.Config) *Agent {
 
 func (a *Agent) AttachSources(ctx context.Context, store *storage.Store, sink EventSink, sessionID string, sources []string, replace bool) (protocol.SessionSnapshot, error) {
 	if replace {
+		existing, err := store.LoadSources(sessionID)
+		if err != nil {
+			return protocol.SessionSnapshot{}, err
+		}
+		paperIDs := make([]string, 0, len(existing))
+		for _, ref := range existing {
+			paperIDs = append(paperIDs, ref.PaperID)
+		}
+		if err := store.DeleteWorkspaceStates(sessionID, paperIDs); err != nil {
+			return protocol.SessionSnapshot{}, err
+		}
 		if err := store.SaveSources(sessionID, nil); err != nil {
 			return protocol.SessionSnapshot{}, err
 		}
