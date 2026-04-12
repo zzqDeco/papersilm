@@ -48,6 +48,9 @@ func TestPlanModeCreatesStructuredPlan(t *testing.T) {
 	if result.Plan == nil {
 		t.Fatalf("expected plan")
 	}
+	if result.Plan.TaskBoard == nil || result.Session.TaskBoard == nil {
+		t.Fatalf("expected hydrated task board, plan=%+v session=%+v", result.Plan.TaskBoard, result.Session.TaskBoard)
+	}
 	if result.Session.Meta.State != protocol.SessionStatePlanned {
 		t.Fatalf("unexpected state: %s", result.Session.Meta.State)
 	}
@@ -65,6 +68,9 @@ func TestPlanModeCreatesStructuredPlan(t *testing.T) {
 	}
 	if readyNodes == 0 {
 		t.Fatalf("expected ready dag nodes")
+	}
+	if len(result.Plan.TaskBoard.Tasks) != len(result.Plan.DAG.Nodes) {
+		t.Fatalf("expected task board to mirror dag nodes, got %d tasks for %d nodes", len(result.Plan.TaskBoard.Tasks), len(result.Plan.DAG.Nodes))
 	}
 	if len(result.Digests) != 0 || result.Comparison != nil {
 		t.Fatalf("plan mode should not produce artifacts")
@@ -243,6 +249,135 @@ func TestAutoRunIncludesHydratedWorkspace(t *testing.T) {
 	}
 }
 
+func TestRunTaskExecutesBlockedDependencyClosure(t *testing.T) {
+	t.Parallel()
+
+	svc, _ := newTestService(t)
+	ctx := context.Background()
+
+	pdf := writeTestPDF(t, filepath.Join(t.TempDir(), "paper.pdf"), "Paper Task Run")
+	planned, err := svc.Execute(ctx, protocol.ClientRequest{
+		Task:           "distill this paper",
+		Sources:        []string{pdf},
+		PermissionMode: protocol.PermissionModePlan,
+		Language:       "zh",
+		Style:          "distill",
+	})
+	if err != nil {
+		t.Fatalf("Execute(plan): %v", err)
+	}
+	paperID := planned.Session.Sources[0].PaperID
+	targetTaskID := "merge_digest_" + paperID
+
+	result, err := svc.RunTask(ctx, planned.Session.Meta.SessionID, targetTaskID, "zh", "distill")
+	if err != nil {
+		t.Fatalf("RunTask: %v", err)
+	}
+	if result.Session.Meta.State != protocol.SessionStateCompleted {
+		t.Fatalf("expected completed state, got %s", result.Session.Meta.State)
+	}
+	if len(result.Digests) != 1 {
+		t.Fatalf("expected 1 digest, got %d", len(result.Digests))
+	}
+	mergeTask, ok := findTaskByID(result.Session.TaskBoard, targetTaskID)
+	if !ok || mergeTask.Status != protocol.TaskStatusCompleted {
+		t.Fatalf("expected completed merge task, got %+v", mergeTask)
+	}
+	if statusCount(result.Session.TaskBoard, protocol.TaskStatusCompleted) != len(result.Session.TaskBoard.Tasks) {
+		t.Fatalf("expected all tasks completed, got %+v", result.Session.TaskBoard.Tasks)
+	}
+}
+
+func TestApproveTaskExecutesOnlySelectedPendingTask(t *testing.T) {
+	t.Parallel()
+
+	svc, _ := newTestService(t)
+	ctx := context.Background()
+
+	pdf1 := writeTestPDF(t, filepath.Join(t.TempDir(), "paper1.pdf"), "Paper One")
+	pdf2 := writeTestPDF(t, filepath.Join(t.TempDir(), "paper2.pdf"), "Paper Two")
+
+	planned, err := svc.Execute(ctx, protocol.ClientRequest{
+		Task:           "compare these papers",
+		Sources:        []string{pdf1, pdf2},
+		PermissionMode: protocol.PermissionModeConfirm,
+		Language:       "zh",
+		Style:          "distill",
+	})
+	if err != nil {
+		t.Fatalf("Execute(confirm): %v", err)
+	}
+	if planned.Approval == nil || len(planned.Approval.PendingNodeIDs) < 2 {
+		t.Fatalf("expected multi-node approval batch, got %+v", planned.Approval)
+	}
+
+	targetTaskID := planned.Approval.PendingNodeIDs[0]
+	result, err := svc.ApproveTask(ctx, planned.Session.Meta.SessionID, targetTaskID, true, "")
+	if err != nil {
+		t.Fatalf("ApproveTask: %v", err)
+	}
+	if result.Session.Meta.State != protocol.SessionStateAwaitingApproval {
+		t.Fatalf("expected session to remain awaiting approval, got %s", result.Session.Meta.State)
+	}
+	if result.Approval == nil || len(result.Approval.PendingNodeIDs) != len(planned.Approval.PendingNodeIDs)-1 {
+		t.Fatalf("expected remaining pending approvals, got %+v", result.Approval)
+	}
+	task, ok := findTaskByID(result.Session.TaskBoard, targetTaskID)
+	if !ok || task.Status != protocol.TaskStatusCompleted {
+		t.Fatalf("expected approved task completed, got %+v", task)
+	}
+	for _, pendingID := range result.Approval.PendingNodeIDs {
+		pendingTask, ok := findTaskByID(result.Session.TaskBoard, pendingID)
+		if !ok || pendingTask.Status != protocol.TaskStatusAwaitingApproval {
+			t.Fatalf("expected pending task to remain awaiting approval, got %+v", pendingTask)
+		}
+	}
+}
+
+func TestRunTaskRerunMarksDescendantsStale(t *testing.T) {
+	t.Parallel()
+
+	svc, _ := newTestService(t)
+	ctx := context.Background()
+
+	pdf1 := writeTestPDF(t, filepath.Join(t.TempDir(), "paper1.pdf"), "Paper One")
+	pdf2 := writeTestPDF(t, filepath.Join(t.TempDir(), "paper2.pdf"), "Paper Two")
+
+	initial, err := svc.Execute(ctx, protocol.ClientRequest{
+		Task:           "compare these papers",
+		Sources:        []string{pdf1, pdf2},
+		PermissionMode: protocol.PermissionModeAuto,
+		Language:       "zh",
+		Style:          "distill",
+	})
+	if err != nil {
+		t.Fatalf("Execute(auto): %v", err)
+	}
+	paperID := initial.Session.Sources[0].PaperID
+	targetTaskID := "merge_digest_" + paperID
+
+	result, err := svc.RunTask(ctx, initial.Session.Meta.SessionID, targetTaskID, "zh", "distill")
+	if err != nil {
+		t.Fatalf("RunTask(rerun): %v", err)
+	}
+	if result.Session.Meta.State != protocol.SessionStatePlanned {
+		t.Fatalf("expected planned state after partial rerun, got %s", result.Session.Meta.State)
+	}
+	if result.Comparison != nil {
+		t.Fatalf("expected comparison artifact to be cleared during rerun")
+	}
+	mergeTask, ok := findTaskByID(result.Session.TaskBoard, targetTaskID)
+	if !ok || mergeTask.Status != protocol.TaskStatusCompleted {
+		t.Fatalf("expected rerun target completed, got %+v", mergeTask)
+	}
+	for _, taskID := range []string{"method_compare", "experiment_compare", "results_compare", "final_synthesis"} {
+		task, ok := findTaskByID(result.Session.TaskBoard, taskID)
+		if !ok || task.Status != protocol.TaskStatusStale {
+			t.Fatalf("expected descendant %s stale, got %+v", taskID, task)
+		}
+	}
+}
+
 func TestWorkspaceNotesAndAnnotationsSurviveReplan(t *testing.T) {
 	t.Parallel()
 
@@ -345,6 +480,31 @@ func findWorkspaceByPaperID(workspaces []protocol.PaperWorkspace, paperID string
 		}
 	}
 	return protocol.PaperWorkspace{}, false
+}
+
+func findTaskByID(board *protocol.TaskBoard, taskID string) (protocol.TaskCard, bool) {
+	if board == nil {
+		return protocol.TaskCard{}, false
+	}
+	for _, task := range board.Tasks {
+		if task.TaskID == taskID {
+			return task, true
+		}
+	}
+	return protocol.TaskCard{}, false
+}
+
+func statusCount(board *protocol.TaskBoard, status protocol.TaskStatus) int {
+	if board == nil {
+		return 0
+	}
+	total := 0
+	for _, task := range board.Tasks {
+		if task.Status == status {
+			total++
+		}
+	}
+	return total
 }
 
 func workspaceHasResource(workspace protocol.PaperWorkspace, uri string) bool {

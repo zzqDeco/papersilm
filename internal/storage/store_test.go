@@ -46,6 +46,9 @@ func TestStoreSnapshotRoundTrip(t *testing.T) {
 	if len(snapshot.Sources) != 1 || snapshot.Plan == nil {
 		t.Fatalf("unexpected snapshot: %+v", snapshot)
 	}
+	if snapshot.TaskBoard != nil {
+		t.Fatalf("did not expect task board without a dag-backed plan, got %+v", snapshot.TaskBoard)
+	}
 }
 
 func TestLoadPlanUpgradesLegacyStepsToDAG(t *testing.T) {
@@ -177,6 +180,68 @@ func TestSnapshotHydratesWorkspaceWithoutPersistedState(t *testing.T) {
 	}
 }
 
+func TestSnapshotHydratesTaskBoardFromPlanAndExecution(t *testing.T) {
+	t.Parallel()
+
+	store := New(t.TempDir())
+	if err := store.Ensure(); err != nil {
+		t.Fatalf("Ensure: %v", err)
+	}
+
+	now := time.Now().UTC()
+	meta := protocol.SessionMeta{
+		SessionID:      "sess_task_board",
+		State:          protocol.SessionStatePlanned,
+		PermissionMode: protocol.PermissionModePlan,
+		Language:       "zh",
+		Style:          "distill",
+		CreatedAt:      now,
+		UpdatedAt:      now,
+	}
+	if err := store.CreateSession(meta); err != nil {
+		t.Fatalf("CreateSession: %v", err)
+	}
+	plan := protocol.PlanResult{
+		PlanID: "plan_1",
+		Goal:   "distill paper",
+		DAG: protocol.PlanDAG{
+			Nodes: []protocol.PlanNode{
+				{ID: "paper_summary_p1", Kind: protocol.NodeKindPaperSummary, Goal: "summary", PaperIDs: []string{"p1"}, Status: protocol.NodeStatusCompleted},
+				{ID: "merge_digest_p1", Kind: protocol.NodeKindMergeDigest, Goal: "merge", PaperIDs: []string{"p1"}, DependsOn: []string{"paper_summary_p1"}, Produces: []string{"p1"}, Status: protocol.NodeStatusPending},
+			},
+			Edges: []protocol.PlanEdge{{From: "paper_summary_p1", To: "merge_digest_p1"}},
+		},
+		CreatedAt: now,
+	}
+	exec := protocol.ExecutionState{
+		PlanID:       "plan_1",
+		StaleNodeIDs: []string{"merge_digest_p1"},
+		Nodes: []protocol.NodeExecutionState{
+			{NodeID: "paper_summary_p1", Status: protocol.NodeStatusCompleted},
+			{NodeID: "merge_digest_p1", Status: protocol.NodeStatusPending},
+		},
+		UpdatedAt: now,
+	}
+	if err := store.SavePlan(meta.SessionID, plan); err != nil {
+		t.Fatalf("SavePlan: %v", err)
+	}
+	if err := store.SaveExecutionState(meta.SessionID, exec); err != nil {
+		t.Fatalf("SaveExecutionState: %v", err)
+	}
+
+	snapshot, err := store.Snapshot(meta.SessionID)
+	if err != nil {
+		t.Fatalf("Snapshot: %v", err)
+	}
+	if snapshot.TaskBoard == nil || len(snapshot.TaskBoard.Tasks) != 2 {
+		t.Fatalf("expected hydrated task board, got %+v", snapshot.TaskBoard)
+	}
+	task, ok := findTask(snapshot.TaskBoard, "merge_digest_p1")
+	if !ok || task.Status != protocol.TaskStatusStale {
+		t.Fatalf("expected stale task projection, got %+v", task)
+	}
+}
+
 func TestInvalidatePlanStateKeepsWorkspaceState(t *testing.T) {
 	t.Parallel()
 
@@ -287,4 +352,16 @@ func workspaceHasResource(workspace protocol.PaperWorkspace, uri string) bool {
 		}
 	}
 	return false
+}
+
+func findTask(board *protocol.TaskBoard, taskID string) (protocol.TaskCard, bool) {
+	if board == nil {
+		return protocol.TaskCard{}, false
+	}
+	for _, task := range board.Tasks {
+		if task.TaskID == taskID {
+			return task, true
+		}
+	}
+	return protocol.TaskCard{}, false
 }

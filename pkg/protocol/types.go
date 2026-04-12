@@ -229,6 +229,64 @@ type PaperWorkspace struct {
 	UpdatedAt   time.Time         `json:"updated_at"`
 }
 
+type TaskStatus string
+
+const (
+	TaskStatusBlocked          TaskStatus = "blocked"
+	TaskStatusReady            TaskStatus = "ready"
+	TaskStatusAwaitingApproval TaskStatus = "awaiting_approval"
+	TaskStatusRunning          TaskStatus = "running"
+	TaskStatusCompleted        TaskStatus = "completed"
+	TaskStatusFailed           TaskStatus = "failed"
+	TaskStatusStale            TaskStatus = "stale"
+	TaskStatusSkipped          TaskStatus = "skipped"
+)
+
+type TaskActionType string
+
+const (
+	TaskActionInspect TaskActionType = "inspect"
+	TaskActionRun     TaskActionType = "run"
+	TaskActionApprove TaskActionType = "approve"
+)
+
+type TaskAction struct {
+	Type  TaskActionType `json:"type"`
+	Label string         `json:"label,omitempty"`
+}
+
+type TaskCard struct {
+	TaskID           string       `json:"task_id"`
+	NodeID           string       `json:"node_id"`
+	Kind             NodeKind     `json:"kind"`
+	Title            string       `json:"title"`
+	Description      string       `json:"description,omitempty"`
+	PaperIDs         []string     `json:"paper_ids,omitempty"`
+	GroupID          string       `json:"group_id"`
+	Status           TaskStatus   `json:"status"`
+	DependsOn        []string     `json:"depends_on,omitempty"`
+	Produces         []string     `json:"produces,omitempty"`
+	ArtifactIDs      []string     `json:"artifact_ids,omitempty"`
+	Error            string       `json:"error,omitempty"`
+	AvailableActions []TaskAction `json:"available_actions,omitempty"`
+}
+
+type TaskGroup struct {
+	GroupID  string   `json:"group_id"`
+	Kind     string   `json:"kind"`
+	Title    string   `json:"title"`
+	PaperIDs []string `json:"paper_ids,omitempty"`
+	TaskIDs  []string `json:"task_ids,omitempty"`
+}
+
+type TaskBoard struct {
+	PlanID    string      `json:"plan_id"`
+	Goal      string      `json:"goal"`
+	Groups    []TaskGroup `json:"groups,omitempty"`
+	Tasks     []TaskCard  `json:"tasks,omitempty"`
+	UpdatedAt time.Time   `json:"updated_at"`
+}
+
 type PlanNode struct {
 	ID            string        `json:"id"`
 	Kind          NodeKind      `json:"kind"`
@@ -302,6 +360,7 @@ type ExecutionState struct {
 	PlanID         string               `json:"plan_id"`
 	CurrentBatchID string               `json:"current_batch_id,omitempty"`
 	PendingNodeIDs []string             `json:"pending_node_ids,omitempty"`
+	StaleNodeIDs   []string             `json:"stale_node_ids,omitempty"`
 	Nodes          []NodeExecutionState `json:"nodes,omitempty"`
 	Outputs        []NodeOutputRef      `json:"outputs,omitempty"`
 	BatchHistory   []ExecutionBatch     `json:"batch_history,omitempty"`
@@ -326,6 +385,7 @@ type PlanResult struct {
 	WillCompare      bool       `json:"will_compare"`
 	Risks            []string   `json:"risks"`
 	ApprovalRequired bool       `json:"approval_required"`
+	TaskBoard        *TaskBoard `json:"task_board,omitempty"`
 	CreatedAt        time.Time  `json:"created_at"`
 }
 
@@ -405,6 +465,7 @@ type SessionSnapshot struct {
 	Meta       SessionMeta        `json:"meta"`
 	Sources    []PaperRef         `json:"sources"`
 	Plan       *PlanResult        `json:"plan,omitempty"`
+	TaskBoard  *TaskBoard         `json:"task_board,omitempty"`
 	Execution  *ExecutionState    `json:"execution,omitempty"`
 	Digests    []PaperDigest      `json:"digests,omitempty"`
 	Compare    *ComparisonDigest  `json:"comparison,omitempty"`

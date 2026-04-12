@@ -22,4 +22,5 @@
 - 修改源码后，同步更新对应文件级文档
 - 对公共行为、目录约定或跨模块设计的变更，优先先更新根 `README.md` 与本目录入口文档
 - 当前会话目录除 `digests/`、`artifacts/`、`checkpoints/` 外，还包含 `workspaces/`，用于保存人工维护的 paper workspace 状态
+- `task_board` 是从 `plan + execution + workspaces + artifacts` 水合出来的公开视图，不单独持久化为额外文件
 - 若未来引入项目级专题文档，可直接放在 `doc/` 根目录下
