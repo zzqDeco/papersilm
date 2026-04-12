@@ -154,7 +154,7 @@ This repository currently includes:
 
 - `doc/` contains project-level technical documentation.
 - `doc/src/` mirrors non-test source paths with per-file technical docs such as `doc/src/internal/pipeline/service.go.plan.md`.
-- `plan/` is reserved for current actionable implementation plans and currently contains only a placeholder `README.md`.
+- `plan/` contains the current actionable implementation plans and roadmap slices; see `plan/README.md` for the active index and recommended execution order.
 
 ## Development
 
