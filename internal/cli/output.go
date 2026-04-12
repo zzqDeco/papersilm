@@ -88,6 +88,133 @@ func (o *OutputWriter) PrintResult(result protocol.RunResult) error {
 	return nil
 }
 
+func (o *OutputWriter) PrintWorkspaceList(workspaces []protocol.PaperWorkspace) error {
+	switch o.format {
+	case protocol.OutputFormatJSON, protocol.OutputFormatStreamJSON:
+		raw, err := json.MarshalIndent(workspaces, "", "  ")
+		if err != nil {
+			return err
+		}
+		_, err = fmt.Fprintln(o.w, string(raw))
+		return err
+	case protocol.OutputFormatText:
+		if len(workspaces) == 0 {
+			_, err := fmt.Fprintln(o.w, "No workspaces.")
+			return err
+		}
+		if _, err := fmt.Fprintln(o.w, "Workspaces:"); err != nil {
+			return err
+		}
+		for _, workspace := range workspaces {
+			digest := "no"
+			if workspace.Digest != nil {
+				digest = "yes"
+			}
+			if _, err := fmt.Fprintf(
+				o.w,
+				"- %s | digest=%s | notes=%d | annotations=%d | resources=%d | similar=%d\n",
+				workspace.PaperID,
+				digest,
+				len(workspace.Notes),
+				len(workspace.Annotations),
+				len(workspace.Resources),
+				len(workspace.Similar),
+			); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+func (o *OutputWriter) PrintWorkspace(workspace protocol.PaperWorkspace) error {
+	switch o.format {
+	case protocol.OutputFormatJSON, protocol.OutputFormatStreamJSON:
+		raw, err := json.MarshalIndent(workspace, "", "  ")
+		if err != nil {
+			return err
+		}
+		_, err = fmt.Fprintln(o.w, string(raw))
+		return err
+	case protocol.OutputFormatText:
+		if _, err := fmt.Fprintf(o.w, "Workspace: %s\n", workspace.PaperID); err != nil {
+			return err
+		}
+		if workspace.Source != nil {
+			if _, err := fmt.Fprintf(o.w, "Source: %s (%s)\n", workspace.Source.URI, workspace.Source.Status); err != nil {
+				return err
+			}
+		}
+		if workspace.Digest != nil {
+			if _, err := fmt.Fprintf(o.w, "Digest: %s\n", workspace.Digest.Title); err != nil {
+				return err
+			}
+		} else if _, err := fmt.Fprintln(o.w, "Digest: <none>"); err != nil {
+			return err
+		}
+		if _, err := fmt.Fprintln(o.w, "\nNotes:"); err != nil {
+			return err
+		}
+		if len(workspace.Notes) == 0 {
+			if _, err := fmt.Fprintln(o.w, "- <none>"); err != nil {
+				return err
+			}
+		}
+		for _, note := range workspace.Notes {
+			if _, err := fmt.Fprintf(o.w, "- %s: %s\n  %s\n", note.ID, note.Title, note.Body); err != nil {
+				return err
+			}
+		}
+		if _, err := fmt.Fprintln(o.w, "\nAnnotations:"); err != nil {
+			return err
+		}
+		if len(workspace.Annotations) == 0 {
+			if _, err := fmt.Fprintln(o.w, "- <none>"); err != nil {
+				return err
+			}
+		}
+		for _, annotation := range workspace.Annotations {
+			if _, err := fmt.Fprintf(o.w, "- %s [%s]: %s\n  %s\n", annotation.ID, formatAnchor(annotation.Anchor), annotation.Title, annotation.Body); err != nil {
+				return err
+			}
+		}
+		if _, err := fmt.Fprintln(o.w, "\nResources:"); err != nil {
+			return err
+		}
+		if len(workspace.Resources) == 0 {
+			if _, err := fmt.Fprintln(o.w, "- <none>"); err != nil {
+				return err
+			}
+		}
+		for _, resource := range workspace.Resources {
+			if _, err := fmt.Fprintf(o.w, "- [%s] %s -> %s\n", resource.Kind, resource.Title, resource.URI); err != nil {
+				return err
+			}
+		}
+		if _, err := fmt.Fprintln(o.w, "\nSimilar:"); err != nil {
+			return err
+		}
+		if len(workspace.Similar) == 0 {
+			if _, err := fmt.Fprintln(o.w, "- <none>"); err != nil {
+				return err
+			}
+		}
+		for _, similar := range workspace.Similar {
+			line := similar.PaperID
+			if strings.TrimSpace(similar.Title) != "" {
+				line += ": " + similar.Title
+			}
+			if strings.TrimSpace(similar.Reason) != "" {
+				line += " (" + similar.Reason + ")"
+			}
+			if _, err := fmt.Fprintf(o.w, "- %s\n", line); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
 func (o *OutputWriter) printPlan(plan protocol.PlanResult) error {
 	ready := make([]string, 0, len(plan.DAG.Nodes))
 	_, err := fmt.Fprintf(o.w, "Plan ID: %s\nGoal: %s\nWill compare: %t\nNodes: %d\n\nDAG:\n", plan.PlanID, plan.Goal, plan.WillCompare, len(plan.DAG.Nodes))
@@ -129,4 +256,17 @@ func (o *OutputWriter) printPlan(plan protocol.PlanResult) error {
 func (o *OutputWriter) printApproval(approval protocol.ApprovalRequest) error {
 	_, err := fmt.Fprintf(o.w, "Approval required\nPlan: %s\nCheckpoint: %s\nInterrupt: %s\nPending nodes: %s\nSummary: %s\n\n", approval.PlanID, approval.CheckpointID, approval.InterruptID, strings.Join(approval.PendingNodeIDs, ", "), approval.Summary)
 	return err
+}
+
+func formatAnchor(anchor protocol.AnchorRef) string {
+	switch anchor.Kind {
+	case protocol.AnchorKindPage:
+		return fmt.Sprintf("page %d", anchor.Page)
+	case protocol.AnchorKindSnippet:
+		return "snippet: " + anchor.Snippet
+	case protocol.AnchorKindSection:
+		return "section: " + anchor.Section
+	default:
+		return string(anchor.Kind)
+	}
 }

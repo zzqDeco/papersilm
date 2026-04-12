@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strconv"
 	"strings"
 
 	"github.com/zzqDeco/papersilm/internal/storage"
@@ -70,13 +71,16 @@ func RunREPL(ctx context.Context, svc *core.Service, store *storage.Store, curre
 }
 
 func handleSlash(ctx context.Context, svc *core.Service, store *storage.Store, session *protocol.SessionSnapshot, out *OutputWriter, line string) error {
+	if strings.HasPrefix(line, "/workspace") {
+		return handleWorkspaceCommand(svc, session, out, line)
+	}
 	fields := strings.Fields(line)
 	if len(fields) == 0 {
 		return nil
 	}
 	switch fields[0] {
 	case "/help":
-		_, err := fmt.Fprintln(os.Stdout, "/help, /plan [task], /approve, /run [task], /lang <zh|en|both>, /style <distill|ultra|reviewer>, /source add|replace|list|remove, /session name <name>, /export, /clear, /exit")
+		_, err := fmt.Fprintln(os.Stdout, "/help, /plan [task], /approve, /run [task], /lang <zh|en|both>, /style <distill|ultra|reviewer>, /source add|replace|list|remove, /workspace list|show|note add|annotation add, /session name <name>, /export, /clear, /exit")
 		return err
 	case "/clear":
 		_, err := fmt.Fprintln(os.Stdout, strings.Repeat("-", 72))
@@ -189,6 +193,9 @@ func handleSourceCommand(ctx context.Context, svc *core.Service, store *storage.
 				filtered = append(filtered, src)
 			}
 		}
+		if err := store.DeleteWorkspaceState(session.Meta.SessionID, id); err != nil {
+			return err
+		}
 		if err := store.SaveSources(session.Meta.SessionID, filtered); err != nil {
 			return err
 		}
@@ -204,4 +211,122 @@ func handleSourceCommand(ctx context.Context, svc *core.Service, store *storage.
 	default:
 		return fmt.Errorf("unknown /source action: %s", fields[1])
 	}
+}
+
+func handleWorkspaceCommand(svc *core.Service, session *protocol.SessionSnapshot, out *OutputWriter, line string) error {
+	head, body := splitWorkspaceCommand(line)
+	fields := strings.Fields(head)
+	if len(fields) < 2 {
+		return fmt.Errorf("usage: /workspace list|show|note add|annotation add ...")
+	}
+
+	switch fields[1] {
+	case "list":
+		workspaces, err := svc.LoadWorkspaces(session.Meta.SessionID)
+		if err != nil {
+			return err
+		}
+		session.Workspaces = workspaces
+		return out.PrintWorkspaceList(workspaces)
+	case "show":
+		if len(fields) < 3 {
+			return fmt.Errorf("usage: /workspace show <paper_id>")
+		}
+		workspaces, err := svc.LoadWorkspaces(session.Meta.SessionID)
+		if err != nil {
+			return err
+		}
+		session.Workspaces = workspaces
+		workspace, ok := findWorkspace(workspaces, fields[2])
+		if !ok {
+			return fmt.Errorf("workspace not found: %s", fields[2])
+		}
+		return out.PrintWorkspace(*workspace)
+	case "note":
+		if len(fields) < 4 || fields[2] != "add" {
+			return fmt.Errorf("usage: /workspace note add <paper_id> :: <body>")
+		}
+		if strings.TrimSpace(body) == "" {
+			return fmt.Errorf("usage: /workspace note add <paper_id> :: <body>")
+		}
+		snapshot, err := svc.AddWorkspaceNote(session.Meta.SessionID, fields[3], body)
+		if err != nil {
+			return err
+		}
+		*session = snapshot
+		workspace, ok := findWorkspace(snapshot.Workspaces, fields[3])
+		if !ok {
+			return fmt.Errorf("workspace not found: %s", fields[3])
+		}
+		return out.PrintWorkspace(*workspace)
+	case "annotation":
+		if len(fields) < 6 || fields[2] != "add" {
+			return fmt.Errorf("usage: /workspace annotation add <paper_id> page|snippet|section <value> :: <body>")
+		}
+		if strings.TrimSpace(body) == "" {
+			return fmt.Errorf("usage: /workspace annotation add <paper_id> page|snippet|section <value> :: <body>")
+		}
+		anchor, err := parseWorkspaceAnchor(fields[4], fields[5:])
+		if err != nil {
+			return err
+		}
+		snapshot, err := svc.AddWorkspaceAnnotation(session.Meta.SessionID, fields[3], anchor, body)
+		if err != nil {
+			return err
+		}
+		*session = snapshot
+		workspace, ok := findWorkspace(snapshot.Workspaces, fields[3])
+		if !ok {
+			return fmt.Errorf("workspace not found: %s", fields[3])
+		}
+		return out.PrintWorkspace(*workspace)
+	default:
+		return fmt.Errorf("unknown /workspace action: %s", fields[1])
+	}
+}
+
+func splitWorkspaceCommand(line string) (string, string) {
+	parts := strings.SplitN(line, "::", 2)
+	head := strings.TrimSpace(parts[0])
+	if len(parts) == 1 {
+		return head, ""
+	}
+	return head, strings.TrimSpace(parts[1])
+}
+
+func parseWorkspaceAnchor(kind string, parts []string) (protocol.AnchorRef, error) {
+	switch kind {
+	case string(protocol.AnchorKindPage):
+		if len(parts) != 1 {
+			return protocol.AnchorRef{}, fmt.Errorf("usage: /workspace annotation add <paper_id> page <n> :: <body>")
+		}
+		page, err := strconv.Atoi(parts[0])
+		if err != nil || page <= 0 {
+			return protocol.AnchorRef{}, fmt.Errorf("workspace annotation page must be a positive integer")
+		}
+		return protocol.AnchorRef{Kind: protocol.AnchorKindPage, Page: page}, nil
+	case string(protocol.AnchorKindSnippet):
+		value := strings.TrimSpace(strings.Join(parts, " "))
+		if value == "" {
+			return protocol.AnchorRef{}, fmt.Errorf("workspace annotation snippet is required")
+		}
+		return protocol.AnchorRef{Kind: protocol.AnchorKindSnippet, Snippet: value}, nil
+	case string(protocol.AnchorKindSection):
+		value := strings.TrimSpace(strings.Join(parts, " "))
+		if value == "" {
+			return protocol.AnchorRef{}, fmt.Errorf("workspace annotation section is required")
+		}
+		return protocol.AnchorRef{Kind: protocol.AnchorKindSection, Section: value}, nil
+	default:
+		return protocol.AnchorRef{}, fmt.Errorf("unsupported workspace anchor kind: %s", kind)
+	}
+}
+
+func findWorkspace(workspaces []protocol.PaperWorkspace, paperID string) (*protocol.PaperWorkspace, bool) {
+	for idx := range workspaces {
+		if workspaces[idx].PaperID == paperID {
+			return &workspaces[idx], true
+		}
+	}
+	return nil, false
 }

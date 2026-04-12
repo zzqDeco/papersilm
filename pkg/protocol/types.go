@@ -115,9 +115,55 @@ type PaperRef struct {
 	Inspection             SourceInspection `json:"inspection,omitempty"`
 }
 
+type AnchorKind string
+
+const (
+	AnchorKindPage    AnchorKind = "page"
+	AnchorKindSnippet AnchorKind = "snippet"
+	AnchorKindSection AnchorKind = "section"
+)
+
+type AnchorRef struct {
+	Kind    AnchorKind `json:"kind"`
+	Page    int        `json:"page,omitempty"`
+	Snippet string     `json:"snippet,omitempty"`
+	Section string     `json:"section,omitempty"`
+}
+
 type Citation struct {
 	Page    int    `json:"page"`
 	Snippet string `json:"snippet,omitempty"`
+}
+
+type PaperNote struct {
+	ID        string    `json:"id"`
+	Title     string    `json:"title"`
+	Body      string    `json:"body"`
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
+}
+
+type PaperAnnotation struct {
+	ID        string    `json:"id"`
+	Title     string    `json:"title"`
+	Body      string    `json:"body"`
+	Anchor    AnchorRef `json:"anchor"`
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
+}
+
+type PaperResource struct {
+	ID    string `json:"id"`
+	Kind  string `json:"kind"`
+	Title string `json:"title"`
+	URI   string `json:"uri"`
+}
+
+type SimilarPaperRef struct {
+	PaperID string `json:"paper_id"`
+	Title   string `json:"title,omitempty"`
+	Reason  string `json:"reason,omitempty"`
+	Status  string `json:"status,omitempty"`
 }
 
 type KeyResult struct {
@@ -169,6 +215,18 @@ type ComparisonDigest struct {
 	Language         string                `json:"language"`
 	Style            string                `json:"style"`
 	GeneratedAt      time.Time             `json:"generated_at"`
+}
+
+type PaperWorkspace struct {
+	PaperID     string            `json:"paper_id"`
+	Source      *PaperRef         `json:"source,omitempty"`
+	Digest      *PaperDigest      `json:"digest,omitempty"`
+	Notes       []PaperNote       `json:"notes,omitempty"`
+	Annotations []PaperAnnotation `json:"annotations,omitempty"`
+	Resources   []PaperResource   `json:"resources,omitempty"`
+	Similar     []SimilarPaperRef `json:"similar,omitempty"`
+	CreatedAt   time.Time         `json:"created_at"`
+	UpdatedAt   time.Time         `json:"updated_at"`
 }
 
 type PlanNode struct {
@@ -344,13 +402,14 @@ type SessionMeta struct {
 }
 
 type SessionSnapshot struct {
-	Meta      SessionMeta        `json:"meta"`
-	Sources   []PaperRef         `json:"sources"`
-	Plan      *PlanResult        `json:"plan,omitempty"`
-	Execution *ExecutionState    `json:"execution,omitempty"`
-	Digests   []PaperDigest      `json:"digests,omitempty"`
-	Compare   *ComparisonDigest  `json:"comparison,omitempty"`
-	Artifacts []ArtifactManifest `json:"artifacts,omitempty"`
+	Meta       SessionMeta        `json:"meta"`
+	Sources    []PaperRef         `json:"sources"`
+	Plan       *PlanResult        `json:"plan,omitempty"`
+	Execution  *ExecutionState    `json:"execution,omitempty"`
+	Digests    []PaperDigest      `json:"digests,omitempty"`
+	Compare    *ComparisonDigest  `json:"comparison,omitempty"`
+	Artifacts  []ArtifactManifest `json:"artifacts,omitempty"`
+	Workspaces []PaperWorkspace   `json:"workspaces,omitempty"`
 }
 
 type ClientRequest struct {

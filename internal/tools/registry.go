@@ -75,10 +75,11 @@ type ExportArtifactResult struct {
 }
 
 type SessionAssets struct {
-	Sources   []protocol.PaperRef         `json:"sources,omitempty"`
-	Digests   []protocol.PaperDigest      `json:"digests,omitempty"`
-	Compare   *protocol.ComparisonDigest  `json:"comparison,omitempty"`
-	Artifacts []protocol.ArtifactManifest `json:"artifacts,omitempty"`
+	Sources    []protocol.PaperRef         `json:"sources,omitempty"`
+	Digests    []protocol.PaperDigest      `json:"digests,omitempty"`
+	Compare    *protocol.ComparisonDigest  `json:"comparison,omitempty"`
+	Artifacts  []protocol.ArtifactManifest `json:"artifacts,omitempty"`
+	Workspaces []protocol.PaperWorkspace   `json:"workspaces,omitempty"`
 }
 
 type approvalToolInput struct {
@@ -249,10 +250,11 @@ func (r *Registry) BuildExecutionTools(ctx context.Context, store *storage.Store
 				return nil, err
 			}
 			return &SessionAssets{
-				Sources:   snapshot.Sources,
-				Digests:   snapshot.Digests,
-				Compare:   snapshot.Compare,
-				Artifacts: snapshot.Artifacts,
+				Sources:    snapshot.Sources,
+				Digests:    snapshot.Digests,
+				Compare:    snapshot.Compare,
+				Artifacts:  snapshot.Artifacts,
+				Workspaces: snapshot.Workspaces,
 			}, nil
 		})
 	if err != nil {
