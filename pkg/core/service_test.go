@@ -208,6 +208,103 @@ func TestPlanModeAddsWebWorkerForExternalRequests(t *testing.T) {
 	}
 }
 
+func TestAutoRunIncludesHydratedWorkspace(t *testing.T) {
+	t.Parallel()
+
+	svc, _ := newTestService(t)
+	ctx := context.Background()
+
+	pdf := writeTestPDF(t, filepath.Join(t.TempDir(), "paper.pdf"), "Paper Workspace")
+	result, err := svc.Execute(ctx, protocol.ClientRequest{
+		Task:           "distill this paper",
+		Sources:        []string{pdf},
+		PermissionMode: protocol.PermissionModeAuto,
+		Language:       "zh",
+		Style:          "distill",
+	})
+	if err != nil {
+		t.Fatalf("Execute(auto): %v", err)
+	}
+	if len(result.Session.Workspaces) != 1 {
+		t.Fatalf("expected 1 workspace, got %+v", result.Session.Workspaces)
+	}
+	workspace := result.Session.Workspaces[0]
+	if workspace.Source == nil || workspace.Source.PaperID == "" {
+		t.Fatalf("expected hydrated source, got %+v", workspace.Source)
+	}
+	if workspace.Digest == nil || workspace.Digest.PaperID != workspace.PaperID {
+		t.Fatalf("expected hydrated digest, got %+v", workspace.Digest)
+	}
+	if !workspaceHasResource(workspace, pdf) {
+		t.Fatalf("expected source resource in %+v", workspace.Resources)
+	}
+	if !workspaceHasResource(workspace, result.Artifacts[0].Paths["markdown"]) {
+		t.Fatalf("expected artifact markdown resource in %+v", workspace.Resources)
+	}
+}
+
+func TestWorkspaceNotesAndAnnotationsSurviveReplan(t *testing.T) {
+	t.Parallel()
+
+	svc, _ := newTestService(t)
+	ctx := context.Background()
+
+	pdf := writeTestPDF(t, filepath.Join(t.TempDir(), "paper.pdf"), "Paper Notes")
+	planned, err := svc.Execute(ctx, protocol.ClientRequest{
+		Task:           "distill this paper",
+		Sources:        []string{pdf},
+		PermissionMode: protocol.PermissionModePlan,
+		Language:       "zh",
+		Style:          "distill",
+	})
+	if err != nil {
+		t.Fatalf("Execute(plan): %v", err)
+	}
+	paperID := planned.Session.Sources[0].PaperID
+
+	afterNote, err := svc.AddWorkspaceNote(planned.Session.Meta.SessionID, paperID, "Keep this note for later reasoning and review.")
+	if err != nil {
+		t.Fatalf("AddWorkspaceNote: %v", err)
+	}
+	workspace, ok := findWorkspaceByPaperID(afterNote.Workspaces, paperID)
+	if !ok || len(workspace.Notes) != 1 {
+		t.Fatalf("expected saved note, got %+v", afterNote.Workspaces)
+	}
+	if workspace.Notes[0].Title == "" {
+		t.Fatalf("expected derived note title, got %+v", workspace.Notes[0])
+	}
+
+	afterAnnotation, err := svc.AddWorkspaceAnnotation(planned.Session.Meta.SessionID, paperID, protocol.AnchorRef{
+		Kind: protocol.AnchorKindPage,
+		Page: 3,
+	}, "This page contains the key experimental setup.")
+	if err != nil {
+		t.Fatalf("AddWorkspaceAnnotation: %v", err)
+	}
+	workspace, ok = findWorkspaceByPaperID(afterAnnotation.Workspaces, paperID)
+	if !ok || len(workspace.Annotations) != 1 {
+		t.Fatalf("expected saved annotation, got %+v", afterAnnotation.Workspaces)
+	}
+
+	replanned, err := svc.Execute(ctx, protocol.ClientRequest{
+		Task:           "distill this paper again",
+		PermissionMode: protocol.PermissionModePlan,
+		Language:       "zh",
+		Style:          "distill",
+		SessionID:      planned.Session.Meta.SessionID,
+	})
+	if err != nil {
+		t.Fatalf("Execute(replan): %v", err)
+	}
+	workspace, ok = findWorkspaceByPaperID(replanned.Session.Workspaces, paperID)
+	if !ok {
+		t.Fatalf("expected workspace after replan, got %+v", replanned.Session.Workspaces)
+	}
+	if len(workspace.Notes) != 1 || len(workspace.Annotations) != 1 {
+		t.Fatalf("expected workspace state to survive replan, got %+v", workspace)
+	}
+}
+
 func newTestService(t *testing.T) (*Service, *testSink) {
 	t.Helper()
 
@@ -239,6 +336,24 @@ func writeTestPDF(t *testing.T, path, title string) string {
 		t.Fatalf("WriteFile(%s): %v", path, err)
 	}
 	return path
+}
+
+func findWorkspaceByPaperID(workspaces []protocol.PaperWorkspace, paperID string) (protocol.PaperWorkspace, bool) {
+	for _, workspace := range workspaces {
+		if workspace.PaperID == paperID {
+			return workspace, true
+		}
+	}
+	return protocol.PaperWorkspace{}, false
+}
+
+func workspaceHasResource(workspace protocol.PaperWorkspace, uri string) bool {
+	for _, resource := range workspace.Resources {
+		if resource.URI == uri {
+			return true
+		}
+	}
+	return false
 }
 
 func minimalPDF(lines []string) []byte {

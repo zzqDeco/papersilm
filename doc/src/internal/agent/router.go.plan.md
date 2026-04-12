@@ -18,6 +18,7 @@
 ## 4. 关键实现细节
 - 主要类型: `EventSink`、`Agent`。
 - 关键函数/方法: `New`、`AttachSources`、`Execute`、`RunPlanned`、`Approve`、`syncSessionConfig`、`planSession`、`startConfirmExecution` 等。
+- `AttachSources()` 在 replace 模式下会先删除旧 source 对应的 workspace 状态，再清空 sources 并触发计划失效。
 - `Execute()` 统一处理附带来源、任务补全、会话配置同步和模式分发。
 - `planSession()` 负责来源检查、DAG 规划、风险生成和计划/执行状态持久化。
 - `runDAGExecution()` 循环选择 ready batch，发射进度事件，处理失败、重规划与最终收尾。

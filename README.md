@@ -103,6 +103,10 @@ Useful slash commands:
 - `/source add <uri>`
 - `/source replace <uri>`
 - `/source list`
+- `/workspace list`
+- `/workspace show <paper_id>`
+- `/workspace note add <paper_id> :: <body>`
+- `/workspace annotation add <paper_id> page|snippet|section <value> :: <body>`
 - `/plan [task]`
 - `/run`
 - `/approve`
@@ -129,6 +133,7 @@ This repository currently includes:
 
 - headless `pkg/core` and `pkg/protocol`
 - local session storage and artifact persistence
+- per-paper workspace hydration with notes, annotations, resources, and similar slots
 - CLI with REPL and `-p/--print` modes
 - internal tool registry
 - source normalization and inspection
