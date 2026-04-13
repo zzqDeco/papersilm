@@ -101,6 +101,10 @@ func (s *Service) ApproveTask(ctx context.Context, sessionID, taskID string, app
 	return s.agent.ApproveTask(ctx, s.store, s.sink, sessionID, taskID, approved, comment)
 }
 
+func (s *Service) RejectTask(ctx context.Context, sessionID, taskID, comment string) (protocol.RunResult, error) {
+	return s.agent.RejectTask(ctx, s.store, s.sink, sessionID, taskID, comment)
+}
+
 func (s *Service) AttachSources(ctx context.Context, sessionID string, sources []string, replace bool) (protocol.SessionSnapshot, error) {
 	return s.agent.AttachSources(ctx, s.store, s.sink, sessionID, sources, replace)
 }

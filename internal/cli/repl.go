@@ -80,7 +80,7 @@ func handleSlash(ctx context.Context, svc *core.Service, store *storage.Store, s
 	}
 	switch fields[0] {
 	case "/help":
-		_, err := fmt.Fprintln(os.Stdout, "/help, /plan [task], /approve, /run, /tasks, /task show|run|approve, /lang <zh|en|both>, /style <distill|ultra|reviewer>, /source add|replace|list|remove, /workspace list|show|note add|annotation add, /session name <name>, /export, /clear, /exit")
+		_, err := fmt.Fprintln(os.Stdout, "/help, /plan [task], /approve, /run, /tasks, /task show|run|approve|reject, /lang <zh|en|both>, /style <distill|ultra|reviewer>, /source add|replace|list|remove, /workspace list|show|note add|annotation add, /session name <name>, /export, /clear, /exit")
 		return err
 	case "/clear":
 		_, err := fmt.Fprintln(os.Stdout, strings.Repeat("-", 72))
@@ -202,13 +202,13 @@ func handleSourceCommand(ctx context.Context, svc *core.Service, store *storage.
 				filtered = append(filtered, src)
 			}
 		}
-		if err := store.DeleteWorkspaceState(session.Meta.SessionID, id); err != nil {
-			return err
-		}
 		if err := store.SaveSources(session.Meta.SessionID, filtered); err != nil {
 			return err
 		}
 		if err := store.InvalidatePlanState(session.Meta.SessionID); err != nil {
+			return err
+		}
+		if err := store.DeleteWorkspaceState(session.Meta.SessionID, id); err != nil {
 			return err
 		}
 		snapshot, err := store.Snapshot(session.Meta.SessionID)
@@ -296,7 +296,7 @@ func handleWorkspaceCommand(svc *core.Service, session *protocol.SessionSnapshot
 
 func handleTaskCommand(ctx context.Context, svc *core.Service, session *protocol.SessionSnapshot, out *OutputWriter, fields []string) error {
 	if len(fields) < 3 {
-		return fmt.Errorf("usage: /task show|run|approve <id>")
+		return fmt.Errorf("usage: /task show|run|approve|reject <id>")
 	}
 	switch fields[1] {
 	case "show":
@@ -319,6 +319,13 @@ func handleTaskCommand(ctx context.Context, svc *core.Service, session *protocol
 		return out.PrintResult(result)
 	case "approve":
 		result, err := svc.ApproveTask(ctx, session.Meta.SessionID, fields[2], true, "")
+		if err != nil {
+			return err
+		}
+		*session = result.Session
+		return out.PrintResult(result)
+	case "reject":
+		result, err := svc.RejectTask(ctx, session.Meta.SessionID, fields[2], "")
 		if err != nil {
 			return err
 		}

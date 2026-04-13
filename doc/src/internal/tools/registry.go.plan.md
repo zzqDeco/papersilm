@@ -17,8 +17,9 @@
 
 ## 4. 关键实现细节
 - 主要类型: `Registry`、`DistillToolInput`、`DistillToolResult`、`CompareToolInput`、`CompareToolResult`、`ExportArtifactInput`、`ExportArtifactResult`、`SessionAssets`、`approvalToolInput`。
-- 关键函数/方法: `New`、`Pipeline`、`init`、`AttachSources`、`InspectSources`、`ToolNames`、`BuildExecutionTools`、`LookupAlphaXivOverview` 等。
-- `AttachSources()` / `InspectSources()` 负责来源去重、检查与计划失效。
+- 关键函数/方法: `New`、`Pipeline`、`init`、`AttachSources`、`ResolveSources`、`CommitSources`、`InspectSources`、`ToolNames`、`BuildExecutionTools`、`LookupAlphaXivOverview` 等。
+- `ResolveSources()` 先在内存中完成来源去重、normalize 和校验；`CommitSources()` 只负责把已经准备好的 refs 写入存储并触发计划失效。
+- `AttachSources()` / `InspectSources()` 负责来源去重、检查与计划失效，其中 attach 现在复用了显式的 resolve/commit 两段式。
 - `BuildExecutionTools()` 根据是否需要审批，组装审批、distill、compare、export、list assets 等工具。
 - `buildDistillTool()` 与 `buildCompareTool()` 用 graph tool 包装具体 workflow。
 - `list_session_assets` 会直接返回 `SessionSnapshot` 中已经 hydration 的 `workspaces`。
