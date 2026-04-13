@@ -80,7 +80,7 @@ func handleSlash(ctx context.Context, svc *core.Service, store *storage.Store, s
 	}
 	switch fields[0] {
 	case "/help":
-		_, err := fmt.Fprintln(os.Stdout, "/help, /plan [task], /approve, /run [task], /lang <zh|en|both>, /style <distill|ultra|reviewer>, /source add|replace|list|remove, /workspace list|show|note add|annotation add, /session name <name>, /export, /clear, /exit")
+		_, err := fmt.Fprintln(os.Stdout, "/help, /plan [task], /approve, /run, /tasks, /task show|run|approve, /lang <zh|en|both>, /style <distill|ultra|reviewer>, /source add|replace|list|remove, /workspace list|show|note add|annotation add, /session name <name>, /export, /clear, /exit")
 		return err
 	case "/clear":
 		_, err := fmt.Fprintln(os.Stdout, strings.Repeat("-", 72))
@@ -135,6 +135,15 @@ func handleSlash(ctx context.Context, svc *core.Service, store *storage.Store, s
 		}
 		*session = result.Session
 		return out.PrintResult(result)
+	case "/tasks":
+		board, err := svc.LoadTaskBoard(session.Meta.SessionID)
+		if err != nil {
+			return err
+		}
+		session.TaskBoard = board
+		return out.PrintTaskBoard(board)
+	case "/task":
+		return handleTaskCommand(ctx, svc, session, out, fields)
 	case "/approve":
 		result, err := svc.Approve(ctx, session.Meta.SessionID, true, "")
 		if err != nil {
@@ -285,6 +294,41 @@ func handleWorkspaceCommand(svc *core.Service, session *protocol.SessionSnapshot
 	}
 }
 
+func handleTaskCommand(ctx context.Context, svc *core.Service, session *protocol.SessionSnapshot, out *OutputWriter, fields []string) error {
+	if len(fields) < 3 {
+		return fmt.Errorf("usage: /task show|run|approve <id>")
+	}
+	switch fields[1] {
+	case "show":
+		board, err := svc.LoadTaskBoard(session.Meta.SessionID)
+		if err != nil {
+			return err
+		}
+		session.TaskBoard = board
+		task, ok := findTaskByID(board, fields[2])
+		if !ok {
+			return fmt.Errorf("task not found: %s", fields[2])
+		}
+		return out.PrintTaskCard(task)
+	case "run":
+		result, err := svc.RunTask(ctx, session.Meta.SessionID, fields[2], session.Meta.Language, session.Meta.Style)
+		if err != nil {
+			return err
+		}
+		*session = result.Session
+		return out.PrintResult(result)
+	case "approve":
+		result, err := svc.ApproveTask(ctx, session.Meta.SessionID, fields[2], true, "")
+		if err != nil {
+			return err
+		}
+		*session = result.Session
+		return out.PrintResult(result)
+	default:
+		return fmt.Errorf("unknown /task action: %s", fields[1])
+	}
+}
+
 func splitWorkspaceCommand(line string) (string, string) {
 	parts := strings.SplitN(line, "::", 2)
 	head := strings.TrimSpace(parts[0])
@@ -329,4 +373,16 @@ func findWorkspace(workspaces []protocol.PaperWorkspace, paperID string) (*proto
 		}
 	}
 	return nil, false
+}
+
+func findTaskByID(board *protocol.TaskBoard, taskID string) (protocol.TaskCard, bool) {
+	if board == nil {
+		return protocol.TaskCard{}, false
+	}
+	for _, task := range board.Tasks {
+		if task.TaskID == taskID {
+			return task, true
+		}
+	}
+	return protocol.TaskCard{}, false
 }

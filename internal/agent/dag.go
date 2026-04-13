@@ -309,6 +309,9 @@ func updateExecutionNode(state *protocol.ExecutionState, nodeID string, status p
 		if len(outputs) > 0 {
 			state.Nodes[i].Outputs = append([]protocol.NodeOutputRef(nil), outputs...)
 		}
+		if status == protocol.NodeStatusRunning || status == protocol.NodeStatusCompleted || status == protocol.NodeStatusFailed || status == protocol.NodeStatusSkipped {
+			removeStaleNodeID(state, nodeID)
+		}
 		state.UpdatedAt = now
 		return
 	}
@@ -319,6 +322,30 @@ func updateExecutionNode(state *protocol.ExecutionState, nodeID string, status p
 		Outputs:     append([]protocol.NodeOutputRef(nil), outputs...),
 		StartedAt:   now,
 		CompletedAt: now,
+	})
+	if status == protocol.NodeStatusRunning || status == protocol.NodeStatusCompleted || status == protocol.NodeStatusFailed || status == protocol.NodeStatusSkipped {
+		removeStaleNodeID(state, nodeID)
+	}
+	state.UpdatedAt = now
+}
+
+func resetExecutionNode(state *protocol.ExecutionState, nodeID string) {
+	now := time.Now().UTC()
+	for i := range state.Nodes {
+		if state.Nodes[i].NodeID != nodeID {
+			continue
+		}
+		state.Nodes[i].Status = protocol.NodeStatusPending
+		state.Nodes[i].Error = ""
+		state.Nodes[i].Outputs = nil
+		state.Nodes[i].StartedAt = time.Time{}
+		state.Nodes[i].CompletedAt = time.Time{}
+		state.UpdatedAt = now
+		return
+	}
+	state.Nodes = append(state.Nodes, protocol.NodeExecutionState{
+		NodeID: nodeID,
+		Status: protocol.NodeStatusPending,
 	})
 	state.UpdatedAt = now
 }
@@ -340,6 +367,57 @@ func selectBatch(dag protocol.PlanDAG) []string {
 		ready = ready[:maxParallelNodes]
 	}
 	return ready
+}
+
+func selectBatchFromSet(dag protocol.PlanDAG, allowed map[string]struct{}) []string {
+	if len(allowed) == 0 {
+		return nil
+	}
+	ready := make([]string, 0, len(allowed))
+	for _, node := range dag.Nodes {
+		if node.Status != protocol.NodeStatusReady {
+			continue
+		}
+		if _, ok := allowed[node.ID]; !ok {
+			continue
+		}
+		ready = append(ready, node.ID)
+	}
+	sort.Strings(ready)
+	if len(ready) > maxParallelNodes {
+		ready = ready[:maxParallelNodes]
+	}
+	return ready
+}
+
+func addStaleNodeID(state *protocol.ExecutionState, nodeID string) {
+	for _, existing := range state.StaleNodeIDs {
+		if existing == nodeID {
+			return
+		}
+	}
+	state.StaleNodeIDs = append(state.StaleNodeIDs, nodeID)
+	sort.Strings(state.StaleNodeIDs)
+	state.UpdatedAt = time.Now().UTC()
+}
+
+func removeStaleNodeID(state *protocol.ExecutionState, nodeID string) {
+	if len(state.StaleNodeIDs) == 0 {
+		return
+	}
+	filtered := state.StaleNodeIDs[:0]
+	removed := false
+	for _, existing := range state.StaleNodeIDs {
+		if existing == nodeID {
+			removed = true
+			continue
+		}
+		filtered = append(filtered, existing)
+	}
+	if removed {
+		state.StaleNodeIDs = filtered
+		state.UpdatedAt = time.Now().UTC()
+	}
 }
 
 func applyDagPatch(dag *protocol.PlanDAG, state *protocol.ExecutionState, patch protocol.DagPatch) error {

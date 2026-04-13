@@ -215,7 +215,127 @@ func (o *OutputWriter) PrintWorkspace(workspace protocol.PaperWorkspace) error {
 	return nil
 }
 
+func (o *OutputWriter) PrintTaskBoard(board *protocol.TaskBoard) error {
+	switch o.format {
+	case protocol.OutputFormatJSON, protocol.OutputFormatStreamJSON:
+		raw, err := json.MarshalIndent(board, "", "  ")
+		if err != nil {
+			return err
+		}
+		_, err = fmt.Fprintln(o.w, string(raw))
+		return err
+	case protocol.OutputFormatText:
+		if board == nil {
+			_, err := fmt.Fprintln(o.w, "No task board.")
+			return err
+		}
+		if _, err := fmt.Fprintf(o.w, "Task Board: %s\nGoal: %s\n", board.PlanID, board.Goal); err != nil {
+			return err
+		}
+		tasksByID := make(map[string]protocol.TaskCard, len(board.Tasks))
+		for _, task := range board.Tasks {
+			tasksByID[task.TaskID] = task
+		}
+		for _, group := range board.Groups {
+			if _, err := fmt.Fprintf(o.w, "\n[%s] %s\n", group.Kind, group.Title); err != nil {
+				return err
+			}
+			for _, taskID := range group.TaskIDs {
+				task, ok := tasksByID[taskID]
+				if !ok {
+					continue
+				}
+				if _, err := fmt.Fprintf(o.w, "- %s [%s] %s", task.TaskID, task.Status, task.Title); err != nil {
+					return err
+				}
+				if actions := formatTaskActions(task.AvailableActions); actions != "" {
+					if _, err := fmt.Fprintf(o.w, " | actions=%s", actions); err != nil {
+						return err
+					}
+				}
+				if len(task.ArtifactIDs) > 0 {
+					if _, err := fmt.Fprintf(o.w, " | artifacts=%s", strings.Join(task.ArtifactIDs, ",")); err != nil {
+						return err
+					}
+				}
+				if _, err := fmt.Fprintln(o.w); err != nil {
+					return err
+				}
+			}
+		}
+	}
+	return nil
+}
+
+func (o *OutputWriter) PrintTaskCard(task protocol.TaskCard) error {
+	switch o.format {
+	case protocol.OutputFormatJSON, protocol.OutputFormatStreamJSON:
+		raw, err := json.MarshalIndent(task, "", "  ")
+		if err != nil {
+			return err
+		}
+		_, err = fmt.Fprintln(o.w, string(raw))
+		return err
+	case protocol.OutputFormatText:
+		if _, err := fmt.Fprintf(o.w, "Task: %s\nKind: %s\nStatus: %s\nTitle: %s\n", task.TaskID, task.Kind, task.Status, task.Title); err != nil {
+			return err
+		}
+		if strings.TrimSpace(task.Description) != "" {
+			if _, err := fmt.Fprintf(o.w, "Description: %s\n", task.Description); err != nil {
+				return err
+			}
+		}
+		if len(task.PaperIDs) > 0 {
+			if _, err := fmt.Fprintf(o.w, "Paper IDs: %s\n", strings.Join(task.PaperIDs, ", ")); err != nil {
+				return err
+			}
+		}
+		if len(task.DependsOn) > 0 {
+			if _, err := fmt.Fprintf(o.w, "Depends on: %s\n", strings.Join(task.DependsOn, ", ")); err != nil {
+				return err
+			}
+		}
+		if len(task.Produces) > 0 {
+			if _, err := fmt.Fprintf(o.w, "Produces: %s\n", strings.Join(task.Produces, ", ")); err != nil {
+				return err
+			}
+		}
+		if len(task.ArtifactIDs) > 0 {
+			if _, err := fmt.Fprintf(o.w, "Artifacts: %s\n", strings.Join(task.ArtifactIDs, ", ")); err != nil {
+				return err
+			}
+		}
+		if strings.TrimSpace(task.Error) != "" {
+			if _, err := fmt.Fprintf(o.w, "Error: %s\n", task.Error); err != nil {
+				return err
+			}
+		}
+		if _, err := fmt.Fprintf(o.w, "Actions: %s\n", formatTaskActions(task.AvailableActions)); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 func (o *OutputWriter) printPlan(plan protocol.PlanResult) error {
+	if plan.TaskBoard != nil {
+		if err := o.PrintTaskBoard(plan.TaskBoard); err != nil {
+			return err
+		}
+		counts := summarizeTaskStatuses(plan.TaskBoard)
+		_, err := fmt.Fprintf(
+			o.w,
+			"\nDAG Summary: plan_id=%s total=%d ready=%d running=%d failed=%d stale=%d\n",
+			plan.PlanID,
+			len(plan.TaskBoard.Tasks),
+			counts[protocol.TaskStatusReady],
+			counts[protocol.TaskStatusRunning],
+			counts[protocol.TaskStatusFailed],
+			counts[protocol.TaskStatusStale],
+		)
+		return err
+	}
+
 	ready := make([]string, 0, len(plan.DAG.Nodes))
 	_, err := fmt.Fprintf(o.w, "Plan ID: %s\nGoal: %s\nWill compare: %t\nNodes: %d\n\nDAG:\n", plan.PlanID, plan.Goal, plan.WillCompare, len(plan.DAG.Nodes))
 	if err != nil {
@@ -269,4 +389,30 @@ func formatAnchor(anchor protocol.AnchorRef) string {
 	default:
 		return string(anchor.Kind)
 	}
+}
+
+func formatTaskActions(actions []protocol.TaskAction) string {
+	if len(actions) == 0 {
+		return "<none>"
+	}
+	labels := make([]string, 0, len(actions))
+	for _, action := range actions {
+		if strings.TrimSpace(action.Label) != "" {
+			labels = append(labels, action.Label)
+			continue
+		}
+		labels = append(labels, string(action.Type))
+	}
+	return strings.Join(labels, ", ")
+}
+
+func summarizeTaskStatuses(board *protocol.TaskBoard) map[protocol.TaskStatus]int {
+	counts := map[protocol.TaskStatus]int{}
+	if board == nil {
+		return counts
+	}
+	for _, task := range board.Tasks {
+		counts[task.Status]++
+	}
+	return counts
 }
