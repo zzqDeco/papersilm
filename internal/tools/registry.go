@@ -75,11 +75,13 @@ type ExportArtifactResult struct {
 }
 
 type SessionAssets struct {
-	Sources    []protocol.PaperRef         `json:"sources,omitempty"`
-	Digests    []protocol.PaperDigest      `json:"digests,omitempty"`
-	Compare    *protocol.ComparisonDigest  `json:"comparison,omitempty"`
-	Artifacts  []protocol.ArtifactManifest `json:"artifacts,omitempty"`
-	Workspaces []protocol.PaperWorkspace   `json:"workspaces,omitempty"`
+	Sources        []protocol.PaperRef         `json:"sources,omitempty"`
+	Digests        []protocol.PaperDigest      `json:"digests,omitempty"`
+	Compare        *protocol.ComparisonDigest  `json:"comparison,omitempty"`
+	Artifacts      []protocol.ArtifactManifest `json:"artifacts,omitempty"`
+	SkillRuns      []protocol.SkillRunRecord   `json:"skill_runs,omitempty"`
+	SkillArtifacts []protocol.ArtifactManifest `json:"skill_artifacts,omitempty"`
+	Workspaces     []protocol.PaperWorkspace   `json:"workspaces,omitempty"`
 }
 
 type approvalToolInput struct {
@@ -251,18 +253,20 @@ func (r *Registry) BuildExecutionTools(ctx context.Context, store *storage.Store
 	}
 	out = append(out, exportTool)
 
-	listAssetsTool, err := toolutils.InferTool("list_session_assets", "List the session sources, digests, comparison, and artifacts.",
+	listAssetsTool, err := toolutils.InferTool("list_session_assets", "List the session sources, digests, comparison, artifacts, skills, and workspaces.",
 		func(ctx context.Context, _ map[string]any) (*SessionAssets, error) {
 			snapshot, err := store.Snapshot(sessionID)
 			if err != nil {
 				return nil, err
 			}
 			return &SessionAssets{
-				Sources:    snapshot.Sources,
-				Digests:    snapshot.Digests,
-				Compare:    snapshot.Compare,
-				Artifacts:  snapshot.Artifacts,
-				Workspaces: snapshot.Workspaces,
+				Sources:        snapshot.Sources,
+				Digests:        snapshot.Digests,
+				Compare:        snapshot.Compare,
+				Artifacts:      snapshot.Artifacts,
+				SkillRuns:      snapshot.SkillRuns,
+				SkillArtifacts: snapshot.SkillArtifacts,
+				Workspaces:     snapshot.Workspaces,
 			}, nil
 		})
 	if err != nil {

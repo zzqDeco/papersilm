@@ -74,13 +74,16 @@ func handleSlash(ctx context.Context, svc *core.Service, store *storage.Store, s
 	if strings.HasPrefix(line, "/workspace") {
 		return handleWorkspaceCommand(svc, session, out, line)
 	}
+	if strings.HasPrefix(line, "/skill") {
+		return handleSkillCommand(ctx, svc, store, session, out, strings.Fields(line))
+	}
 	fields := strings.Fields(line)
 	if len(fields) == 0 {
 		return nil
 	}
 	switch fields[0] {
 	case "/help":
-		_, err := fmt.Fprintln(os.Stdout, "/help, /plan [task], /approve, /run, /tasks, /task show|run|approve|reject, /lang <zh|en|both>, /style <distill|ultra|reviewer>, /source add|replace|list|remove, /workspace list|show|note add|annotation add, /session name <name>, /export, /clear, /exit")
+		_, err := fmt.Fprintln(os.Stdout, "/help, /plan [task], /approve, /run, /tasks, /task show|run|approve|reject, /skill list|run|show, /lang <zh|en|both>, /style <distill|ultra|reviewer(legacy)>, /source add|replace|list|remove, /workspace list|show|note add|annotation add, /session name <name>, /export, /clear, /exit")
 		return err
 	case "/clear":
 		_, err := fmt.Fprintln(os.Stdout, strings.Repeat("-", 72))
@@ -96,7 +99,7 @@ func handleSlash(ctx context.Context, svc *core.Service, store *storage.Store, s
 		return store.InvalidatePlanState(session.Meta.SessionID)
 	case "/style":
 		if len(fields) < 2 {
-			return fmt.Errorf("usage: /style <distill|ultra|reviewer>")
+			return fmt.Errorf("usage: /style <distill|ultra|reviewer(legacy)>")
 		}
 		session.Meta.Style = fields[1]
 		if err := store.SaveMeta(session.Meta); err != nil {
@@ -336,6 +339,59 @@ func handleTaskCommand(ctx context.Context, svc *core.Service, session *protocol
 	}
 }
 
+func handleSkillCommand(ctx context.Context, svc *core.Service, store *storage.Store, session *protocol.SessionSnapshot, out *OutputWriter, fields []string) error {
+	if len(fields) < 2 {
+		return fmt.Errorf("usage: /skill list|run|show ...")
+	}
+	switch fields[1] {
+	case "list":
+		descriptors, err := svc.ListSkills(session.Meta.SessionID)
+		if err != nil {
+			return err
+		}
+		snapshot, err := store.Snapshot(session.Meta.SessionID)
+		if err != nil {
+			return err
+		}
+		*session = snapshot
+		return out.PrintSkillList(snapshot, descriptors)
+	case "run":
+		if len(fields) < 3 {
+			return fmt.Errorf("usage: /skill run <name> [target]")
+		}
+		target := ""
+		if len(fields) > 3 {
+			target = strings.Join(fields[3:], " ")
+		}
+		result, err := svc.RunSkill(ctx, session.Meta.SessionID, fields[2], target)
+		if err != nil {
+			return err
+		}
+		*session = result.Session
+		return out.PrintSkillRunResult(result)
+	case "show":
+		if len(fields) < 3 {
+			return fmt.Errorf("usage: /skill show <run_id>")
+		}
+		run, err := svc.LoadSkillRun(session.Meta.SessionID, fields[2])
+		if err != nil {
+			return err
+		}
+		manifests, err := store.LoadSkillArtifactManifests(session.Meta.SessionID)
+		if err != nil {
+			return err
+		}
+		snapshot, err := store.Snapshot(session.Meta.SessionID)
+		if err != nil {
+			return err
+		}
+		*session = snapshot
+		return out.PrintSkillRun(run, findArtifactManifest(manifests, run.ArtifactID))
+	default:
+		return fmt.Errorf("unknown /skill action: %s", fields[1])
+	}
+}
+
 func splitWorkspaceCommand(line string) (string, string) {
 	parts := strings.SplitN(line, "::", 2)
 	head := strings.TrimSpace(parts[0])
@@ -392,4 +448,13 @@ func findTaskByID(board *protocol.TaskBoard, taskID string) (protocol.TaskCard, 
 		}
 	}
 	return protocol.TaskCard{}, false
+}
+
+func findArtifactManifest(manifests []protocol.ArtifactManifest, artifactID string) *protocol.ArtifactManifest {
+	for i := range manifests {
+		if manifests[i].ArtifactID == artifactID {
+			return &manifests[i]
+		}
+	}
+	return nil
 }

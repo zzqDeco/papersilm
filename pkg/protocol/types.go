@@ -79,6 +79,10 @@ const (
 	NodeKindExperimentCompare NodeKind = "experiment_compare"
 	NodeKindResultsCompare    NodeKind = "results_compare"
 	NodeKindFinalSynthesis    NodeKind = "final_synthesis"
+	NodeKindReviewerSkill     NodeKind = "reviewer_skill"
+	NodeKindEquationExplain   NodeKind = "equation_explain_skill"
+	NodeKindRelatedWorkMap    NodeKind = "related_work_map_skill"
+	NodeKindCompareRefinement NodeKind = "compare_refinement_skill"
 )
 
 type NodeStatus string
@@ -166,6 +170,60 @@ type SimilarPaperRef struct {
 	Status  string `json:"status,omitempty"`
 }
 
+type SkillName string
+
+const (
+	SkillNameReviewer          SkillName = "reviewer"
+	SkillNameEquationExplain   SkillName = "equation-explain"
+	SkillNameRelatedWorkMap    SkillName = "related-work-map"
+	SkillNameCompareRefinement SkillName = "compare-refinement"
+)
+
+type SkillTargetKind string
+
+const (
+	SkillTargetKindPaper      SkillTargetKind = "paper"
+	SkillTargetKindComparison SkillTargetKind = "comparison"
+)
+
+type SkillRunStatus string
+
+const (
+	SkillRunStatusRunning   SkillRunStatus = "running"
+	SkillRunStatusCompleted SkillRunStatus = "completed"
+	SkillRunStatusFailed    SkillRunStatus = "failed"
+)
+
+type SkillDescriptor struct {
+	Name         SkillName       `json:"name"`
+	Title        string          `json:"title"`
+	Summary      string          `json:"summary"`
+	TargetKind   SkillTargetKind `json:"target_kind"`
+	ArtifactKind string          `json:"artifact_kind"`
+}
+
+type SkillRunRecord struct {
+	RunID      string          `json:"run_id"`
+	SessionID  string          `json:"session_id"`
+	SkillName  SkillName       `json:"skill_name"`
+	TargetKind SkillTargetKind `json:"target_kind"`
+	TargetID   string          `json:"target_id"`
+	ArtifactID string          `json:"artifact_id,omitempty"`
+	Status     SkillRunStatus  `json:"status"`
+	Title      string          `json:"title"`
+	Summary    string          `json:"summary,omitempty"`
+	Error      string          `json:"error,omitempty"`
+	CreatedAt  time.Time       `json:"created_at"`
+	UpdatedAt  time.Time       `json:"updated_at"`
+}
+
+type SkillRunResult struct {
+	Session    SessionSnapshot   `json:"session"`
+	Descriptor SkillDescriptor   `json:"descriptor"`
+	Run        SkillRunRecord    `json:"run"`
+	Artifact   *ArtifactManifest `json:"artifact,omitempty"`
+}
+
 type KeyResult struct {
 	Claim     string     `json:"claim"`
 	Value     string     `json:"value,omitempty"`
@@ -225,6 +283,7 @@ type PaperWorkspace struct {
 	Annotations []PaperAnnotation `json:"annotations,omitempty"`
 	Resources   []PaperResource   `json:"resources,omitempty"`
 	Similar     []SimilarPaperRef `json:"similar,omitempty"`
+	SkillRuns   []SkillRunRecord  `json:"skill_runs,omitempty"`
 	CreatedAt   time.Time         `json:"created_at"`
 	UpdatedAt   time.Time         `json:"updated_at"`
 }
@@ -463,15 +522,17 @@ type SessionMeta struct {
 }
 
 type SessionSnapshot struct {
-	Meta       SessionMeta        `json:"meta"`
-	Sources    []PaperRef         `json:"sources"`
-	Plan       *PlanResult        `json:"plan,omitempty"`
-	TaskBoard  *TaskBoard         `json:"task_board,omitempty"`
-	Execution  *ExecutionState    `json:"execution,omitempty"`
-	Digests    []PaperDigest      `json:"digests,omitempty"`
-	Compare    *ComparisonDigest  `json:"comparison,omitempty"`
-	Artifacts  []ArtifactManifest `json:"artifacts,omitempty"`
-	Workspaces []PaperWorkspace   `json:"workspaces,omitempty"`
+	Meta           SessionMeta        `json:"meta"`
+	Sources        []PaperRef         `json:"sources"`
+	Plan           *PlanResult        `json:"plan,omitempty"`
+	TaskBoard      *TaskBoard         `json:"task_board,omitempty"`
+	Execution      *ExecutionState    `json:"execution,omitempty"`
+	Digests        []PaperDigest      `json:"digests,omitempty"`
+	Compare        *ComparisonDigest  `json:"comparison,omitempty"`
+	Artifacts      []ArtifactManifest `json:"artifacts,omitempty"`
+	SkillRuns      []SkillRunRecord   `json:"skill_runs,omitempty"`
+	SkillArtifacts []ArtifactManifest `json:"skill_artifacts,omitempty"`
+	Workspaces     []PaperWorkspace   `json:"workspaces,omitempty"`
 }
 
 type ClientRequest struct {

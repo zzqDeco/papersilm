@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"os"
 	"strings"
 
 	"github.com/zzqDeco/papersilm/pkg/protocol"
@@ -122,6 +123,11 @@ func (o *OutputWriter) PrintWorkspaceList(workspaces []protocol.PaperWorkspace) 
 			); err != nil {
 				return err
 			}
+			if len(workspace.SkillRuns) > 0 {
+				if _, err := fmt.Fprintf(o.w, "  skill_runs=%d\n", len(workspace.SkillRuns)); err != nil {
+					return err
+				}
+			}
 		}
 	}
 	return nil
@@ -178,6 +184,27 @@ func (o *OutputWriter) PrintWorkspace(workspace protocol.PaperWorkspace) error {
 				return err
 			}
 		}
+		if _, err := fmt.Fprintln(o.w, "\nSkill Runs:"); err != nil {
+			return err
+		}
+		if len(workspace.SkillRuns) == 0 {
+			if _, err := fmt.Fprintln(o.w, "- <none>"); err != nil {
+				return err
+			}
+		}
+		for _, run := range workspace.SkillRuns {
+			if _, err := fmt.Fprintf(o.w, "- %s [%s] %s", run.RunID, run.Status, run.SkillName); err != nil {
+				return err
+			}
+			if strings.TrimSpace(run.ArtifactID) != "" {
+				if _, err := fmt.Fprintf(o.w, " | artifact=%s", run.ArtifactID); err != nil {
+					return err
+				}
+			}
+			if _, err := fmt.Fprintln(o.w); err != nil {
+				return err
+			}
+		}
 		if _, err := fmt.Fprintln(o.w, "\nResources:"); err != nil {
 			return err
 		}
@@ -208,6 +235,100 @@ func (o *OutputWriter) PrintWorkspace(workspace protocol.PaperWorkspace) error {
 				line += " (" + similar.Reason + ")"
 			}
 			if _, err := fmt.Fprintf(o.w, "- %s\n", line); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+func (o *OutputWriter) PrintSkillList(snapshot protocol.SessionSnapshot, descriptors []protocol.SkillDescriptor) error {
+	entries := make([]skillListEntry, 0, len(descriptors))
+	for _, descriptor := range descriptors {
+		runnable, reason := skillAvailability(snapshot, descriptor)
+		entries = append(entries, skillListEntry{
+			Name:       descriptor.Name,
+			Title:      descriptor.Title,
+			TargetKind: descriptor.TargetKind,
+			Summary:    descriptor.Summary,
+			Runnable:   runnable,
+			Reason:     reason,
+		})
+	}
+
+	switch o.format {
+	case protocol.OutputFormatJSON, protocol.OutputFormatStreamJSON:
+		raw, err := json.MarshalIndent(entries, "", "  ")
+		if err != nil {
+			return err
+		}
+		_, err = fmt.Fprintln(o.w, string(raw))
+		return err
+	case protocol.OutputFormatText:
+		if _, err := fmt.Fprintln(o.w, "Skills:"); err != nil {
+			return err
+		}
+		for _, entry := range entries {
+			status := "ready"
+			if !entry.Runnable {
+				status = "blocked"
+			}
+			if _, err := fmt.Fprintf(o.w, "- %s [%s] target=%s\n  %s\n", entry.Name, status, entry.TargetKind, entry.Summary); err != nil {
+				return err
+			}
+			if strings.TrimSpace(entry.Reason) != "" {
+				if _, err := fmt.Fprintf(o.w, "  reason: %s\n", entry.Reason); err != nil {
+					return err
+				}
+			}
+		}
+	}
+	return nil
+}
+
+func (o *OutputWriter) PrintSkillRunResult(result protocol.SkillRunResult) error {
+	return o.PrintSkillRun(result.Run, result.Artifact)
+}
+
+func (o *OutputWriter) PrintSkillRun(run protocol.SkillRunRecord, artifact *protocol.ArtifactManifest) error {
+	payload := struct {
+		Run      protocol.SkillRunRecord    `json:"run"`
+		Artifact *protocol.ArtifactManifest `json:"artifact,omitempty"`
+	}{
+		Run:      run,
+		Artifact: artifact,
+	}
+
+	switch o.format {
+	case protocol.OutputFormatJSON, protocol.OutputFormatStreamJSON:
+		raw, err := json.MarshalIndent(payload, "", "  ")
+		if err != nil {
+			return err
+		}
+		_, err = fmt.Fprintln(o.w, string(raw))
+		return err
+	case protocol.OutputFormatText:
+		if _, err := fmt.Fprintf(o.w, "Skill Run: %s\nSkill: %s\nTarget: %s (%s)\nStatus: %s\nTitle: %s\n", run.RunID, run.SkillName, run.TargetID, run.TargetKind, run.Status, run.Title); err != nil {
+			return err
+		}
+		if strings.TrimSpace(run.Summary) != "" {
+			if _, err := fmt.Fprintf(o.w, "Summary: %s\n", run.Summary); err != nil {
+				return err
+			}
+		}
+		if strings.TrimSpace(run.Error) != "" {
+			if _, err := fmt.Fprintf(o.w, "Error: %s\n", run.Error); err != nil {
+				return err
+			}
+		}
+		if artifact == nil {
+			return nil
+		}
+		if _, err := fmt.Fprintf(o.w, "Artifact: %s\n", artifact.ArtifactID); err != nil {
+			return err
+		}
+		if markdown := readArtifactMarkdown(artifact); strings.TrimSpace(markdown) != "" {
+			if _, err := fmt.Fprintln(o.w, "\n"+markdown); err != nil {
 				return err
 			}
 		}
@@ -425,4 +546,49 @@ func summarizeTaskStatuses(board *protocol.TaskBoard) map[protocol.TaskStatus]in
 		counts[task.Status]++
 	}
 	return counts
+}
+
+type skillListEntry struct {
+	Name       protocol.SkillName       `json:"name"`
+	Title      string                   `json:"title"`
+	TargetKind protocol.SkillTargetKind `json:"target_kind"`
+	Summary    string                   `json:"summary"`
+	Runnable   bool                     `json:"runnable"`
+	Reason     string                   `json:"reason,omitempty"`
+}
+
+func skillAvailability(snapshot protocol.SessionSnapshot, descriptor protocol.SkillDescriptor) (bool, string) {
+	switch descriptor.TargetKind {
+	case protocol.SkillTargetKindPaper:
+		switch len(snapshot.Workspaces) {
+		case 0:
+			return false, "no paper workspace is currently attached"
+		case 1:
+			return true, "single-paper session; target can be omitted"
+		default:
+			return true, "multi-paper session; provide a paper_id target"
+		}
+	case protocol.SkillTargetKindComparison:
+		if snapshot.Compare == nil || len(snapshot.Digests) < 2 {
+			return false, "requires an existing comparison with at least two paper digests"
+		}
+		return true, "comparison is available"
+	default:
+		return false, "unsupported target kind"
+	}
+}
+
+func readArtifactMarkdown(artifact *protocol.ArtifactManifest) string {
+	if artifact == nil {
+		return ""
+	}
+	path := strings.TrimSpace(artifact.Paths["markdown"])
+	if path == "" {
+		return ""
+	}
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return ""
+	}
+	return string(raw)
 }

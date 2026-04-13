@@ -105,6 +105,25 @@ func (s *Service) RejectTask(ctx context.Context, sessionID, taskID, comment str
 	return s.agent.RejectTask(ctx, s.store, s.sink, sessionID, taskID, comment)
 }
 
+func (s *Service) ListSkills(sessionID string) ([]protocol.SkillDescriptor, error) {
+	return s.agent.ListSkills(sessionID)
+}
+
+func (s *Service) RunSkill(ctx context.Context, sessionID, skillName, targetID string) (protocol.SkillRunResult, error) {
+	return s.agent.RunSkill(ctx, s.store, s.sink, sessionID, skillName, targetID)
+}
+
+func (s *Service) LoadSkillRun(sessionID, runID string) (protocol.SkillRunRecord, error) {
+	run, err := s.store.LoadSkillRun(sessionID, runID)
+	if err != nil {
+		return protocol.SkillRunRecord{}, err
+	}
+	if run == nil {
+		return protocol.SkillRunRecord{}, fmt.Errorf("skill run not found: %s", runID)
+	}
+	return *run, nil
+}
+
 func (s *Service) AttachSources(ctx context.Context, sessionID string, sources []string, replace bool) (protocol.SessionSnapshot, error) {
 	return s.agent.AttachSources(ctx, s.store, s.sink, sessionID, sources, replace)
 }

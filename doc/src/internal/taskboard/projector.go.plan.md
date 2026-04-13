@@ -8,19 +8,21 @@
 - 所属模块: `taskboard`
 
 ## 2. 核心职责
-- 从 `PlanResult`、`ExecutionState`、`SessionMeta`、`ArtifactManifest` 和 `PaperWorkspace` 水合出公开 `TaskBoard`。
+- 从 `PlanResult`、`ExecutionState`、`SessionMeta`、`ArtifactManifest`、`PaperWorkspace` 和 `SkillRunRecord` 水合出公开 `TaskBoard`。
 - 负责把底层节点状态转换成用户可理解的 task 状态、分组和可用动作。
 
 ## 3. 输入与输出
-- 输入来源: 已存在的 plan/execution 快照、artifact 列表和 workspace 列表。
+- 输入来源: 已存在的 plan/execution 快照、artifact 列表、workspace 列表和当前可见的 skill runs。
 - 输出结果: 供 CLI、JSON 和未来 GUI 共用的 `TaskBoard` 视图。
 
 ## 4. 关键实现细节
 - 关键函数/方法: `Build`、`deriveTaskStatus`、`availableActions`、`artifactIDsForNode`、`taskTitle`、`taskDescription`。
 - `Build()` 不额外持久化任何 task board 文件，而是每次按需从真实会话状态投影。
+- 当存在 active plan 时，skill runs 会追加到对应 paper 分组或 `comparison` 分组；当没有 plan 但仍有 skill runs 时，会退化成一个 skills-only board。
 - `deriveTaskStatus()` 会把 `NodeStatus + stale_node_ids + pending_node_ids + SessionState` 组合成 `blocked/ready/awaiting_approval/running/completed/failed/stale/skipped`。
 - `taskGroupID()` 把单篇节点固定投影到 `paper:<paper_id>` 分组，把 compare / synthesis 节点投影到 `comparison` 分组。
 - `availableActions()` 在 approval gate 打开时只允许当前 `pending_node_ids` 内的 task 暴露 `approve/reject`；其他 task 即使底层已 ready，也只保留 `inspect`，防止 UI/CLI 暴露不可执行动作。
+- skill 任务卡使用 `reviewer_skill`、`equation_explain_skill`、`related_work_map_skill`、`compare_refinement_skill` 四种 `NodeKind`，并固定只暴露 `inspect` 动作。
 - `artifactIDsForNode()` 会优先读取 node outputs，再回退到当前 artifact manifests 补齐 merge/final synthesis 的持久化产物引用。
 
 ## 5. 依赖关系
