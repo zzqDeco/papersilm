@@ -9,7 +9,7 @@
 
 ## 2. 核心职责
 - 根据输出格式把事件流和最终运行结果渲染为文本、JSON 或 stream-json。
-- 为文本模式补齐计划、task board、审批请求、来源列表、digest、comparison 与 workspace 的可读展示。
+- 为文本模式补齐计划、task board、审批请求、来源列表、digest、comparison、workspace 与 research skills 的可读展示。
 
 ## 3. 输入与输出
 - 输入来源: `StreamEvent`、`RunResult`、`PaperWorkspace` 与 workspace 列表，以及在创建时绑定的目标输出 writer。
@@ -17,10 +17,11 @@
 
 ## 4. 关键实现细节
 - 主要类型: `OutputWriter`。
-- 关键函数/方法: `NewOutputWriter`、`Emit`、`PrintResult`、`PrintWorkspaceList`、`PrintWorkspace`、`PrintTaskBoard`、`PrintTaskCard`、`printPlan`、`printApproval`。
+- 关键函数/方法: `NewOutputWriter`、`Emit`、`PrintResult`、`PrintWorkspaceList`、`PrintWorkspace`、`PrintSkillList`、`PrintSkillRunResult`、`PrintSkillRun`、`PrintTaskBoard`、`PrintTaskCard`、`printPlan`、`printApproval`。
 - `Emit()` 只对 text 与 stream-json 做逐事件输出。
 - `PrintResult()` 会根据结果内容自动选择打印计划、审批、摘要或对比结果，其中计划文本模式默认走 task board。
-- `PrintWorkspaceList()` 与 `PrintWorkspace()` 为显式 `/workspace` 命令提供专用可读布局。
+- `PrintWorkspaceList()` 与 `PrintWorkspace()` 为显式 `/workspace` 命令提供专用可读布局，并补充每个 paper 下的 skill runs。
+- `PrintSkillList()`、`PrintSkillRunResult()` 与 `PrintSkillRun()` 为 `/skill list|run|show` 提供文本和 JSON 输出，其中文本模式会直接展开 skill artifact markdown。
 - `PrintTaskBoard()` 与 `PrintTaskCard()` 为 `/tasks`、`/task show` 和 `/plan` 提供统一布局，并在 approval gate 打开时明确提示“当前只能 approve/reject pending batch”。
 - `printPlan()` 与 `printApproval()` 定义了 REPL/CLI 默认的人类可读布局。
 

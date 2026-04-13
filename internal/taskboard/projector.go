@@ -8,12 +8,16 @@ import (
 	"github.com/zzqDeco/papersilm/pkg/protocol"
 )
 
-func Build(meta protocol.SessionMeta, plan *protocol.PlanResult, execution *protocol.ExecutionState, artifacts []protocol.ArtifactManifest, workspaces []protocol.PaperWorkspace) *protocol.TaskBoard {
-	if plan == nil || len(plan.DAG.Nodes) == 0 {
+func Build(meta protocol.SessionMeta, plan *protocol.PlanResult, execution *protocol.ExecutionState, artifacts []protocol.ArtifactManifest, workspaces []protocol.PaperWorkspace, skillRuns []protocol.SkillRunRecord) *protocol.TaskBoard {
+	if (plan == nil || len(plan.DAG.Nodes) == 0) && len(skillRuns) == 0 {
 		return nil
 	}
 
-	execByNodeID := make(map[string]protocol.NodeExecutionState, len(plan.DAG.Nodes))
+	nodeCount := 0
+	if plan != nil {
+		nodeCount = len(plan.DAG.Nodes)
+	}
+	execByNodeID := make(map[string]protocol.NodeExecutionState, nodeCount)
 	stale := make(map[string]struct{})
 	pendingApproval := make(map[string]struct{})
 	if execution != nil {
@@ -35,43 +39,55 @@ func Build(meta protocol.SessionMeta, plan *protocol.PlanResult, execution *prot
 
 	groupMap := map[string]*protocol.TaskGroup{}
 	groupOrder := make([]string, 0, len(workspaces)+1)
-	tasks := make([]protocol.TaskCard, 0, len(plan.DAG.Nodes))
-	for _, nodeID := range topoSortedNodeIDs(plan.DAG) {
-		node, ok := dagNode(plan.DAG, nodeID)
-		if !ok {
-			continue
-		}
-		groupID, groupKind := taskGroupID(node)
-		if _, exists := groupMap[groupID]; !exists {
-			title, paperIDs := taskGroupTitle(node, groupKind, workspaceByPaperID)
-			groupMap[groupID] = &protocol.TaskGroup{
-				GroupID:  groupID,
-				Kind:     groupKind,
-				Title:    title,
-				PaperIDs: paperIDs,
+	tasks := make([]protocol.TaskCard, 0, nodeCount+len(skillRuns))
+	if plan != nil {
+		for _, nodeID := range topoSortedNodeIDs(plan.DAG) {
+			node, ok := dagNode(plan.DAG, nodeID)
+			if !ok {
+				continue
 			}
-			groupOrder = append(groupOrder, groupID)
-		}
+			groupID, groupKind := taskGroupID(node)
+			groupTitle, paperIDs := taskGroupTitle(node, groupKind, workspaceByPaperID)
+			ensureGroup(groupMap, &groupOrder, groupID, groupKind, groupTitle, paperIDs)
 
-		taskStatus := deriveTaskStatus(meta, plan.DAG, node, execByNodeID, stale, pendingApproval)
+			taskStatus := deriveTaskStatus(meta, plan.DAG, node, execByNodeID, stale, pendingApproval)
+			task := protocol.TaskCard{
+				TaskID:           node.ID,
+				NodeID:           node.ID,
+				Kind:             node.Kind,
+				Title:            taskTitle(node, workspaceByPaperID),
+				Description:      taskDescription(node),
+				PaperIDs:         append([]string(nil), node.PaperIDs...),
+				GroupID:          groupID,
+				Status:           taskStatus,
+				DependsOn:        append([]string(nil), node.DependsOn...),
+				Produces:         append([]string(nil), node.Produces...),
+				ArtifactIDs:      artifactIDsForNode(node, execByNodeID[node.ID], artifacts),
+				Error:            strings.TrimSpace(execByNodeID[node.ID].Error),
+				AvailableActions: availableActions(meta, node.ID, taskStatus, pendingApproval),
+			}
+			tasks = append(tasks, task)
+			groupMap[groupID].TaskIDs = append(groupMap[groupID].TaskIDs, task.TaskID)
+		}
+	}
+	for _, run := range skillRuns {
+		groupID, groupKind, groupTitle, paperIDs := skillGroup(run, workspaceByPaperID)
+		ensureGroup(groupMap, &groupOrder, groupID, groupKind, groupTitle, paperIDs)
 		task := protocol.TaskCard{
-			TaskID:           node.ID,
-			NodeID:           node.ID,
-			Kind:             node.Kind,
-			Title:            taskTitle(node, workspaceByPaperID),
-			Description:      taskDescription(node),
-			PaperIDs:         append([]string(nil), node.PaperIDs...),
+			TaskID:           run.RunID,
+			NodeID:           run.RunID,
+			Kind:             skillNodeKind(run.SkillName),
+			Title:            skillTaskTitle(run, workspaceByPaperID),
+			Description:      skillTaskDescription(run),
+			PaperIDs:         append([]string(nil), paperIDs...),
 			GroupID:          groupID,
-			Status:           taskStatus,
-			DependsOn:        append([]string(nil), node.DependsOn...),
-			Produces:         append([]string(nil), node.Produces...),
-			ArtifactIDs:      artifactIDsForNode(node, execByNodeID[node.ID], artifacts),
-			Error:            strings.TrimSpace(execByNodeID[node.ID].Error),
-			AvailableActions: availableActions(meta, node.ID, taskStatus, pendingApproval),
+			Status:           skillTaskStatus(run.Status),
+			ArtifactIDs:      skillArtifactIDs(run),
+			Error:            strings.TrimSpace(run.Error),
+			AvailableActions: []protocol.TaskAction{{Type: protocol.TaskActionInspect, Label: "Inspect"}},
 		}
 		tasks = append(tasks, task)
-		group := groupMap[groupID]
-		group.TaskIDs = append(group.TaskIDs, task.TaskID)
+		groupMap[groupID].TaskIDs = append(groupMap[groupID].TaskIDs, task.TaskID)
 	}
 
 	groups := make([]protocol.TaskGroup, 0, len(groupOrder))
@@ -87,17 +103,42 @@ func Build(meta protocol.SessionMeta, plan *protocol.PlanResult, execution *prot
 	if execution != nil && execution.UpdatedAt.After(updatedAt) {
 		updatedAt = execution.UpdatedAt
 	}
+	for _, run := range skillRuns {
+		if run.UpdatedAt.After(updatedAt) {
+			updatedAt = run.UpdatedAt
+		}
+	}
 	if updatedAt.IsZero() {
 		updatedAt = time.Now().UTC()
 	}
 
+	planID := "skills"
+	goal := skillsOnlyGoal(meta)
+	if plan != nil {
+		planID = plan.PlanID
+		goal = plan.Goal
+	}
+
 	return &protocol.TaskBoard{
-		PlanID:    plan.PlanID,
-		Goal:      plan.Goal,
+		PlanID:    planID,
+		Goal:      goal,
 		Groups:    groups,
 		Tasks:     tasks,
 		UpdatedAt: updatedAt,
 	}
+}
+
+func ensureGroup(groupMap map[string]*protocol.TaskGroup, groupOrder *[]string, groupID, kind, title string, paperIDs []string) {
+	if _, exists := groupMap[groupID]; exists {
+		return
+	}
+	groupMap[groupID] = &protocol.TaskGroup{
+		GroupID:  groupID,
+		Kind:     kind,
+		Title:    title,
+		PaperIDs: append([]string(nil), paperIDs...),
+	}
+	*groupOrder = append(*groupOrder, groupID)
 }
 
 func taskGroupID(node protocol.PlanNode) (groupID string, kind string) {
@@ -124,6 +165,105 @@ func taskGroupTitle(node protocol.PlanNode, kind string, workspaceByPaperID map[
 		}
 	}
 	return paperID, []string{paperID}
+}
+
+func skillGroup(run protocol.SkillRunRecord, workspaceByPaperID map[string]protocol.PaperWorkspace) (groupID string, kind string, title string, paperIDs []string) {
+	if run.TargetKind == protocol.SkillTargetKindComparison {
+		return "comparison", "comparison", "Comparison", nil
+	}
+	groupID = "paper:" + run.TargetID
+	if workspace, ok := workspaceByPaperID[run.TargetID]; ok {
+		if workspace.Digest != nil && strings.TrimSpace(workspace.Digest.Title) != "" {
+			return groupID, "paper", workspace.Digest.Title, []string{run.TargetID}
+		}
+		if workspace.Source != nil && strings.TrimSpace(workspace.Source.Inspection.Title) != "" {
+			return groupID, "paper", workspace.Source.Inspection.Title, []string{run.TargetID}
+		}
+	}
+	return groupID, "paper", run.TargetID, []string{run.TargetID}
+}
+
+func skillNodeKind(name protocol.SkillName) protocol.NodeKind {
+	switch name {
+	case protocol.SkillNameReviewer:
+		return protocol.NodeKindReviewerSkill
+	case protocol.SkillNameEquationExplain:
+		return protocol.NodeKindEquationExplain
+	case protocol.SkillNameRelatedWorkMap:
+		return protocol.NodeKindRelatedWorkMap
+	case protocol.SkillNameCompareRefinement:
+		return protocol.NodeKindCompareRefinement
+	default:
+		return protocol.NodeKindReviewerSkill
+	}
+}
+
+func skillTaskTitle(run protocol.SkillRunRecord, workspaceByPaperID map[string]protocol.PaperWorkspace) string {
+	target := run.TargetID
+	if run.TargetKind == protocol.SkillTargetKindComparison {
+		target = "comparison"
+	} else if workspace, ok := workspaceByPaperID[run.TargetID]; ok {
+		if workspace.Digest != nil && strings.TrimSpace(workspace.Digest.Title) != "" {
+			target = workspace.Digest.Title
+		} else if workspace.Source != nil && strings.TrimSpace(workspace.Source.Inspection.Title) != "" {
+			target = workspace.Source.Inspection.Title
+		}
+	}
+	switch run.SkillName {
+	case protocol.SkillNameReviewer:
+		return "Reviewer pass for " + target
+	case protocol.SkillNameEquationExplain:
+		return "Equation explain for " + target
+	case protocol.SkillNameRelatedWorkMap:
+		return "Related work map for " + target
+	case protocol.SkillNameCompareRefinement:
+		return "Compare refinement"
+	default:
+		return run.Title
+	}
+}
+
+func skillTaskDescription(run protocol.SkillRunRecord) string {
+	if trimmed := strings.TrimSpace(run.Summary); trimmed != "" {
+		return trimmed
+	}
+	switch run.SkillName {
+	case protocol.SkillNameReviewer:
+		return "Structured reviewer-style assessment for a single paper."
+	case protocol.SkillNameEquationExplain:
+		return "Focused explanation of equations, assumptions, and failure modes."
+	case protocol.SkillNameRelatedWorkMap:
+		return "Document-grounded map of related methods, comparison axes, and gaps."
+	case protocol.SkillNameCompareRefinement:
+		return "Refined multi-paper decision frame and follow-up checks."
+	default:
+		return "Research skill run."
+	}
+}
+
+func skillTaskStatus(status protocol.SkillRunStatus) protocol.TaskStatus {
+	switch status {
+	case protocol.SkillRunStatusRunning:
+		return protocol.TaskStatusRunning
+	case protocol.SkillRunStatusFailed:
+		return protocol.TaskStatusFailed
+	default:
+		return protocol.TaskStatusCompleted
+	}
+}
+
+func skillArtifactIDs(run protocol.SkillRunRecord) []string {
+	if strings.TrimSpace(run.ArtifactID) == "" {
+		return nil
+	}
+	return []string{run.ArtifactID}
+}
+
+func skillsOnlyGoal(meta protocol.SessionMeta) string {
+	if trimmed := strings.TrimSpace(meta.LastTask); trimmed != "" {
+		return trimmed
+	}
+	return "Research skills"
 }
 
 func taskTitle(node protocol.PlanNode, workspaceByPaperID map[string]protocol.PaperWorkspace) string {

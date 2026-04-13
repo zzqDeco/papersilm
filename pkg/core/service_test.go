@@ -731,6 +731,210 @@ func TestRunPlannedConfigMismatchPreservesPlan(t *testing.T) {
 	}
 }
 
+func TestListSkillsReturnsBuiltinDescriptors(t *testing.T) {
+	t.Parallel()
+
+	svc, _ := newTestService(t)
+	meta, err := svc.NewSession(protocol.PermissionModePlan, "zh", "distill")
+	if err != nil {
+		t.Fatalf("NewSession: %v", err)
+	}
+
+	descriptors, err := svc.ListSkills(meta.SessionID)
+	if err != nil {
+		t.Fatalf("ListSkills: %v", err)
+	}
+	if len(descriptors) != 4 {
+		t.Fatalf("expected 4 skills, got %d", len(descriptors))
+	}
+	if descriptors[0].Name != protocol.SkillNameReviewer {
+		t.Fatalf("expected reviewer first, got %+v", descriptors)
+	}
+}
+
+func TestRunReviewerSkillDefaultTargetHydratesWorkspaceAndTaskBoard(t *testing.T) {
+	t.Parallel()
+
+	svc, _ := newTestService(t)
+	ctx := context.Background()
+
+	pdf := writeTestPDF(t, filepath.Join(t.TempDir(), "paper.pdf"), "Paper Reviewer Skill")
+	planned, err := svc.Execute(ctx, protocol.ClientRequest{
+		Task:           "inspect this paper",
+		Sources:        []string{pdf},
+		PermissionMode: protocol.PermissionModePlan,
+		Language:       "zh",
+		Style:          "distill",
+	})
+	if err != nil {
+		t.Fatalf("Execute(plan): %v", err)
+	}
+
+	result, err := svc.RunSkill(ctx, planned.Session.Meta.SessionID, string(protocol.SkillNameReviewer), "")
+	if err != nil {
+		t.Fatalf("RunSkill(reviewer): %v", err)
+	}
+	if result.Run.TargetID == "" {
+		t.Fatalf("expected resolved paper target, got %+v", result.Run)
+	}
+	if len(result.Session.SkillRuns) != 1 || len(result.Session.SkillArtifacts) != 1 {
+		t.Fatalf("expected hydrated skill run and artifact, got runs=%d artifacts=%d", len(result.Session.SkillRuns), len(result.Session.SkillArtifacts))
+	}
+	workspace, ok := findWorkspaceByPaperID(result.Session.Workspaces, result.Run.TargetID)
+	if !ok || len(workspace.SkillRuns) != 1 {
+		t.Fatalf("expected workspace skill run hydration, got %+v", workspace)
+	}
+	task, ok := findTaskByID(result.Session.TaskBoard, result.Run.RunID)
+	if !ok {
+		t.Fatalf("expected skill task card in task board")
+	}
+	if task.Kind != protocol.NodeKindReviewerSkill {
+		t.Fatalf("expected reviewer skill node kind, got %+v", task)
+	}
+	if !taskHasActions(task, protocol.TaskActionInspect) {
+		t.Fatalf("expected inspect-only skill task actions, got %+v", task.AvailableActions)
+	}
+	if result.Artifact == nil {
+		t.Fatalf("expected skill artifact manifest")
+	}
+	if _, err := os.Stat(result.Artifact.Paths["markdown"]); err != nil {
+		t.Fatalf("expected skill markdown artifact: %v", err)
+	}
+}
+
+func TestRunPaperSkillRequiresExplicitTargetInMultiPaperSession(t *testing.T) {
+	t.Parallel()
+
+	svc, _ := newTestService(t)
+	ctx := context.Background()
+
+	pdf1 := writeTestPDF(t, filepath.Join(t.TempDir(), "paper1.pdf"), "Paper One")
+	pdf2 := writeTestPDF(t, filepath.Join(t.TempDir(), "paper2.pdf"), "Paper Two")
+	planned, err := svc.Execute(ctx, protocol.ClientRequest{
+		Task:           "compare these papers",
+		Sources:        []string{pdf1, pdf2},
+		PermissionMode: protocol.PermissionModePlan,
+		Language:       "zh",
+		Style:          "distill",
+	})
+	if err != nil {
+		t.Fatalf("Execute(plan): %v", err)
+	}
+
+	_, err = svc.RunSkill(ctx, planned.Session.Meta.SessionID, string(protocol.SkillNameEquationExplain), "")
+	if err == nil || !strings.Contains(err.Error(), "requires a paper_id target") {
+		t.Fatalf("expected explicit target error, got %v", err)
+	}
+}
+
+func TestCompareRefinementRequiresExistingComparison(t *testing.T) {
+	t.Parallel()
+
+	svc, _ := newTestService(t)
+	ctx := context.Background()
+
+	pdf1 := writeTestPDF(t, filepath.Join(t.TempDir(), "paper1.pdf"), "Paper One")
+	pdf2 := writeTestPDF(t, filepath.Join(t.TempDir(), "paper2.pdf"), "Paper Two")
+	planned, err := svc.Execute(ctx, protocol.ClientRequest{
+		Task:           "compare these papers",
+		Sources:        []string{pdf1, pdf2},
+		PermissionMode: protocol.PermissionModePlan,
+		Language:       "zh",
+		Style:          "distill",
+	})
+	if err != nil {
+		t.Fatalf("Execute(plan): %v", err)
+	}
+
+	_, err = svc.RunSkill(ctx, planned.Session.Meta.SessionID, string(protocol.SkillNameCompareRefinement), "")
+	if err == nil || !strings.Contains(err.Error(), "existing comparison") {
+		t.Fatalf("expected missing comparison error, got %v", err)
+	}
+}
+
+func TestRunAllSkillsProduceArtifacts(t *testing.T) {
+	t.Parallel()
+
+	svc, _ := newTestService(t)
+	ctx := context.Background()
+
+	pdf1 := writeTestPDF(t, filepath.Join(t.TempDir(), "paper1.pdf"), "Paper One")
+	pdf2 := writeTestPDF(t, filepath.Join(t.TempDir(), "paper2.pdf"), "Paper Two")
+	initial, err := svc.Execute(ctx, protocol.ClientRequest{
+		Task:           "compare these papers",
+		Sources:        []string{pdf1, pdf2},
+		PermissionMode: protocol.PermissionModeAuto,
+		Language:       "zh",
+		Style:          "distill",
+	})
+	if err != nil {
+		t.Fatalf("Execute(auto): %v", err)
+	}
+	if initial.Comparison == nil {
+		t.Fatalf("expected comparison digest before compare-refinement")
+	}
+
+	firstPaper := initial.Session.Workspaces[0].PaperID
+	secondPaper := initial.Session.Workspaces[1].PaperID
+	results := make([]protocol.SkillRunResult, 0, 4)
+	for _, spec := range []struct {
+		name   protocol.SkillName
+		target string
+	}{
+		{name: protocol.SkillNameReviewer, target: firstPaper},
+		{name: protocol.SkillNameEquationExplain, target: firstPaper},
+		{name: protocol.SkillNameRelatedWorkMap, target: secondPaper},
+		{name: protocol.SkillNameCompareRefinement, target: ""},
+	} {
+		result, err := svc.RunSkill(ctx, initial.Session.Meta.SessionID, string(spec.name), spec.target)
+		if err != nil {
+			t.Fatalf("RunSkill(%s): %v", spec.name, err)
+		}
+		if result.Artifact == nil {
+			t.Fatalf("expected artifact for %s", spec.name)
+		}
+		if _, err := os.Stat(result.Artifact.Paths["markdown"]); err != nil {
+			t.Fatalf("expected markdown artifact for %s: %v", spec.name, err)
+		}
+		results = append(results, result)
+	}
+
+	final := results[len(results)-1]
+	if len(final.Session.SkillRuns) != 4 {
+		t.Fatalf("expected 4 visible skill runs, got %d", len(final.Session.SkillRuns))
+	}
+	reviewerTask, ok := findTaskByID(final.Session.TaskBoard, results[0].Run.RunID)
+	if !ok || reviewerTask.Kind != protocol.NodeKindReviewerSkill {
+		t.Fatalf("expected reviewer skill task, got %+v", reviewerTask)
+	}
+	compareTask, ok := findTaskByID(final.Session.TaskBoard, results[3].Run.RunID)
+	if !ok || compareTask.Kind != protocol.NodeKindCompareRefinement {
+		t.Fatalf("expected compare refinement skill task, got %+v", compareTask)
+	}
+}
+
+func TestStyleReviewerRemainsLegacyStyle(t *testing.T) {
+	t.Parallel()
+
+	svc, _ := newTestService(t)
+	ctx := context.Background()
+
+	pdf := writeTestPDF(t, filepath.Join(t.TempDir(), "paper.pdf"), "Paper Legacy Reviewer")
+	result, err := svc.Execute(ctx, protocol.ClientRequest{
+		Task:           "distill this paper",
+		Sources:        []string{pdf},
+		PermissionMode: protocol.PermissionModeAuto,
+		Language:       "zh",
+		Style:          "reviewer",
+	})
+	if err != nil {
+		t.Fatalf("Execute(auto reviewer style): %v", err)
+	}
+	if len(result.Session.SkillRuns) != 0 {
+		t.Fatalf("expected legacy reviewer style to not auto-run skills, got %+v", result.Session.SkillRuns)
+	}
+}
+
 func newTestService(t *testing.T) (*Service, *testSink) {
 	t.Helper()
 

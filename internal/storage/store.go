@@ -95,6 +95,18 @@ func (s *Store) workspacePath(sessionID, paperID string) string {
 	return filepath.Join(s.workspacesDir(sessionID), paperID+".json")
 }
 
+func (s *Store) skillRunsDir(sessionID string) string {
+	return filepath.Join(s.SessionDir(sessionID), "skill-runs")
+}
+
+func (s *Store) skillRunPath(sessionID, runID string) string {
+	return filepath.Join(s.skillRunsDir(sessionID), runID+".json")
+}
+
+func (s *Store) skillArtifactsDir(sessionID string) string {
+	return filepath.Join(s.SessionDir(sessionID), "skill-artifacts")
+}
+
 func (s *Store) eventsPath(sessionID string) string {
 	return filepath.Join(s.SessionDir(sessionID), "events.jsonl")
 }
@@ -105,6 +117,8 @@ func (s *Store) CreateSession(meta protocol.SessionMeta) error {
 		sessionDir,
 		s.digestsDir(meta.SessionID),
 		s.artifactsDir(meta.SessionID),
+		s.skillRunsDir(meta.SessionID),
+		s.skillArtifactsDir(meta.SessionID),
 		s.checkpointsDir(meta.SessionID),
 		s.workspacesDir(meta.SessionID),
 		filepath.Join(sessionDir, "cache"),
@@ -384,6 +398,87 @@ func (s *Store) DeleteWorkspaceStates(sessionID string, paperIDs []string) error
 	return nil
 }
 
+func (s *Store) SaveSkillRun(sessionID string, run protocol.SkillRunRecord) error {
+	return s.saveJSON(s.skillRunPath(sessionID, run.RunID), run)
+}
+
+func (s *Store) LoadSkillRun(sessionID, runID string) (*protocol.SkillRunRecord, error) {
+	var run protocol.SkillRunRecord
+	err := s.loadJSON(s.skillRunPath(sessionID, runID), &run)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &run, nil
+}
+
+func (s *Store) LoadSkillRuns(sessionID string) ([]protocol.SkillRunRecord, error) {
+	entries, err := os.ReadDir(s.skillRunsDir(sessionID))
+	if errors.Is(err, os.ErrNotExist) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	out := make([]protocol.SkillRunRecord, 0, len(entries))
+	for _, entry := range entries {
+		if entry.IsDir() || filepath.Ext(entry.Name()) != ".json" {
+			continue
+		}
+		runID := strings.TrimSuffix(entry.Name(), ".json")
+		run, err := s.LoadSkillRun(sessionID, runID)
+		if err != nil {
+			return nil, err
+		}
+		if run == nil {
+			continue
+		}
+		out = append(out, *run)
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].CreatedAt.Equal(out[j].CreatedAt) {
+			return out[i].RunID < out[j].RunID
+		}
+		return out[i].CreatedAt.Before(out[j].CreatedAt)
+	})
+	return out, nil
+}
+
+func (s *Store) SaveSkillArtifactManifest(sessionID string, manifest protocol.ArtifactManifest) error {
+	return s.saveJSON(filepath.Join(s.skillArtifactsDir(sessionID), manifest.ArtifactID+".manifest.json"), manifest)
+}
+
+func (s *Store) LoadSkillArtifactManifests(sessionID string) ([]protocol.ArtifactManifest, error) {
+	entries, err := os.ReadDir(s.skillArtifactsDir(sessionID))
+	if errors.Is(err, os.ErrNotExist) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	out := make([]protocol.ArtifactManifest, 0, len(entries))
+	for _, entry := range entries {
+		name := entry.Name()
+		if entry.IsDir() {
+			continue
+		}
+		if len(name) < len(".manifest.json") || name[len(name)-len(".manifest.json"):] != ".manifest.json" {
+			continue
+		}
+		var manifest protocol.ArtifactManifest
+		if err := s.loadJSON(filepath.Join(s.skillArtifactsDir(sessionID), name), &manifest); err != nil {
+			return nil, err
+		}
+		out = append(out, manifest)
+	}
+	sort.Slice(out, func(i, j int) bool {
+		return out[i].CreatedAt.Before(out[j].CreatedAt)
+	})
+	return out, nil
+}
+
 func (s *Store) LoadArtifactManifests(sessionID string) ([]protocol.ArtifactManifest, error) {
 	entries, err := os.ReadDir(s.artifactsDir(sessionID))
 	if errors.Is(err, os.ErrNotExist) {
@@ -459,24 +554,36 @@ func (s *Store) Snapshot(sessionID string) (protocol.SessionSnapshot, error) {
 	if err != nil {
 		return protocol.SessionSnapshot{}, err
 	}
-	workspaces, err := s.LoadWorkspaces(sessionID, meta, sources, digests, artifacts)
+	skillRuns, err := s.LoadSkillRuns(sessionID)
 	if err != nil {
 		return protocol.SessionSnapshot{}, err
 	}
-	board := taskboard.Build(meta, plan, execution, artifacts, workspaces)
+	visibleSkillRuns := filterVisibleSkillRuns(sources, cmp, skillRuns)
+	skillArtifacts, err := s.LoadSkillArtifactManifests(sessionID)
+	if err != nil {
+		return protocol.SessionSnapshot{}, err
+	}
+	visibleSkillArtifacts := filterVisibleSkillArtifacts(visibleSkillRuns, skillArtifacts)
+	workspaces, err := s.LoadWorkspaces(sessionID, meta, sources, digests, artifacts, visibleSkillRuns)
+	if err != nil {
+		return protocol.SessionSnapshot{}, err
+	}
+	board := taskboard.Build(meta, plan, execution, artifacts, workspaces, visibleSkillRuns)
 	if plan != nil {
 		plan.TaskBoard = board
 	}
 	return protocol.SessionSnapshot{
-		Meta:       meta,
-		Sources:    sources,
-		Plan:       plan,
-		TaskBoard:  board,
-		Execution:  execution,
-		Digests:    digests,
-		Compare:    cmp,
-		Artifacts:  artifacts,
-		Workspaces: workspaces,
+		Meta:           meta,
+		Sources:        sources,
+		Plan:           plan,
+		TaskBoard:      board,
+		Execution:      execution,
+		Digests:        digests,
+		Compare:        cmp,
+		Artifacts:      artifacts,
+		SkillRuns:      visibleSkillRuns,
+		SkillArtifacts: visibleSkillArtifacts,
+		Workspaces:     workspaces,
 	}, nil
 }
 
@@ -633,7 +740,7 @@ func legacyStepsToDAG(steps []protocol.PlanStep) protocol.PlanDAG {
 	return protocol.PlanDAG{Nodes: nodes, Edges: edges}
 }
 
-func (s *Store) LoadWorkspaces(sessionID string, meta protocol.SessionMeta, sources []protocol.PaperRef, digests []protocol.PaperDigest, artifacts []protocol.ArtifactManifest) ([]protocol.PaperWorkspace, error) {
+func (s *Store) LoadWorkspaces(sessionID string, meta protocol.SessionMeta, sources []protocol.PaperRef, digests []protocol.PaperDigest, artifacts []protocol.ArtifactManifest, skillRuns []protocol.SkillRunRecord) ([]protocol.PaperWorkspace, error) {
 	if len(sources) == 0 {
 		return nil, nil
 	}
@@ -649,6 +756,13 @@ func (s *Store) LoadWorkspaces(sessionID string, meta protocol.SessionMeta, sour
 	for _, digest := range digests {
 		digestByPaperID[digest.PaperID] = digest
 	}
+	skillRunsByPaperID := make(map[string][]protocol.SkillRunRecord, len(skillRuns))
+	for _, run := range skillRuns {
+		if run.TargetKind != protocol.SkillTargetKindPaper {
+			continue
+		}
+		skillRunsByPaperID[run.TargetID] = append(skillRunsByPaperID[run.TargetID], run)
+	}
 	out := make([]protocol.PaperWorkspace, 0, len(sources))
 	for _, source := range sources {
 		state, hasState := stateByPaperID[source.PaperID]
@@ -658,6 +772,7 @@ func (s *Store) LoadWorkspaces(sessionID string, meta protocol.SessionMeta, sour
 			Annotations: []protocol.PaperAnnotation{},
 			Resources:   []protocol.PaperResource{},
 			Similar:     []protocol.SimilarPaperRef{},
+			SkillRuns:   []protocol.SkillRunRecord{},
 			CreatedAt:   meta.CreatedAt,
 			UpdatedAt:   meta.UpdatedAt,
 		}
@@ -678,10 +793,58 @@ func (s *Store) LoadWorkspaces(sessionID string, meta protocol.SessionMeta, sour
 			digestCopy := digest
 			workspace.Digest = &digestCopy
 		}
+		workspace.SkillRuns = append(workspace.SkillRuns, skillRunsByPaperID[source.PaperID]...)
 		workspace.Resources = buildWorkspaceResources(source, artifacts)
 		out = append(out, workspace)
 	}
 	return out, nil
+}
+
+func filterVisibleSkillRuns(sources []protocol.PaperRef, cmp *protocol.ComparisonDigest, runs []protocol.SkillRunRecord) []protocol.SkillRunRecord {
+	if len(runs) == 0 {
+		return nil
+	}
+	visiblePaperIDs := make(map[string]struct{}, len(sources))
+	for _, source := range sources {
+		visiblePaperIDs[source.PaperID] = struct{}{}
+	}
+	out := make([]protocol.SkillRunRecord, 0, len(runs))
+	for _, run := range runs {
+		switch run.TargetKind {
+		case protocol.SkillTargetKindPaper:
+			if _, ok := visiblePaperIDs[run.TargetID]; ok {
+				out = append(out, run)
+			}
+		case protocol.SkillTargetKindComparison:
+			if cmp != nil {
+				out = append(out, run)
+			}
+		}
+	}
+	return out
+}
+
+func filterVisibleSkillArtifacts(runs []protocol.SkillRunRecord, manifests []protocol.ArtifactManifest) []protocol.ArtifactManifest {
+	if len(runs) == 0 || len(manifests) == 0 {
+		return nil
+	}
+	allowed := make(map[string]struct{}, len(runs))
+	for _, run := range runs {
+		if strings.TrimSpace(run.ArtifactID) == "" {
+			continue
+		}
+		allowed[run.ArtifactID] = struct{}{}
+	}
+	out := make([]protocol.ArtifactManifest, 0, len(allowed))
+	for _, manifest := range manifests {
+		if _, ok := allowed[manifest.ArtifactID]; ok {
+			out = append(out, manifest)
+		}
+	}
+	sort.Slice(out, func(i, j int) bool {
+		return out[i].CreatedAt.Before(out[j].CreatedAt)
+	})
+	return out
 }
 
 func buildWorkspaceResources(source protocol.PaperRef, artifacts []protocol.ArtifactManifest) []protocol.PaperResource {

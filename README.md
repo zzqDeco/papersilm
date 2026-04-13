@@ -103,6 +103,9 @@ Useful slash commands:
 - `/source add <uri>`
 - `/source replace <uri>`
 - `/source list`
+- `/skill list`
+- `/skill run <name> [target]`
+- `/skill show <run_id>`
 - `/workspace list`
 - `/workspace show <paper_id>`
 - `/workspace note add <paper_id> :: <body>`
@@ -113,7 +116,7 @@ Useful slash commands:
 - `/run`
 - `/approve`
 - `/lang <zh|en|both>`
-- `/style <distill|ultra|reviewer>`
+- `/style <distill|ultra|reviewer>` (`reviewer` is kept as a legacy style; prefer `/skill run reviewer`)
 - `/export`
 - `/exit`
 
@@ -136,12 +139,14 @@ This repository currently includes:
 - headless `pkg/core` and `pkg/protocol`
 - local session storage and artifact persistence
 - per-paper workspace hydration with notes, annotations, resources, and similar slots
+- per-paper and comparison-level research skill runs with separate skill artifacts
 - CLI with REPL and `-p/--print` modes
 - internal tool registry
 - source normalization and inspection
 - AlphaXiv-first lookup for arXiv-compatible sources
 - explicit DAG planning and execution state
 - role-scoped multi-worker execution with parallel ready-node batches
+- task board projection that includes both DAG tasks and inspect-only skill runs
 - worker-composed single-paper distillation
 - digest-driven paper comparison and final synthesis
 - `plan | confirm | auto` permission flow
