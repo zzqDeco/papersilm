@@ -20,8 +20,9 @@
 - 关键函数/方法: `New`、`BaseDir`、`Ensure`、`SessionsDir`、`SessionDir`、`sessionPath`、`sourcesPath`、`planPath`、`SaveWorkspaceState`、`LoadWorkspaceStates`、`LoadWorkspaces` 等。
 - `Ensure()` 和 `CreateSession()` 创建工作目录树，其中 skill 结果独立落在 `skill-runs/` 与 `skill-artifacts/`，不会和 plan artifacts 混用。
 - `Snapshot()` 聚合读取 meta、sources、plan、execution、digests、comparison、artifact、skill runs 和 hydration 后的 workspaces，再进一步投影 `task_board`。
-- `Snapshot()` 会只暴露当前 attached sources 可见的 paper-level skill runs，以及当前 comparison 仍存在时才可见的 comparison-level skill runs。
+- `Snapshot()` 会按当前 attached sources 过滤 skill runs：paper-level skill 只在目标论文仍附加时可见，comparison-level skill 则按 run 绑定的原始 `paper_ids` 判断，只要当前 source set 仍覆盖该论文集就继续可见，不依赖 `comparison.json` 是否存在。
 - `LoadWorkspaces()` 会把持久化的人工状态与当前 sources、digests、artifacts、paper-level skill runs 组合成公开 `PaperWorkspace`。
+- comparison-level skill runs 缺少 `paper_ids` 时，会优先从 skill artifact manifest metadata 兼容恢复，再回退到 skill artifact JSON；兼容过程只发生在读取时，不会重写旧文件。
 - `DeleteDigest()`、`DeleteArtifact()`、`DeletePaperDigestArtifacts()`、`DeleteComparisonArtifacts()` 为 task rerun 的级联失效提供按产物清理入口。
 - `InvalidatePlanState()` 只删除旧计划、执行状态和 plan artifacts，不会删除 `workspaces/` 下的人工状态，也不会删除独立 skill 结果目录。
 - `CheckPointStore()` 与 `fileCheckpointStore` 为 Eino ADK 提供文件化 checkpoint 存储。

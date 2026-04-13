@@ -22,7 +22,7 @@
 - `deriveTaskStatus()` 会把 `NodeStatus + stale_node_ids + pending_node_ids + SessionState` 组合成 `blocked/ready/awaiting_approval/running/completed/failed/stale/skipped`。
 - `taskGroupID()` 把单篇节点固定投影到 `paper:<paper_id>` 分组，把 compare / synthesis 节点投影到 `comparison` 分组。
 - `availableActions()` 在 approval gate 打开时只允许当前 `pending_node_ids` 内的 task 暴露 `approve/reject`；其他 task 即使底层已 ready，也只保留 `inspect`，防止 UI/CLI 暴露不可执行动作。
-- skill 任务卡使用 `reviewer_skill`、`equation_explain_skill`、`related_work_map_skill`、`compare_refinement_skill` 四种 `NodeKind`，并固定只暴露 `inspect` 动作。
+- skill 任务卡使用 `reviewer_skill`、`equation_explain_skill`、`related_work_map_skill`、`compare_refinement_skill` 四种 `NodeKind`，并固定只暴露 `inspect` 动作；标题优先复用 skill run 已持久化的本地化 `Title`。
 - `artifactIDsForNode()` 会优先读取 node outputs，再回退到当前 artifact manifests 补齐 merge/final synthesis 的持久化产物引用。
 
 ## 5. 依赖关系

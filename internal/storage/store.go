@@ -558,8 +558,11 @@ func (s *Store) Snapshot(sessionID string) (protocol.SessionSnapshot, error) {
 	if err != nil {
 		return protocol.SessionSnapshot{}, err
 	}
-	visibleSkillRuns := filterVisibleSkillRuns(sources, cmp, skillRuns)
 	skillArtifacts, err := s.LoadSkillArtifactManifests(sessionID)
+	if err != nil {
+		return protocol.SessionSnapshot{}, err
+	}
+	visibleSkillRuns, err := s.filterVisibleSkillRuns(sources, skillArtifacts, skillRuns)
 	if err != nil {
 		return protocol.SessionSnapshot{}, err
 	}
@@ -800,27 +803,134 @@ func (s *Store) LoadWorkspaces(sessionID string, meta protocol.SessionMeta, sour
 	return out, nil
 }
 
-func filterVisibleSkillRuns(sources []protocol.PaperRef, cmp *protocol.ComparisonDigest, runs []protocol.SkillRunRecord) []protocol.SkillRunRecord {
+func (s *Store) filterVisibleSkillRuns(sources []protocol.PaperRef, manifests []protocol.ArtifactManifest, runs []protocol.SkillRunRecord) ([]protocol.SkillRunRecord, error) {
 	if len(runs) == 0 {
-		return nil
+		return nil, nil
 	}
 	visiblePaperIDs := make(map[string]struct{}, len(sources))
 	for _, source := range sources {
 		visiblePaperIDs[source.PaperID] = struct{}{}
 	}
+	manifestByArtifactID := make(map[string]protocol.ArtifactManifest, len(manifests))
+	for _, manifest := range manifests {
+		manifestByArtifactID[manifest.ArtifactID] = manifest
+	}
 	out := make([]protocol.SkillRunRecord, 0, len(runs))
 	for _, run := range runs {
+		hydratedRun, err := s.hydrateSkillRunPaperIDs(run, manifestByArtifactID[run.ArtifactID])
+		if err != nil {
+			return nil, err
+		}
 		switch run.TargetKind {
 		case protocol.SkillTargetKindPaper:
-			if _, ok := visiblePaperIDs[run.TargetID]; ok {
-				out = append(out, run)
+			if _, ok := visiblePaperIDs[hydratedRun.TargetID]; ok {
+				out = append(out, hydratedRun)
 			}
 		case protocol.SkillTargetKindComparison:
-			if cmp != nil {
-				out = append(out, run)
+			if visiblePaperSetCovers(visiblePaperIDs, hydratedRun.PaperIDs) {
+				out = append(out, hydratedRun)
 			}
 		}
 	}
+	return out, nil
+}
+
+func (s *Store) hydrateSkillRunPaperIDs(run protocol.SkillRunRecord, manifest protocol.ArtifactManifest) (protocol.SkillRunRecord, error) {
+	run.PaperIDs = normalizedSkillPaperIDs(run.PaperIDs)
+	if len(run.PaperIDs) > 0 {
+		return run, nil
+	}
+	if run.TargetKind == protocol.SkillTargetKindPaper {
+		run.PaperIDs = normalizedSkillPaperIDs([]string{run.TargetID})
+		return run, nil
+	}
+	if ids := skillPaperIDsFromMetadata(manifest.Metadata); len(ids) > 0 {
+		run.PaperIDs = ids
+		return run, nil
+	}
+	ids, err := s.skillPaperIDsFromArtifactJSON(manifest)
+	if err != nil {
+		return protocol.SkillRunRecord{}, err
+	}
+	run.PaperIDs = ids
+	return run, nil
+}
+
+func (s *Store) skillPaperIDsFromArtifactJSON(manifest protocol.ArtifactManifest) ([]string, error) {
+	path := strings.TrimSpace(manifest.Paths["json"])
+	if path == "" {
+		return nil, nil
+	}
+	var payload struct {
+		PaperIDs []string `json:"paper_ids"`
+	}
+	if err := s.loadJSON(path, &payload); err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return normalizedSkillPaperIDs(payload.PaperIDs), nil
+}
+
+func skillPaperIDsFromMetadata(metadata map[string]interface{}) []string {
+	if len(metadata) == 0 {
+		return nil
+	}
+	raw, ok := metadata["paper_ids"]
+	if !ok {
+		return nil
+	}
+	switch value := raw.(type) {
+	case []string:
+		return normalizedSkillPaperIDs(value)
+	case []interface{}:
+		ids := make([]string, 0, len(value))
+		for _, item := range value {
+			text, ok := item.(string)
+			if !ok {
+				continue
+			}
+			ids = append(ids, text)
+		}
+		return normalizedSkillPaperIDs(ids)
+	case string:
+		return normalizedSkillPaperIDs([]string{value})
+	default:
+		return nil
+	}
+}
+
+func visiblePaperSetCovers(visiblePaperIDs map[string]struct{}, paperIDs []string) bool {
+	if len(paperIDs) == 0 {
+		return false
+	}
+	for _, paperID := range paperIDs {
+		if _, ok := visiblePaperIDs[paperID]; !ok {
+			return false
+		}
+	}
+	return true
+}
+
+func normalizedSkillPaperIDs(paperIDs []string) []string {
+	if len(paperIDs) == 0 {
+		return nil
+	}
+	seen := make(map[string]struct{}, len(paperIDs))
+	out := make([]string, 0, len(paperIDs))
+	for _, paperID := range paperIDs {
+		paperID = strings.TrimSpace(paperID)
+		if paperID == "" {
+			continue
+		}
+		if _, ok := seen[paperID]; ok {
+			continue
+		}
+		seen[paperID] = struct{}{}
+		out = append(out, paperID)
+	}
+	sort.Strings(out)
 	return out
 }
 
