@@ -9,18 +9,19 @@
 
 ## 2. 核心职责
 - 提供核心服务门面，把存储层、Agent 和事件 sink 组装成会话级公共操作接口。
-- 负责新建会话、加载会话、执行任务、审批、运行已规划任务、task 级执行/审批、附加来源，以及对 paper workspace 的最小读写操作。
+- 负责新建会话、加载会话、执行任务、审批、运行已规划任务、task 级执行/审批、skill 查询/执行、附加来源，以及对 paper workspace 的最小读写操作。
 
 ## 3. 输入与输出
-- 输入来源: 上层 CLI/REPL 传入的 `ClientRequest`、会话 ID、来源列表、审批结果、task ID，以及 workspace note/annotation 内容。
-- 输出结果: `RunResult`、`SessionMeta`、`SessionSnapshot`、`TaskBoard`、`PaperWorkspace` 列表，以及追加到存储层的事件。
+- 输入来源: 上层 CLI/REPL 传入的 `ClientRequest`、会话 ID、来源列表、审批结果、task ID、skill 名称/目标，以及 workspace note/annotation 内容。
+- 输出结果: `RunResult`、`SkillRunResult`、`SessionMeta`、`SessionSnapshot`、`TaskBoard`、`PaperWorkspace` 列表，以及追加到存储层的事件。
 
 ## 4. 关键实现细节
 - 主要类型: `EventSink`、`Service`。
-- 关键函数/方法: `New`、`NewSession`、`LoadSession`、`LatestSession`、`Execute`、`RunPlanned`、`Approve`、`RunTask`、`ApproveTask`、`RejectTask`、`LoadTaskBoard`、`AttachSources`、`LoadWorkspaces`、`AddWorkspaceNote`、`AddWorkspaceAnnotation` 等。
+- 关键函数/方法: `New`、`NewSession`、`LoadSession`、`LatestSession`、`Execute`、`RunPlanned`、`Approve`、`RunTask`、`ApproveTask`、`RejectTask`、`ListSkills`、`RunSkill`、`LoadSkillRun`、`LoadTaskBoard`、`AttachSources`、`LoadWorkspaces`、`AddWorkspaceNote`、`AddWorkspaceAnnotation` 等。
 - `NewSession()` 负责生成 session ID、写入初始元数据并发送初始化事件。
 - `Execute()` 会在缺少 session ID 时先创建会话，再把请求交给 Agent。
 - task board / task 执行相关方法只是门面转发，真正的编排逻辑仍留在 Agent；`RejectTask()` 只是把显式 task-level reject 暴露给上层。
+- skills 相关方法同样保持门面角色：descriptor 查询、同步 skill 执行和 run 读取都委托给 Agent / Store。
 - workspace 相关方法负责校验 paper 是否存在、生成 note/annotation 元数据，并通过存储层回写人工状态。
 - `emit()` 同时向 sink 和 session event log 写入事件。
 

@@ -345,6 +345,285 @@ func TestInvalidatePlanStateKeepsWorkspaceState(t *testing.T) {
 	}
 }
 
+func TestSnapshotHydratesSkillRunsAndArtifacts(t *testing.T) {
+	t.Parallel()
+
+	store := New(t.TempDir())
+	if err := store.Ensure(); err != nil {
+		t.Fatalf("Ensure: %v", err)
+	}
+
+	now := time.Now().UTC()
+	meta := protocol.SessionMeta{
+		SessionID:      "sess_skills",
+		State:          protocol.SessionStatePlanned,
+		PermissionMode: protocol.PermissionModePlan,
+		Language:       "zh",
+		Style:          "distill",
+		CreatedAt:      now,
+		UpdatedAt:      now,
+	}
+	if err := store.CreateSession(meta); err != nil {
+		t.Fatalf("CreateSession: %v", err)
+	}
+	if err := store.SaveSources(meta.SessionID, []protocol.PaperRef{{
+		PaperID:    "paper_1",
+		URI:        "/tmp/paper.pdf",
+		LocalPath:  "/tmp/paper.pdf",
+		SourceType: protocol.SourceTypeLocalPDF,
+		Status:     protocol.SourceStatusAttached,
+	}}); err != nil {
+		t.Fatalf("SaveSources: %v", err)
+	}
+	run := protocol.SkillRunRecord{
+		RunID:      "skill_1",
+		SessionID:  meta.SessionID,
+		SkillName:  protocol.SkillNameReviewer,
+		TargetKind: protocol.SkillTargetKindPaper,
+		TargetID:   "paper_1",
+		ArtifactID: "skill_1",
+		Status:     protocol.SkillRunStatusCompleted,
+		Title:      "Reviewer: paper_1",
+		CreatedAt:  now,
+		UpdatedAt:  now,
+	}
+	if err := store.SaveSkillRun(meta.SessionID, run); err != nil {
+		t.Fatalf("SaveSkillRun: %v", err)
+	}
+	if err := store.SaveSkillArtifactManifest(meta.SessionID, protocol.ArtifactManifest{
+		ArtifactID: "skill_1",
+		SessionID:  meta.SessionID,
+		Kind:       "reviewer_skill",
+		Paths: map[string]string{
+			"markdown": "/tmp/skill_1.md",
+			"json":     "/tmp/skill_1.json",
+		},
+		CreatedAt: now,
+	}); err != nil {
+		t.Fatalf("SaveSkillArtifactManifest: %v", err)
+	}
+
+	snapshot, err := store.Snapshot(meta.SessionID)
+	if err != nil {
+		t.Fatalf("Snapshot: %v", err)
+	}
+	if len(snapshot.SkillRuns) != 1 || len(snapshot.SkillArtifacts) != 1 {
+		t.Fatalf("expected hydrated skill assets, got runs=%d artifacts=%d", len(snapshot.SkillRuns), len(snapshot.SkillArtifacts))
+	}
+	if len(snapshot.Workspaces) != 1 || len(snapshot.Workspaces[0].SkillRuns) != 1 {
+		t.Fatalf("expected workspace skill run hydration, got %+v", snapshot.Workspaces)
+	}
+}
+
+func TestInvalidatePlanStateKeepsSkillRunsAndArtifacts(t *testing.T) {
+	t.Parallel()
+
+	store := New(t.TempDir())
+	if err := store.Ensure(); err != nil {
+		t.Fatalf("Ensure: %v", err)
+	}
+
+	now := time.Now().UTC()
+	meta := protocol.SessionMeta{
+		SessionID:      "sess_keep_skills",
+		State:          protocol.SessionStateCompleted,
+		PermissionMode: protocol.PermissionModeAuto,
+		Language:       "zh",
+		Style:          "distill",
+		CreatedAt:      now,
+		UpdatedAt:      now,
+	}
+	if err := store.CreateSession(meta); err != nil {
+		t.Fatalf("CreateSession: %v", err)
+	}
+	if err := store.SaveSources(meta.SessionID, []protocol.PaperRef{{
+		PaperID:    "paper_1",
+		URI:        "/tmp/paper.pdf",
+		LocalPath:  "/tmp/paper.pdf",
+		SourceType: protocol.SourceTypeLocalPDF,
+		Status:     protocol.SourceStatusAttached,
+	}}); err != nil {
+		t.Fatalf("SaveSources: %v", err)
+	}
+	if err := store.SavePlan(meta.SessionID, protocol.PlanResult{PlanID: "plan_1", Goal: "distill", CreatedAt: now}); err != nil {
+		t.Fatalf("SavePlan: %v", err)
+	}
+	if err := store.SaveSkillRun(meta.SessionID, protocol.SkillRunRecord{
+		RunID:      "skill_1",
+		SessionID:  meta.SessionID,
+		SkillName:  protocol.SkillNameReviewer,
+		TargetKind: protocol.SkillTargetKindPaper,
+		TargetID:   "paper_1",
+		ArtifactID: "skill_1",
+		Status:     protocol.SkillRunStatusCompleted,
+		Title:      "Reviewer: paper_1",
+		CreatedAt:  now,
+		UpdatedAt:  now,
+	}); err != nil {
+		t.Fatalf("SaveSkillRun: %v", err)
+	}
+	if err := store.SaveSkillArtifactManifest(meta.SessionID, protocol.ArtifactManifest{
+		ArtifactID: "skill_1",
+		SessionID:  meta.SessionID,
+		Kind:       "reviewer_skill",
+		Paths:      map[string]string{"markdown": "/tmp/skill_1.md"},
+		CreatedAt:  now,
+	}); err != nil {
+		t.Fatalf("SaveSkillArtifactManifest: %v", err)
+	}
+
+	if err := store.InvalidatePlanState(meta.SessionID); err != nil {
+		t.Fatalf("InvalidatePlanState: %v", err)
+	}
+
+	runs, err := store.LoadSkillRuns(meta.SessionID)
+	if err != nil {
+		t.Fatalf("LoadSkillRuns: %v", err)
+	}
+	if len(runs) != 1 {
+		t.Fatalf("expected skill runs to persist, got %+v", runs)
+	}
+	artifacts, err := store.LoadSkillArtifactManifests(meta.SessionID)
+	if err != nil {
+		t.Fatalf("LoadSkillArtifactManifests: %v", err)
+	}
+	if len(artifacts) != 1 {
+		t.Fatalf("expected skill artifacts to persist, got %+v", artifacts)
+	}
+}
+
+func TestSnapshotBuildsSkillsOnlyTaskBoard(t *testing.T) {
+	t.Parallel()
+
+	store := New(t.TempDir())
+	if err := store.Ensure(); err != nil {
+		t.Fatalf("Ensure: %v", err)
+	}
+
+	now := time.Now().UTC()
+	meta := protocol.SessionMeta{
+		SessionID:      "sess_skills_only",
+		State:          protocol.SessionStateCompleted,
+		PermissionMode: protocol.PermissionModeAuto,
+		Language:       "zh",
+		Style:          "distill",
+		LastTask:       "skill review",
+		CreatedAt:      now,
+		UpdatedAt:      now,
+	}
+	if err := store.CreateSession(meta); err != nil {
+		t.Fatalf("CreateSession: %v", err)
+	}
+	if err := store.SaveSources(meta.SessionID, []protocol.PaperRef{{
+		PaperID:    "paper_1",
+		URI:        "/tmp/paper.pdf",
+		LocalPath:  "/tmp/paper.pdf",
+		SourceType: protocol.SourceTypeLocalPDF,
+		Status:     protocol.SourceStatusAttached,
+	}}); err != nil {
+		t.Fatalf("SaveSources: %v", err)
+	}
+	if err := store.SaveSkillRun(meta.SessionID, protocol.SkillRunRecord{
+		RunID:      "skill_1",
+		SessionID:  meta.SessionID,
+		SkillName:  protocol.SkillNameReviewer,
+		TargetKind: protocol.SkillTargetKindPaper,
+		TargetID:   "paper_1",
+		ArtifactID: "skill_1",
+		Status:     protocol.SkillRunStatusCompleted,
+		Title:      "Reviewer: paper_1",
+		CreatedAt:  now,
+		UpdatedAt:  now,
+	}); err != nil {
+		t.Fatalf("SaveSkillRun: %v", err)
+	}
+
+	snapshot, err := store.Snapshot(meta.SessionID)
+	if err != nil {
+		t.Fatalf("Snapshot: %v", err)
+	}
+	if snapshot.TaskBoard == nil || len(snapshot.TaskBoard.Tasks) != 1 {
+		t.Fatalf("expected skills-only task board, got %+v", snapshot.TaskBoard)
+	}
+	task, ok := findTask(snapshot.TaskBoard, "skill_1")
+	if !ok || task.Kind != protocol.NodeKindReviewerSkill {
+		t.Fatalf("expected reviewer skill task, got %+v", task)
+	}
+	if len(task.AvailableActions) != 1 || task.AvailableActions[0].Type != protocol.TaskActionInspect {
+		t.Fatalf("expected inspect-only task, got %+v", task.AvailableActions)
+	}
+}
+
+func TestSnapshotHidesPaperSkillRunsWhenSourceRemoved(t *testing.T) {
+	t.Parallel()
+
+	store := New(t.TempDir())
+	if err := store.Ensure(); err != nil {
+		t.Fatalf("Ensure: %v", err)
+	}
+
+	now := time.Now().UTC()
+	meta := protocol.SessionMeta{
+		SessionID:      "sess_hide_skills",
+		State:          protocol.SessionStateCompleted,
+		PermissionMode: protocol.PermissionModeAuto,
+		Language:       "zh",
+		Style:          "distill",
+		CreatedAt:      now,
+		UpdatedAt:      now,
+	}
+	if err := store.CreateSession(meta); err != nil {
+		t.Fatalf("CreateSession: %v", err)
+	}
+	if err := store.SaveSources(meta.SessionID, []protocol.PaperRef{{
+		PaperID:    "paper_1",
+		URI:        "/tmp/paper.pdf",
+		LocalPath:  "/tmp/paper.pdf",
+		SourceType: protocol.SourceTypeLocalPDF,
+		Status:     protocol.SourceStatusAttached,
+	}}); err != nil {
+		t.Fatalf("SaveSources: %v", err)
+	}
+	if err := store.SaveSkillRun(meta.SessionID, protocol.SkillRunRecord{
+		RunID:      "skill_1",
+		SessionID:  meta.SessionID,
+		SkillName:  protocol.SkillNameReviewer,
+		TargetKind: protocol.SkillTargetKindPaper,
+		TargetID:   "paper_1",
+		ArtifactID: "skill_1",
+		Status:     protocol.SkillRunStatusCompleted,
+		Title:      "Reviewer: paper_1",
+		CreatedAt:  now,
+		UpdatedAt:  now,
+	}); err != nil {
+		t.Fatalf("SaveSkillRun: %v", err)
+	}
+	if err := store.SaveSkillArtifactManifest(meta.SessionID, protocol.ArtifactManifest{
+		ArtifactID: "skill_1",
+		SessionID:  meta.SessionID,
+		Kind:       "reviewer_skill",
+		Paths:      map[string]string{"markdown": "/tmp/skill_1.md"},
+		CreatedAt:  now,
+	}); err != nil {
+		t.Fatalf("SaveSkillArtifactManifest: %v", err)
+	}
+
+	if err := store.SaveSources(meta.SessionID, nil); err != nil {
+		t.Fatalf("SaveSources(clear): %v", err)
+	}
+
+	snapshot, err := store.Snapshot(meta.SessionID)
+	if err != nil {
+		t.Fatalf("Snapshot: %v", err)
+	}
+	if len(snapshot.SkillRuns) != 0 || len(snapshot.SkillArtifacts) != 0 {
+		t.Fatalf("expected hidden paper skill assets after source removal, got runs=%d artifacts=%d", len(snapshot.SkillRuns), len(snapshot.SkillArtifacts))
+	}
+	if len(snapshot.Workspaces) != 0 {
+		t.Fatalf("expected no workspaces after source removal, got %+v", snapshot.Workspaces)
+	}
+}
+
 func workspaceHasResource(workspace protocol.PaperWorkspace, uri string) bool {
 	for _, resource := range workspace.Resources {
 		if resource.URI == uri {
