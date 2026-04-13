@@ -248,6 +248,7 @@ const (
 	TaskActionInspect TaskActionType = "inspect"
 	TaskActionRun     TaskActionType = "run"
 	TaskActionApprove TaskActionType = "approve"
+	TaskActionReject  TaskActionType = "reject"
 )
 
 type TaskAction struct {

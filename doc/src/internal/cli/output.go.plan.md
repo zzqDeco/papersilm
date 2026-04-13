@@ -21,7 +21,7 @@
 - `Emit()` 只对 text 与 stream-json 做逐事件输出。
 - `PrintResult()` 会根据结果内容自动选择打印计划、审批、摘要或对比结果，其中计划文本模式默认走 task board。
 - `PrintWorkspaceList()` 与 `PrintWorkspace()` 为显式 `/workspace` 命令提供专用可读布局。
-- `PrintTaskBoard()` 与 `PrintTaskCard()` 为 `/tasks`、`/task show` 和 `/plan` 提供统一布局。
+- `PrintTaskBoard()` 与 `PrintTaskCard()` 为 `/tasks`、`/task show` 和 `/plan` 提供统一布局，并在 approval gate 打开时明确提示“当前只能 approve/reject pending batch”。
 - `printPlan()` 与 `printApproval()` 定义了 REPL/CLI 默认的人类可读布局。
 
 ## 5. 依赖关系

@@ -19,9 +19,9 @@
 - 关键函数/方法: `RunREPL`、`handleSlash`、`handleSourceCommand`、`handleWorkspaceCommand`、`handleTaskCommand`。
 - `RunREPL()` 负责创建默认会话、循环读取输入并区分自然语言与 slash command。
 - `handleSlash()` 处理 `/plan`、`/run`、`/approve`、`/tasks`、`/task ...`、`/lang`、`/style`、`/workspace` 等顶层命令。
-- `handleSourceCommand()` 实现来源列表、增删替换与对应的计划失效，并在 remove/replace 时同步清理对应 workspace。
+- `handleSourceCommand()` 实现来源列表、增删替换与对应的计划失效；remove/replace 都在 source 提交成功后才清理对应 workspace，避免失败时破坏旧人工状态。
 - `handleWorkspaceCommand()` 负责解析 `::` 分隔的自由文本正文，并把 note/annotation 写入委托给 core service。
-- `handleTaskCommand()` 负责 `/task show|run|approve` 的参数路由，把单任务读取、执行和审批交给 core service。
+- `handleTaskCommand()` 负责 `/task show|run|approve|reject` 的参数路由，把单任务读取、执行和审批/拒绝交给 core service。
 
 ## 5. 依赖关系
 - 内部依赖: `internal/storage`、`pkg/core`、`pkg/protocol`

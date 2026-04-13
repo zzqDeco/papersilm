@@ -17,11 +17,12 @@
 
 ## 4. 关键实现细节
 - 主要类型: `EventSink`、`Agent`。
-- 关键函数/方法: `New`、`AttachSources`、`Execute`、`RunPlanned`、`Approve`、`syncSessionConfig`、`planSession`、`startConfirmExecution` 等。
-- `AttachSources()` 在 replace 模式下会先删除旧 source 对应的 workspace 状态，再清空 sources 并触发计划失效。
+- 关键函数/方法: `New`、`AttachSources`、`Execute`、`RunPlanned`、`Approve`、`syncSessionConfig`、`validatePlannedExecutionConfig`、`planSession`、`startConfirmExecution` 等。
+- `AttachSources()` 会先把新来源在内存里 resolve 成完整 `PaperRef` 列表，只有 resolve 成功后才提交新的 `sources` 并失效旧计划；replace 时对已移除 paper 的 workspace 清理放到提交后的尾部执行。
 - `Execute()` 统一处理附带来源、任务补全、会话配置同步和模式分发。
 - `planSession()` 负责来源检查、DAG 规划、风险生成和计划/执行状态持久化，并在返回前为 `PlanResult.TaskBoard` 做首次 hydration。
 - `runDAGExecution()` 循环选择 ready batch，发射进度事件，处理失败、重规划与最终收尾。
+- `RunPlanned()` 只允许使用与当前已保存计划一致的语言/风格配置继续执行；配置变更仍需先重跑 `/plan`。
 - `startConfirmExecution()` 与 `Approve()` 共同实现显式审批门。
 
 ## 5. 依赖关系

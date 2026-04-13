@@ -67,7 +67,7 @@ func Build(meta protocol.SessionMeta, plan *protocol.PlanResult, execution *prot
 			Produces:         append([]string(nil), node.Produces...),
 			ArtifactIDs:      artifactIDsForNode(node, execByNodeID[node.ID], artifacts),
 			Error:            strings.TrimSpace(execByNodeID[node.ID].Error),
-			AvailableActions: availableActions(taskStatus),
+			AvailableActions: availableActions(meta, node.ID, taskStatus, pendingApproval),
 		}
 		tasks = append(tasks, task)
 		group := groupMap[groupID]
@@ -270,13 +270,25 @@ func dependenciesSatisfied(
 	return true
 }
 
-func availableActions(status protocol.TaskStatus) []protocol.TaskAction {
+func availableActions(meta protocol.SessionMeta, nodeID string, status protocol.TaskStatus, pendingApproval map[string]struct{}) []protocol.TaskAction {
 	actions := []protocol.TaskAction{{Type: protocol.TaskActionInspect, Label: "Inspect"}}
+	if meta.State == protocol.SessionStateAwaitingApproval {
+		if _, ok := pendingApproval[nodeID]; ok && status == protocol.TaskStatusAwaitingApproval {
+			actions = append(actions,
+				protocol.TaskAction{Type: protocol.TaskActionApprove, Label: "Approve"},
+				protocol.TaskAction{Type: protocol.TaskActionReject, Label: "Reject"},
+			)
+		}
+		return actions
+	}
 	switch status {
 	case protocol.TaskStatusReady, protocol.TaskStatusFailed, protocol.TaskStatusStale, protocol.TaskStatusCompleted:
 		actions = append(actions, protocol.TaskAction{Type: protocol.TaskActionRun, Label: "Run"})
 	case protocol.TaskStatusAwaitingApproval:
-		actions = append(actions, protocol.TaskAction{Type: protocol.TaskActionApprove, Label: "Approve"})
+		actions = append(actions,
+			protocol.TaskAction{Type: protocol.TaskActionApprove, Label: "Approve"},
+			protocol.TaskAction{Type: protocol.TaskActionReject, Label: "Reject"},
+		)
 	}
 	return actions
 }

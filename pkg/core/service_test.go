@@ -440,6 +440,297 @@ func TestWorkspaceNotesAndAnnotationsSurviveReplan(t *testing.T) {
 	}
 }
 
+func TestAttachSourcesReplaceFailurePreservesExistingSession(t *testing.T) {
+	t.Parallel()
+
+	svc, _ := newTestService(t)
+	ctx := context.Background()
+
+	pdf := writeTestPDF(t, filepath.Join(t.TempDir(), "paper.pdf"), "Paper Replace Safety")
+	planned, err := svc.Execute(ctx, protocol.ClientRequest{
+		Task:           "distill this paper",
+		Sources:        []string{pdf},
+		PermissionMode: protocol.PermissionModePlan,
+		Language:       "zh",
+		Style:          "distill",
+	})
+	if err != nil {
+		t.Fatalf("Execute(plan): %v", err)
+	}
+	paperID := planned.Session.Sources[0].PaperID
+	afterNote, err := svc.AddWorkspaceNote(planned.Session.Meta.SessionID, paperID, "Preserve this note before replace.")
+	if err != nil {
+		t.Fatalf("AddWorkspaceNote: %v", err)
+	}
+	if _, ok := findWorkspaceByPaperID(afterNote.Workspaces, paperID); !ok {
+		t.Fatalf("expected workspace before replace, got %+v", afterNote.Workspaces)
+	}
+
+	_, err = svc.AttachSources(ctx, planned.Session.Meta.SessionID, []string{filepath.Join(t.TempDir(), "missing.pdf")}, true)
+	if err == nil {
+		t.Fatalf("expected replace failure")
+	}
+
+	snapshot, err := svc.LoadSession(planned.Session.Meta.SessionID)
+	if err != nil {
+		t.Fatalf("LoadSession: %v", err)
+	}
+	if len(snapshot.Sources) != 1 || snapshot.Sources[0].PaperID != paperID {
+		t.Fatalf("expected original source preserved, got %+v", snapshot.Sources)
+	}
+	if snapshot.Plan == nil || snapshot.Execution == nil {
+		t.Fatalf("expected saved plan/execution preserved, got plan=%+v execution=%+v", snapshot.Plan, snapshot.Execution)
+	}
+	workspace, ok := findWorkspaceByPaperID(snapshot.Workspaces, paperID)
+	if !ok || len(workspace.Notes) != 1 {
+		t.Fatalf("expected workspace note preserved, got %+v", snapshot.Workspaces)
+	}
+}
+
+func TestTaskBoardApprovalGateRestrictsActions(t *testing.T) {
+	t.Parallel()
+
+	svc, _ := newTestService(t)
+	ctx := context.Background()
+
+	pdf1 := writeTestPDF(t, filepath.Join(t.TempDir(), "paper1.pdf"), "Paper One")
+	pdf2 := writeTestPDF(t, filepath.Join(t.TempDir(), "paper2.pdf"), "Paper Two")
+	pdf3 := writeTestPDF(t, filepath.Join(t.TempDir(), "paper3.pdf"), "Paper Three")
+
+	planned, err := svc.Execute(ctx, protocol.ClientRequest{
+		Task:           "compare these papers",
+		Sources:        []string{pdf1, pdf2, pdf3},
+		PermissionMode: protocol.PermissionModeConfirm,
+		Language:       "zh",
+		Style:          "distill",
+	})
+	if err != nil {
+		t.Fatalf("Execute(confirm): %v", err)
+	}
+	if planned.Approval == nil || len(planned.Approval.PendingNodeIDs) != 4 {
+		t.Fatalf("expected capped pending batch of 4, got %+v", planned.Approval)
+	}
+
+	pendingSet := make(map[string]struct{}, len(planned.Approval.PendingNodeIDs))
+	for _, pendingID := range planned.Approval.PendingNodeIDs {
+		pendingSet[pendingID] = struct{}{}
+		task, ok := findTaskByID(planned.Session.TaskBoard, pendingID)
+		if !ok || task.Status != protocol.TaskStatusAwaitingApproval {
+			t.Fatalf("expected pending task awaiting approval, got %+v", task)
+		}
+		if !taskHasActions(task, protocol.TaskActionInspect, protocol.TaskActionApprove, protocol.TaskActionReject) {
+			t.Fatalf("expected approve/reject actions for pending task, got %+v", task.AvailableActions)
+		}
+	}
+
+	readyCount := 0
+	nonPendingReadyID := ""
+	for _, task := range planned.Session.TaskBoard.Tasks {
+		if task.Status != protocol.TaskStatusReady {
+			continue
+		}
+		readyCount++
+		if _, ok := pendingSet[task.TaskID]; ok {
+			t.Fatalf("non-pending ready task should not stay in approval batch: %+v", task)
+		}
+		if nonPendingReadyID == "" {
+			nonPendingReadyID = task.TaskID
+		}
+		if !taskHasActions(task, protocol.TaskActionInspect) {
+			t.Fatalf("expected ready task outside approval batch to expose inspect only, got %+v", task.AvailableActions)
+		}
+	}
+	if readyCount == 0 || nonPendingReadyID == "" {
+		t.Fatalf("expected ready tasks outside first approval batch, got %+v", planned.Session.TaskBoard.Tasks)
+	}
+
+	_, err = svc.RunTask(ctx, planned.Session.Meta.SessionID, nonPendingReadyID, "zh", "distill")
+	if err == nil || !strings.Contains(err.Error(), "only the current pending batch can be approved or rejected") {
+		t.Fatalf("expected approval gate error for non-pending task run, got %v", err)
+	}
+}
+
+func TestApproveTaskRejectsOnlySelectedRequiredTask(t *testing.T) {
+	t.Parallel()
+
+	svc, _ := newTestService(t)
+	ctx := context.Background()
+
+	pdf1 := writeTestPDF(t, filepath.Join(t.TempDir(), "paper1.pdf"), "Paper One")
+	pdf2 := writeTestPDF(t, filepath.Join(t.TempDir(), "paper2.pdf"), "Paper Two")
+
+	planned, err := svc.Execute(ctx, protocol.ClientRequest{
+		Task:           "compare these papers",
+		Sources:        []string{pdf1, pdf2},
+		PermissionMode: protocol.PermissionModeConfirm,
+		Language:       "zh",
+		Style:          "distill",
+	})
+	if err != nil {
+		t.Fatalf("Execute(confirm): %v", err)
+	}
+	if planned.Approval == nil || len(planned.Approval.PendingNodeIDs) < 2 {
+		t.Fatalf("expected multiple pending tasks, got %+v", planned.Approval)
+	}
+
+	targetTaskID := planned.Approval.PendingNodeIDs[0]
+	result, err := svc.ApproveTask(ctx, planned.Session.Meta.SessionID, targetTaskID, false, "user rejected this task")
+	if err != nil {
+		t.Fatalf("ApproveTask(reject): %v", err)
+	}
+	if result.Session.Meta.State != protocol.SessionStateAwaitingApproval {
+		t.Fatalf("expected session to remain awaiting approval, got %s", result.Session.Meta.State)
+	}
+	if result.Approval == nil || len(result.Approval.PendingNodeIDs) != len(planned.Approval.PendingNodeIDs)-1 {
+		t.Fatalf("expected only one task removed from pending batch, got %+v", result.Approval)
+	}
+	if contains(result.Approval.PendingNodeIDs, targetTaskID) {
+		t.Fatalf("rejected task should be removed from pending batch, got %+v", result.Approval.PendingNodeIDs)
+	}
+	task, ok := findTaskByID(result.Session.TaskBoard, targetTaskID)
+	if !ok || task.Status != protocol.TaskStatusFailed {
+		t.Fatalf("expected rejected required task failed, got %+v", task)
+	}
+	if !strings.Contains(task.Error, "rejected by user") {
+		t.Fatalf("expected rejection reason on task, got %+v", task)
+	}
+	if len(task.PaperIDs) != 1 {
+		t.Fatalf("expected single-paper task, got %+v", task)
+	}
+	mergeTask, ok := findTaskByID(result.Session.TaskBoard, "merge_digest_"+task.PaperIDs[0])
+	if !ok || mergeTask.Status != protocol.TaskStatusBlocked {
+		t.Fatalf("expected dependent merge task blocked after required reject, got %+v", mergeTask)
+	}
+}
+
+func TestRejectTaskSkipsOptionalNodeAndPlanCanContinue(t *testing.T) {
+	t.Parallel()
+
+	svc, _ := newTestService(t)
+	ctx := context.Background()
+
+	pdf := writeTestPDF(t, filepath.Join(t.TempDir(), "paper.pdf"), "Paper Optional Reject")
+	planned, err := svc.Execute(ctx, protocol.ClientRequest{
+		Task:           "explain the key equation in this paper",
+		Sources:        []string{pdf},
+		PermissionMode: protocol.PermissionModeConfirm,
+		Language:       "zh",
+		Style:          "distill",
+	})
+	if err != nil {
+		t.Fatalf("Execute(confirm): %v", err)
+	}
+	paperID := planned.Session.Sources[0].PaperID
+	targetTaskID := "math_reasoner_" + paperID
+
+	current, err := svc.RejectTask(ctx, planned.Session.Meta.SessionID, targetTaskID, "skip optional math pass")
+	if err != nil {
+		t.Fatalf("RejectTask: %v", err)
+	}
+	task, ok := findTaskByID(current.Session.TaskBoard, targetTaskID)
+	if !ok || task.Status != protocol.TaskStatusSkipped {
+		t.Fatalf("expected optional task skipped, got %+v", task)
+	}
+	if current.Session.Meta.State != protocol.SessionStateAwaitingApproval {
+		t.Fatalf("expected remaining required tasks still awaiting approval, got %s", current.Session.Meta.State)
+	}
+
+	for current.Session.Meta.State == protocol.SessionStateAwaitingApproval {
+		if current.Approval == nil || len(current.Approval.PendingNodeIDs) == 0 {
+			t.Fatalf("expected pending approval payload, got %+v", current.Approval)
+		}
+		nextTaskID := current.Approval.PendingNodeIDs[0]
+		current, err = svc.ApproveTask(ctx, planned.Session.Meta.SessionID, nextTaskID, true, "")
+		if err != nil {
+			t.Fatalf("ApproveTask(%s): %v", nextTaskID, err)
+		}
+	}
+	if current.Session.Meta.State != protocol.SessionStateCompleted {
+		t.Fatalf("expected completed state after rejecting optional task and approving required ones, got %s", current.Session.Meta.State)
+	}
+	if len(current.Digests) != 1 {
+		t.Fatalf("expected digest after optional reject path, got %+v", current.Digests)
+	}
+}
+
+func TestRunTaskConfigMismatchPreservesPlan(t *testing.T) {
+	t.Parallel()
+
+	svc, _ := newTestService(t)
+	ctx := context.Background()
+
+	pdf := writeTestPDF(t, filepath.Join(t.TempDir(), "paper.pdf"), "Paper Task Config")
+	planned, err := svc.Execute(ctx, protocol.ClientRequest{
+		Task:           "distill this paper",
+		Sources:        []string{pdf},
+		PermissionMode: protocol.PermissionModePlan,
+		Language:       "zh",
+		Style:          "distill",
+	})
+	if err != nil {
+		t.Fatalf("Execute(plan): %v", err)
+	}
+	paperID := planned.Session.Sources[0].PaperID
+	if _, err := svc.AddWorkspaceNote(planned.Session.Meta.SessionID, paperID, "Preserve workspace state across config mismatch."); err != nil {
+		t.Fatalf("AddWorkspaceNote: %v", err)
+	}
+
+	_, err = svc.RunTask(ctx, planned.Session.Meta.SessionID, "merge_digest_"+paperID, "en", "distill")
+	if err == nil || !strings.Contains(err.Error(), "re-run /plan") {
+		t.Fatalf("expected config mismatch error, got %v", err)
+	}
+
+	snapshot, err := svc.LoadSession(planned.Session.Meta.SessionID)
+	if err != nil {
+		t.Fatalf("LoadSession: %v", err)
+	}
+	if snapshot.Meta.Language != "zh" || snapshot.Meta.Style != "distill" {
+		t.Fatalf("expected session config preserved, got lang=%s style=%s", snapshot.Meta.Language, snapshot.Meta.Style)
+	}
+	if snapshot.Plan == nil || snapshot.Execution == nil {
+		t.Fatalf("expected saved plan/execution preserved, got plan=%+v execution=%+v", snapshot.Plan, snapshot.Execution)
+	}
+	workspace, ok := findWorkspaceByPaperID(snapshot.Workspaces, paperID)
+	if !ok || len(workspace.Notes) != 1 {
+		t.Fatalf("expected workspace preserved, got %+v", snapshot.Workspaces)
+	}
+}
+
+func TestRunPlannedConfigMismatchPreservesPlan(t *testing.T) {
+	t.Parallel()
+
+	svc, _ := newTestService(t)
+	ctx := context.Background()
+
+	pdf := writeTestPDF(t, filepath.Join(t.TempDir(), "paper.pdf"), "Paper Planned Config")
+	planned, err := svc.Execute(ctx, protocol.ClientRequest{
+		Task:           "distill this paper",
+		Sources:        []string{pdf},
+		PermissionMode: protocol.PermissionModePlan,
+		Language:       "zh",
+		Style:          "distill",
+	})
+	if err != nil {
+		t.Fatalf("Execute(plan): %v", err)
+	}
+
+	_, err = svc.RunPlanned(ctx, planned.Session.Meta.SessionID, "en", "distill")
+	if err == nil || !strings.Contains(err.Error(), "re-run /plan") {
+		t.Fatalf("expected config mismatch error, got %v", err)
+	}
+
+	snapshot, err := svc.LoadSession(planned.Session.Meta.SessionID)
+	if err != nil {
+		t.Fatalf("LoadSession: %v", err)
+	}
+	if snapshot.Meta.Language != "zh" || snapshot.Meta.Style != "distill" {
+		t.Fatalf("expected session config preserved, got lang=%s style=%s", snapshot.Meta.Language, snapshot.Meta.Style)
+	}
+	if snapshot.Plan == nil || snapshot.Execution == nil {
+		t.Fatalf("expected saved plan/execution preserved, got plan=%+v execution=%+v", snapshot.Plan, snapshot.Execution)
+	}
+}
+
 func newTestService(t *testing.T) (*Service, *testSink) {
 	t.Helper()
 
@@ -510,6 +801,27 @@ func statusCount(board *protocol.TaskBoard, status protocol.TaskStatus) int {
 func workspaceHasResource(workspace protocol.PaperWorkspace, uri string) bool {
 	for _, resource := range workspace.Resources {
 		if resource.URI == uri {
+			return true
+		}
+	}
+	return false
+}
+
+func taskHasActions(task protocol.TaskCard, expected ...protocol.TaskActionType) bool {
+	if len(task.AvailableActions) != len(expected) {
+		return false
+	}
+	for i, action := range task.AvailableActions {
+		if action.Type != expected[i] {
+			return false
+		}
+	}
+	return true
+}
+
+func contains(values []string, target string) bool {
+	for _, value := range values {
+		if value == target {
 			return true
 		}
 	}

@@ -232,6 +232,11 @@ func (o *OutputWriter) PrintTaskBoard(board *protocol.TaskBoard) error {
 		if _, err := fmt.Fprintf(o.w, "Task Board: %s\nGoal: %s\n", board.PlanID, board.Goal); err != nil {
 			return err
 		}
+		if counts := summarizeTaskStatuses(board); counts[protocol.TaskStatusAwaitingApproval] > 0 {
+			if _, err := fmt.Fprintln(o.w, "Approval gate active: only pending batch tasks can be approved or rejected."); err != nil {
+				return err
+			}
+		}
 		tasksByID := make(map[string]protocol.TaskCard, len(board.Tasks))
 		for _, task := range board.Tasks {
 			tasksByID[task.TaskID] = task
@@ -279,6 +284,11 @@ func (o *OutputWriter) PrintTaskCard(task protocol.TaskCard) error {
 	case protocol.OutputFormatText:
 		if _, err := fmt.Fprintf(o.w, "Task: %s\nKind: %s\nStatus: %s\nTitle: %s\n", task.TaskID, task.Kind, task.Status, task.Title); err != nil {
 			return err
+		}
+		if task.Status == protocol.TaskStatusAwaitingApproval {
+			if _, err := fmt.Fprintln(o.w, "Approval gate: use /task approve <id> or /task reject <id>."); err != nil {
+				return err
+			}
 		}
 		if strings.TrimSpace(task.Description) != "" {
 			if _, err := fmt.Fprintf(o.w, "Description: %s\n", task.Description); err != nil {
