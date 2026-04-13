@@ -97,6 +97,17 @@ func (r *Registry) AttachSources(ctx context.Context, store *storage.Store, sess
 	if err != nil {
 		return nil, err
 	}
+	refs, err := r.ResolveSources(ctx, sessionID, existing, raw)
+	if err != nil {
+		return nil, err
+	}
+	if err := r.CommitSources(store, sessionID, refs); err != nil {
+		return nil, err
+	}
+	return refs, nil
+}
+
+func (r *Registry) ResolveSources(ctx context.Context, sessionID string, existing []protocol.PaperRef, raw []string) ([]protocol.PaperRef, error) {
 	combined := make([]string, 0, len(existing)+len(raw))
 	seen := make(map[string]struct{}, len(existing)+len(raw))
 	for _, ref := range existing {
@@ -120,17 +131,14 @@ func (r *Registry) AttachSources(ctx context.Context, store *storage.Store, sess
 		seen[src] = struct{}{}
 		combined = append(combined, src)
 	}
-	refs, err := r.pipeline.NormalizeSources(ctx, sessionID, combined)
-	if err != nil {
-		return nil, err
-	}
+	return r.pipeline.NormalizeSources(ctx, sessionID, combined)
+}
+
+func (r *Registry) CommitSources(store *storage.Store, sessionID string, refs []protocol.PaperRef) error {
 	if err := store.SaveSources(sessionID, refs); err != nil {
-		return nil, err
+		return err
 	}
-	if err := store.InvalidatePlanState(sessionID); err != nil {
-		return nil, err
-	}
-	return refs, nil
+	return store.InvalidatePlanState(sessionID)
 }
 
 func (r *Registry) InspectSources(ctx context.Context, store *storage.Store, sessionID string, paperIDs []string) ([]protocol.PaperRef, error) {

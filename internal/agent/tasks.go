@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/zzqDeco/papersilm/internal/storage"
@@ -15,7 +16,7 @@ func (a *Agent) RunTask(ctx context.Context, store *storage.Store, sink EventSin
 	if err != nil {
 		return protocol.RunResult{}, err
 	}
-	meta, err = a.syncSessionConfig(store, meta, lang, style)
+	lang, style, err = validatePlannedExecutionConfig(meta, lang, style)
 	if err != nil {
 		return protocol.RunResult{}, err
 	}
@@ -27,18 +28,21 @@ func (a *Agent) RunTask(ctx context.Context, store *storage.Store, sink EventSin
 	if snapshot.Plan == nil || snapshot.Execution == nil {
 		return protocol.RunResult{}, fmt.Errorf("no saved plan available")
 	}
-	if len(snapshot.Execution.PendingNodeIDs) > 0 {
-		return protocol.RunResult{}, fmt.Errorf("session is awaiting approval; use /task approve <id>")
-	}
 	task, ok := findTaskCard(snapshot.TaskBoard, taskID)
 	if !ok {
 		return protocol.RunResult{}, fmt.Errorf("unknown task: %s", taskID)
+	}
+	if meta.State == protocol.SessionStateAwaitingApproval || len(snapshot.Execution.PendingNodeIDs) > 0 {
+		if containsString(snapshot.Execution.PendingNodeIDs, taskID) {
+			return protocol.RunResult{}, fmt.Errorf("task %s is awaiting approval; use /task approve %s or /task reject %s", taskID, taskID, taskID)
+		}
+		return protocol.RunResult{}, fmt.Errorf("session is awaiting approval; only the current pending batch can be approved or rejected")
 	}
 	switch task.Status {
 	case protocol.TaskStatusRunning:
 		return protocol.RunResult{}, fmt.Errorf("task is already running: %s", taskID)
 	case protocol.TaskStatusAwaitingApproval:
-		return protocol.RunResult{}, fmt.Errorf("task %s is awaiting approval; use /task approve %s", taskID, taskID)
+		return protocol.RunResult{}, fmt.Errorf("task %s is awaiting approval; use /task approve %s or /task reject %s", taskID, taskID, taskID)
 	case protocol.TaskStatusCompleted:
 		if err := cascadeRerun(store, sessionID, snapshot.Plan, snapshot.Execution, taskID); err != nil {
 			return protocol.RunResult{}, err
@@ -57,7 +61,7 @@ func (a *Agent) RunTask(ctx context.Context, store *storage.Store, sink EventSin
 	if err := store.SaveMeta(meta); err != nil {
 		return protocol.RunResult{}, err
 	}
-	return a.runScopedExecution(ctx, store, sink, sessionID, meta, *snapshot.Plan, snapshot.Execution, meta.LastTask, meta.Language, meta.Style, scope, taskID)
+	return a.runScopedExecution(ctx, store, sink, sessionID, meta, *snapshot.Plan, snapshot.Execution, meta.LastTask, lang, style, scope, taskID)
 }
 
 func (a *Agent) ApproveTask(ctx context.Context, store *storage.Store, sink EventSink, sessionID, taskID string, approved bool, comment string) (protocol.RunResult, error) {
@@ -80,7 +84,7 @@ func (a *Agent) ApproveTask(ctx context.Context, store *storage.Store, sink Even
 		return protocol.RunResult{}, fmt.Errorf("session has no pending execution state")
 	}
 	if !approved {
-		return a.Approve(ctx, store, sink, sessionID, false, comment)
+		return a.rejectTask(store, sessionID, meta, planResult, execState, taskID, comment)
 	}
 	if meta.State != protocol.SessionStateAwaitingApproval || len(execState.PendingNodeIDs) == 0 {
 		return protocol.RunResult{}, fmt.Errorf("session has no pending approval tasks")
@@ -166,6 +170,10 @@ func (a *Agent) ApproveTask(ctx context.Context, store *storage.Store, sink Even
 		return protocol.RunResult{}, err
 	}
 	return a.finishTaskApproval(store, sessionID, meta, planResult, execState)
+}
+
+func (a *Agent) RejectTask(ctx context.Context, store *storage.Store, sink EventSink, sessionID, taskID, comment string) (protocol.RunResult, error) {
+	return a.ApproveTask(ctx, store, sink, sessionID, taskID, false, comment)
 }
 
 func (a *Agent) runScopedExecution(
@@ -434,6 +442,30 @@ func (a *Agent) finishTaskApproval(store *storage.Store, sessionID string, meta 
 	}, nil
 }
 
+func (a *Agent) rejectTask(store *storage.Store, sessionID string, meta protocol.SessionMeta, planResult *protocol.PlanResult, execState *protocol.ExecutionState, taskID, comment string) (protocol.RunResult, error) {
+	if meta.State != protocol.SessionStateAwaitingApproval || len(execState.PendingNodeIDs) == 0 {
+		return protocol.RunResult{}, fmt.Errorf("session has no pending approval tasks")
+	}
+	if !containsString(execState.PendingNodeIDs, taskID) {
+		return protocol.RunResult{}, fmt.Errorf("task %s is not awaiting approval", taskID)
+	}
+	node, ok := dagNode(planResult.DAG, taskID)
+	if !ok {
+		return protocol.RunResult{}, fmt.Errorf("unknown task: %s", taskID)
+	}
+
+	reason := rejectionReason(comment)
+	status := protocol.NodeStatusFailed
+	if !node.Required {
+		status = protocol.NodeStatusSkipped
+	}
+	setNodeStatus(&planResult.DAG, taskID, status)
+	updateExecutionNode(execState, taskID, status, reason, nil)
+	execState.PendingNodeIDs = removeString(execState.PendingNodeIDs, taskID)
+	refreshReadyNodes(&planResult.DAG)
+	return a.finishTaskApproval(store, sessionID, meta, planResult, execState)
+}
+
 func dependencyClosure(dag protocol.PlanDAG, execState *protocol.ExecutionState, targetID string) map[string]struct{} {
 	execByNodeID := make(map[string]protocol.NodeExecutionState, len(execState.Nodes))
 	for _, node := range execState.Nodes {
@@ -619,4 +651,12 @@ func sortedKeys(values map[string]struct{}) []string {
 	}
 	sort.Strings(out)
 	return out
+}
+
+func rejectionReason(comment string) string {
+	comment = strings.TrimSpace(comment)
+	if comment == "" {
+		return "rejected by user"
+	}
+	return "rejected by user: " + comment
 }

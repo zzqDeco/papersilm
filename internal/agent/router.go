@@ -31,28 +31,27 @@ func New(registry *tools.Registry, cfg config.Config) *Agent {
 }
 
 func (a *Agent) AttachSources(ctx context.Context, store *storage.Store, sink EventSink, sessionID string, sources []string, replace bool) (protocol.SessionSnapshot, error) {
-	if replace {
-		existing, err := store.LoadSources(sessionID)
-		if err != nil {
-			return protocol.SessionSnapshot{}, err
-		}
-		paperIDs := make([]string, 0, len(existing))
-		for _, ref := range existing {
-			paperIDs = append(paperIDs, ref.PaperID)
-		}
-		if err := store.DeleteWorkspaceStates(sessionID, paperIDs); err != nil {
-			return protocol.SessionSnapshot{}, err
-		}
-		if err := store.SaveSources(sessionID, nil); err != nil {
-			return protocol.SessionSnapshot{}, err
-		}
-		if err := store.InvalidatePlanState(sessionID); err != nil {
-			return protocol.SessionSnapshot{}, err
-		}
-	}
-	refs, err := a.tools.AttachSources(ctx, store, sessionID, sources)
+	existing, err := store.LoadSources(sessionID)
 	if err != nil {
 		return protocol.SessionSnapshot{}, err
+	}
+	base := existing
+	if replace {
+		base = nil
+	}
+	refs, err := a.tools.ResolveSources(ctx, sessionID, base, sources)
+	if err != nil {
+		return protocol.SessionSnapshot{}, err
+	}
+	if err := a.tools.CommitSources(store, sessionID, refs); err != nil {
+		return protocol.SessionSnapshot{}, err
+	}
+	if replace {
+		if cleanupErr := store.DeleteWorkspaceStates(sessionID, removedWorkspacePaperIDs(existing, refs)); cleanupErr != nil {
+			_ = a.emit(store, sink, sessionID, protocol.EventAnalysis, "workspace cleanup deferred after source replace", map[string]any{
+				"error": cleanupErr.Error(),
+			})
+		}
 	}
 	if err := a.emit(store, sink, sessionID, protocol.EventSourceAttached, "sources attached", refs); err != nil {
 		return protocol.SessionSnapshot{}, err
@@ -139,6 +138,10 @@ func (a *Agent) RunPlanned(ctx context.Context, store *storage.Store, sink Event
 	if meta.State == protocol.SessionStateAwaitingApproval {
 		return protocol.RunResult{}, fmt.Errorf("session is awaiting approval; use /approve")
 	}
+	lang, style, err = validatePlannedExecutionConfig(meta, lang, style)
+	if err != nil {
+		return protocol.RunResult{}, err
+	}
 	planResult, err := store.LoadPlan(sessionID)
 	if err != nil {
 		return protocol.RunResult{}, err
@@ -157,10 +160,6 @@ func (a *Agent) RunPlanned(ctx context.Context, store *storage.Store, sink Event
 			return protocol.RunResult{}, err
 		}
 	}
-	meta, err = a.syncSessionConfig(store, meta, lang, style)
-	if err != nil {
-		return protocol.RunResult{}, err
-	}
 	meta.State = protocol.SessionStateRunning
 	meta.PermissionMode = protocol.PermissionModeAuto
 	meta.ApprovalPending = false
@@ -168,7 +167,7 @@ func (a *Agent) RunPlanned(ctx context.Context, store *storage.Store, sink Event
 	if err := store.SaveMeta(meta); err != nil {
 		return protocol.RunResult{}, err
 	}
-	return a.runDAGExecution(ctx, store, sink, sessionID, meta, *planResult, execState, meta.LastTask, meta.Language, meta.Style)
+	return a.runDAGExecution(ctx, store, sink, sessionID, meta, *planResult, execState, meta.LastTask, lang, style)
 }
 
 func (a *Agent) Approve(ctx context.Context, store *storage.Store, sink EventSink, sessionID string, approved bool, comment string) (protocol.RunResult, error) {
@@ -244,6 +243,58 @@ func (a *Agent) syncSessionConfig(store *storage.Store, meta protocol.SessionMet
 		return protocol.SessionMeta{}, err
 	}
 	return store.LoadMeta(meta.SessionID)
+}
+
+func validatePlannedExecutionConfig(meta protocol.SessionMeta, lang, style string) (string, string, error) {
+	resolvedLang := meta.Language
+	resolvedStyle := meta.Style
+	mismatches := make([]string, 0, 2)
+
+	if trimmed := strings.TrimSpace(lang); trimmed != "" {
+		if meta.Language != "" && meta.Language != trimmed {
+			mismatches = append(mismatches, fmt.Sprintf("language=%s (planned=%s)", trimmed, meta.Language))
+		} else {
+			resolvedLang = trimmed
+		}
+	}
+	if trimmed := strings.TrimSpace(style); trimmed != "" {
+		if meta.Style != "" && meta.Style != trimmed {
+			mismatches = append(mismatches, fmt.Sprintf("style=%s (planned=%s)", trimmed, meta.Style))
+		} else {
+			resolvedStyle = trimmed
+		}
+	}
+	if len(mismatches) > 0 {
+		return "", "", fmt.Errorf("saved plan config mismatch: %s; update /lang or /style and re-run /plan", strings.Join(mismatches, ", "))
+	}
+	return resolvedLang, resolvedStyle, nil
+}
+
+func removedWorkspacePaperIDs(existing []protocol.PaperRef, next []protocol.PaperRef) []string {
+	nextPaperIDs := make(map[string]struct{}, len(next))
+	for _, ref := range next {
+		if strings.TrimSpace(ref.PaperID) == "" {
+			continue
+		}
+		nextPaperIDs[ref.PaperID] = struct{}{}
+	}
+	removed := make([]string, 0, len(existing))
+	seen := make(map[string]struct{}, len(existing))
+	for _, ref := range existing {
+		paperID := strings.TrimSpace(ref.PaperID)
+		if paperID == "" {
+			continue
+		}
+		if _, ok := nextPaperIDs[paperID]; ok {
+			continue
+		}
+		if _, ok := seen[paperID]; ok {
+			continue
+		}
+		seen[paperID] = struct{}{}
+		removed = append(removed, paperID)
+	}
+	return removed
 }
 
 func (a *Agent) planSession(ctx context.Context, store *storage.Store, sink EventSink, sessionID, goal string, approvalRequired bool) (protocol.PlanResult, *protocol.ExecutionState, error) {

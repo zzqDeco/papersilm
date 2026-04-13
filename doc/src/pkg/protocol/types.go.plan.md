@@ -19,6 +19,7 @@
 - 主要类型: `SourceType`、`SourceStatus`、`PermissionMode`、`OutputFormat`、`ArtifactFormat`、`ContentSource`、`WorkerProfile`、`NodeKind`、`NodeStatus`、`SourceInspection`、`PaperRef`、`AnchorKind`、`AnchorRef`、`PaperNote`、`PaperAnnotation`、`PaperResource`、`SimilarPaperRef`、`PaperWorkspace`、`TaskStatus`、`TaskActionType`、`TaskAction`、`TaskCard`、`TaskGroup`、`TaskBoard`、`Citation`、`KeyResult`、`PaperDigest`、`ComparisonMatrixRow`、`ComparisonDigest`、`PlanNode`、`PlanEdge`、`PlanDAG`、`NodeOutputRef`、`DagPatch`、`BatchStatus`、`ExecutionBatch`、`NodeExecutionState`、`ExecutionState`、`PlanStep`、`PlanResult`、`ApprovalRequest`、`PlanProgressStatus`、`PlanProgress`、`ArtifactManifest`、`SessionState`、`SessionMeta`、`SessionSnapshot`、`ClientRequest`、`RunResult`。
 - 前半部分覆盖来源、权限模式、输出格式、worker profile、node kind/status 和 workspace 相关基础对象。
 - 中段定义 `PaperDigest`、`ComparisonDigest`、`PaperWorkspace`、`TaskBoard`、`PlanDAG`、`ExecutionState` 等核心对象。
+- `TaskActionType` 现在同时承载 `inspect/run/approve/reject`，其中 `reject` 是 task board 与 CLI/GUI 共享的显式 task-level 拒绝动作。
 - `ExecutionState.StaleNodeIDs` 把 task rerun 的下游失效语义持久化为独立集合，而不是污染底层 `NodeStatus`。
 - 后半部分定义 `PlanResult`、`ApprovalRequest`、`PlanProgress`、`ArtifactManifest`、`SessionMeta`、`SessionSnapshot`、`RunResult` 等高层协作结构，其中 `PlanResult.TaskBoard` 与 `SessionSnapshot.TaskBoard` 是对外公开的 task 视图入口。
 

@@ -107,6 +107,8 @@ Useful slash commands:
 - `/workspace show <paper_id>`
 - `/workspace note add <paper_id> :: <body>`
 - `/workspace annotation add <paper_id> page|snippet|section <value> :: <body>`
+- `/tasks`
+- `/task show|run|approve|reject <id>`
 - `/plan [task]`
 - `/run`
 - `/approve`

@@ -17,10 +17,10 @@
 
 ## 4. 关键实现细节
 - 主要类型: `EventSink`、`Service`。
-- 关键函数/方法: `New`、`NewSession`、`LoadSession`、`LatestSession`、`Execute`、`RunPlanned`、`Approve`、`RunTask`、`ApproveTask`、`LoadTaskBoard`、`AttachSources`、`LoadWorkspaces`、`AddWorkspaceNote`、`AddWorkspaceAnnotation` 等。
+- 关键函数/方法: `New`、`NewSession`、`LoadSession`、`LatestSession`、`Execute`、`RunPlanned`、`Approve`、`RunTask`、`ApproveTask`、`RejectTask`、`LoadTaskBoard`、`AttachSources`、`LoadWorkspaces`、`AddWorkspaceNote`、`AddWorkspaceAnnotation` 等。
 - `NewSession()` 负责生成 session ID、写入初始元数据并发送初始化事件。
 - `Execute()` 会在缺少 session ID 时先创建会话，再把请求交给 Agent。
-- task board / task 执行相关方法只是门面转发，真正的编排逻辑仍留在 Agent。
+- task board / task 执行相关方法只是门面转发，真正的编排逻辑仍留在 Agent；`RejectTask()` 只是把显式 task-level reject 暴露给上层。
 - workspace 相关方法负责校验 paper 是否存在、生成 note/annotation 元数据，并通过存储层回写人工状态。
 - `emit()` 同时向 sink 和 session event log 写入事件。
 
