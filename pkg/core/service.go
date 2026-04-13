@@ -106,7 +106,11 @@ func (s *Service) RejectTask(ctx context.Context, sessionID, taskID, comment str
 }
 
 func (s *Service) ListSkills(sessionID string) ([]protocol.SkillDescriptor, error) {
-	return s.agent.ListSkills(sessionID)
+	meta, err := s.store.LoadMeta(sessionID)
+	if err != nil {
+		return nil, err
+	}
+	return s.agent.ListSkills(meta.Language)
 }
 
 func (s *Service) RunSkill(ctx context.Context, sessionID, skillName, targetID string) (protocol.SkillRunResult, error) {

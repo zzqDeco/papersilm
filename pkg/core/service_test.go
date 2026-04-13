@@ -752,6 +752,37 @@ func TestListSkillsReturnsBuiltinDescriptors(t *testing.T) {
 	}
 }
 
+func TestListSkillsLocalizesDescriptorsBySessionLanguage(t *testing.T) {
+	t.Parallel()
+
+	svc, _ := newTestService(t)
+
+	zhMeta, err := svc.NewSession(protocol.PermissionModePlan, "zh", "distill")
+	if err != nil {
+		t.Fatalf("NewSession(zh): %v", err)
+	}
+	enMeta, err := svc.NewSession(protocol.PermissionModePlan, "en", "distill")
+	if err != nil {
+		t.Fatalf("NewSession(en): %v", err)
+	}
+
+	zhDescriptors, err := svc.ListSkills(zhMeta.SessionID)
+	if err != nil {
+		t.Fatalf("ListSkills(zh): %v", err)
+	}
+	enDescriptors, err := svc.ListSkills(enMeta.SessionID)
+	if err != nil {
+		t.Fatalf("ListSkills(en): %v", err)
+	}
+
+	if zhDescriptors[0].Title != "审稿视角" || enDescriptors[0].Title != "Reviewer" {
+		t.Fatalf("expected localized reviewer titles, got zh=%q en=%q", zhDescriptors[0].Title, enDescriptors[0].Title)
+	}
+	if zhDescriptors[0].Summary == enDescriptors[0].Summary {
+		t.Fatalf("expected localized summaries, got zh=%q en=%q", zhDescriptors[0].Summary, enDescriptors[0].Summary)
+	}
+}
+
 func TestRunReviewerSkillDefaultTargetHydratesWorkspaceAndTaskBoard(t *testing.T) {
 	t.Parallel()
 
@@ -903,6 +934,9 @@ func TestRunAllSkillsProduceArtifacts(t *testing.T) {
 	if len(final.Session.SkillRuns) != 4 {
 		t.Fatalf("expected 4 visible skill runs, got %d", len(final.Session.SkillRuns))
 	}
+	if !contains(results[3].Run.PaperIDs, initial.Session.Workspaces[0].PaperID) || !contains(results[3].Run.PaperIDs, initial.Session.Workspaces[1].PaperID) {
+		t.Fatalf("expected compare refinement run to record paper_ids, got %+v", results[3].Run.PaperIDs)
+	}
 	reviewerTask, ok := findTaskByID(final.Session.TaskBoard, results[0].Run.RunID)
 	if !ok || reviewerTask.Kind != protocol.NodeKindReviewerSkill {
 		t.Fatalf("expected reviewer skill task, got %+v", reviewerTask)
@@ -932,6 +966,91 @@ func TestStyleReviewerRemainsLegacyStyle(t *testing.T) {
 	}
 	if len(result.Session.SkillRuns) != 0 {
 		t.Fatalf("expected legacy reviewer style to not auto-run skills, got %+v", result.Session.SkillRuns)
+	}
+}
+
+func TestRunSkillsRespectEnglishLanguage(t *testing.T) {
+	t.Parallel()
+
+	svc, _ := newTestService(t)
+	ctx := context.Background()
+
+	pdf1 := writeTestPDF(t, filepath.Join(t.TempDir(), "paper1.pdf"), "Paper One")
+	pdf2 := writeTestPDF(t, filepath.Join(t.TempDir(), "paper2.pdf"), "Paper Two")
+	initial, err := svc.Execute(ctx, protocol.ClientRequest{
+		Task:           "compare these papers",
+		Sources:        []string{pdf1, pdf2},
+		PermissionMode: protocol.PermissionModeAuto,
+		Language:       "en",
+		Style:          "distill",
+	})
+	if err != nil {
+		t.Fatalf("Execute(auto): %v", err)
+	}
+
+	targets := []struct {
+		name   protocol.SkillName
+		target string
+	}{
+		{name: protocol.SkillNameReviewer, target: initial.Session.Workspaces[0].PaperID},
+		{name: protocol.SkillNameEquationExplain, target: initial.Session.Workspaces[0].PaperID},
+		{name: protocol.SkillNameRelatedWorkMap, target: initial.Session.Workspaces[1].PaperID},
+		{name: protocol.SkillNameCompareRefinement, target: ""},
+	}
+	for _, spec := range targets {
+		result, err := svc.RunSkill(ctx, initial.Session.Meta.SessionID, string(spec.name), spec.target)
+		if err != nil {
+			t.Fatalf("RunSkill(%s): %v", spec.name, err)
+		}
+		if result.Artifact == nil {
+			t.Fatalf("expected artifact for %s", spec.name)
+		}
+		raw, err := os.ReadFile(result.Artifact.Paths["markdown"])
+		if err != nil {
+			t.Fatalf("ReadFile(%s): %v", result.Artifact.Paths["markdown"], err)
+		}
+		markdown := string(raw)
+		if containsCJK(markdown) {
+			t.Fatalf("expected english markdown for %s, got %q", spec.name, markdown)
+		}
+		if containsCJK(result.Run.Title) || containsCJK(result.Run.Summary) {
+			t.Fatalf("expected english run metadata for %s, got title=%q summary=%q", spec.name, result.Run.Title, result.Run.Summary)
+		}
+	}
+}
+
+func TestRunReviewerSkillKeepsChineseMarkdownInZhSession(t *testing.T) {
+	t.Parallel()
+
+	svc, _ := newTestService(t)
+	ctx := context.Background()
+
+	pdf := writeTestPDF(t, filepath.Join(t.TempDir(), "paper.pdf"), "Paper Reviewer Zh")
+	planned, err := svc.Execute(ctx, protocol.ClientRequest{
+		Task:           "inspect this paper",
+		Sources:        []string{pdf},
+		PermissionMode: protocol.PermissionModePlan,
+		Language:       "zh",
+		Style:          "distill",
+	})
+	if err != nil {
+		t.Fatalf("Execute(plan): %v", err)
+	}
+
+	result, err := svc.RunSkill(ctx, planned.Session.Meta.SessionID, string(protocol.SkillNameReviewer), "")
+	if err != nil {
+		t.Fatalf("RunSkill(reviewer): %v", err)
+	}
+	if result.Artifact == nil {
+		t.Fatalf("expected reviewer artifact")
+	}
+	raw, err := os.ReadFile(result.Artifact.Paths["markdown"])
+	if err != nil {
+		t.Fatalf("ReadFile(%s): %v", result.Artifact.Paths["markdown"], err)
+	}
+	markdown := string(raw)
+	if !strings.Contains(markdown, "# 审稿视角") || !strings.Contains(markdown, "## 摘要") {
+		t.Fatalf("expected localized Chinese markdown headings, got %q", markdown)
 	}
 }
 
@@ -1026,6 +1145,15 @@ func taskHasActions(task protocol.TaskCard, expected ...protocol.TaskActionType)
 func contains(values []string, target string) bool {
 	for _, value := range values {
 		if value == target {
+			return true
+		}
+	}
+	return false
+}
+
+func containsCJK(value string) bool {
+	for _, r := range value {
+		if r >= 0x4E00 && r <= 0x9FFF {
 			return true
 		}
 	}

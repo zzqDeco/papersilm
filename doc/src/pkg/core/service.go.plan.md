@@ -21,7 +21,7 @@
 - `NewSession()` 负责生成 session ID、写入初始元数据并发送初始化事件。
 - `Execute()` 会在缺少 session ID 时先创建会话，再把请求交给 Agent。
 - task board / task 执行相关方法只是门面转发，真正的编排逻辑仍留在 Agent；`RejectTask()` 只是把显式 task-level reject 暴露给上层。
-- skills 相关方法同样保持门面角色：descriptor 查询、同步 skill 执行和 run 读取都委托给 Agent / Store。
+- skills 相关方法同样保持门面角色：`ListSkills()` 会先读取 session language 再返回本地化 descriptor，skill 执行和 run 读取继续委托给 Agent / Store。
 - workspace 相关方法负责校验 paper 是否存在、生成 note/annotation 元数据，并通过存储层回写人工状态。
 - `emit()` 同时向 sink 和 session event log 写入事件。
 

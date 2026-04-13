@@ -199,6 +199,9 @@ func skillNodeKind(name protocol.SkillName) protocol.NodeKind {
 }
 
 func skillTaskTitle(run protocol.SkillRunRecord, workspaceByPaperID map[string]protocol.PaperWorkspace) string {
+	if strings.TrimSpace(run.Title) != "" {
+		return run.Title
+	}
 	target := run.TargetID
 	if run.TargetKind == protocol.SkillTargetKindComparison {
 		target = "comparison"

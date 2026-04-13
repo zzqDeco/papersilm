@@ -120,6 +120,8 @@ Useful slash commands:
 - `/export`
 - `/exit`
 
+`/skill list` and skill artifact markdown follow the current session language. Comparison-level skill runs stay visible across re-plan and `/lang` or `/style` changes as long as the current attached sources still cover the original paper set.
+
 ## Version
 
 `papersilm version` prints build metadata:
