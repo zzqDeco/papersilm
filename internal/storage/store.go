@@ -13,6 +13,7 @@ import (
 
 	"github.com/cloudwego/eino/adk"
 
+	"github.com/zzqDeco/papersilm/internal/taskboard"
 	"github.com/zzqDeco/papersilm/pkg/protocol"
 )
 
@@ -198,6 +199,14 @@ func (s *Store) SaveDigest(sessionID string, digest protocol.PaperDigest) error 
 	return s.saveJSON(filepath.Join(s.digestsDir(sessionID), digest.PaperID+".json"), digest)
 }
 
+func (s *Store) DeleteDigest(sessionID, paperID string) error {
+	err := os.Remove(filepath.Join(s.digestsDir(sessionID), paperID+".json"))
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	return err
+}
+
 func (s *Store) LoadDigests(sessionID string) ([]protocol.PaperDigest, error) {
 	entries, err := os.ReadDir(s.digestsDir(sessionID))
 	if errors.Is(err, os.ErrNotExist) {
@@ -227,6 +236,14 @@ func (s *Store) SaveComparison(sessionID string, cmp protocol.ComparisonDigest) 
 	return s.saveJSON(filepath.Join(s.artifactsDir(sessionID), "comparison.json"), cmp)
 }
 
+func (s *Store) DeleteComparison(sessionID string) error {
+	err := os.Remove(filepath.Join(s.artifactsDir(sessionID), "comparison.json"))
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	return err
+}
+
 func (s *Store) LoadComparison(sessionID string) (*protocol.ComparisonDigest, error) {
 	var cmp protocol.ComparisonDigest
 	err := s.loadJSON(filepath.Join(s.artifactsDir(sessionID), "comparison.json"), &cmp)
@@ -241,6 +258,49 @@ func (s *Store) LoadComparison(sessionID string) (*protocol.ComparisonDigest, er
 
 func (s *Store) SaveArtifactManifest(sessionID string, manifest protocol.ArtifactManifest) error {
 	return s.saveJSON(filepath.Join(s.artifactsDir(sessionID), manifest.ArtifactID+".manifest.json"), manifest)
+}
+
+func (s *Store) DeleteArtifact(sessionID, artifactID string) error {
+	manifestPath := filepath.Join(s.artifactsDir(sessionID), artifactID+".manifest.json")
+	var manifest protocol.ArtifactManifest
+	err := s.loadJSON(manifestPath, &manifest)
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	if err == nil {
+		for _, path := range manifest.Paths {
+			if removeErr := os.Remove(path); removeErr != nil && !errors.Is(removeErr, os.ErrNotExist) {
+				return removeErr
+			}
+		}
+	} else {
+		for _, fallback := range []string{
+			filepath.Join(s.artifactsDir(sessionID), artifactID+".md"),
+			filepath.Join(s.artifactsDir(sessionID), artifactID+".json"),
+		} {
+			if removeErr := os.Remove(fallback); removeErr != nil && !errors.Is(removeErr, os.ErrNotExist) {
+				return removeErr
+			}
+		}
+	}
+	if removeErr := os.Remove(manifestPath); removeErr != nil && !errors.Is(removeErr, os.ErrNotExist) {
+		return removeErr
+	}
+	return nil
+}
+
+func (s *Store) DeletePaperDigestArtifacts(sessionID, paperID string) error {
+	if err := s.DeleteDigest(sessionID, paperID); err != nil {
+		return err
+	}
+	return s.DeleteArtifact(sessionID, paperID)
+}
+
+func (s *Store) DeleteComparisonArtifacts(sessionID string) error {
+	if err := s.DeleteComparison(sessionID); err != nil {
+		return err
+	}
+	return s.DeleteArtifact(sessionID, "comparison")
 }
 
 func (s *Store) SaveWorkspaceState(sessionID string, workspace protocol.PaperWorkspace) error {
@@ -403,10 +463,15 @@ func (s *Store) Snapshot(sessionID string) (protocol.SessionSnapshot, error) {
 	if err != nil {
 		return protocol.SessionSnapshot{}, err
 	}
+	board := taskboard.Build(meta, plan, execution, artifacts, workspaces)
+	if plan != nil {
+		plan.TaskBoard = board
+	}
 	return protocol.SessionSnapshot{
 		Meta:       meta,
 		Sources:    sources,
 		Plan:       plan,
+		TaskBoard:  board,
 		Execution:  execution,
 		Digests:    digests,
 		Compare:    cmp,

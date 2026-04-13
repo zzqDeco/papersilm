@@ -9,7 +9,7 @@
 
 ## 2. 核心职责
 - 把论文处理目标和已检查来源编译成显式 DAG，定义单篇摘要、实验、数学、网页研究和多论文对比节点。
-- 维护 DAG 节点就绪状态、拓扑顺序投影和执行状态的初始快照。
+- 维护 DAG 节点就绪状态、拓扑顺序投影、stale 标记辅助逻辑和执行状态的初始快照。
 
 ## 3. 输入与输出
 - 输入来源: 用户目标文本、已检查的 `PaperRef` 列表，以及中间的 `taskSpec`。
@@ -17,10 +17,11 @@
 
 ## 4. 关键实现细节
 - 主要类型: `taskKind`、`taskSpec`。
-- 关键函数/方法: `buildTaskSpecs`、`compileDAG`、`newNode`、`projectSteps`、`firstProduce`、`topoSortedNodeIDs`、`buildExecutionState`、`refreshReadyNodes` 等。
+- 关键函数/方法: `buildTaskSpecs`、`compileDAG`、`newNode`、`projectSteps`、`firstProduce`、`topoSortedNodeIDs`、`buildExecutionState`、`refreshReadyNodes`、`selectBatchFromSet`、`resetExecutionNode` 等。
 - `buildTaskSpecs()` 会先过滤出可提取文本的来源，再决定是否追加 compare 任务。
 - `compileDAG()` 依据目标内容动态插入 `math_reasoner` / `web_research` 等可选节点。
 - `refreshReadyNodes()` 与 `topoSortedNodeIDs()` 负责把依赖关系转成可执行状态。
+- `selectBatchFromSet()`、`addStaleNodeID()`、`removeStaleNodeID()` 让执行器能在不改写底层 DAG 编译逻辑的前提下支持 task 级 scoped run 和 rerun stale 语义。
 
 ## 5. 依赖关系
 - 内部依赖: `pkg/protocol`

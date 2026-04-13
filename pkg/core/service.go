@@ -85,6 +85,22 @@ func (s *Service) Approve(ctx context.Context, sessionID string, approved bool, 
 	return s.agent.Approve(ctx, s.store, s.sink, sessionID, approved, comment)
 }
 
+func (s *Service) LoadTaskBoard(sessionID string) (*protocol.TaskBoard, error) {
+	snapshot, err := s.store.Snapshot(sessionID)
+	if err != nil {
+		return nil, err
+	}
+	return snapshot.TaskBoard, nil
+}
+
+func (s *Service) RunTask(ctx context.Context, sessionID, taskID, lang, style string) (protocol.RunResult, error) {
+	return s.agent.RunTask(ctx, s.store, s.sink, sessionID, taskID, lang, style)
+}
+
+func (s *Service) ApproveTask(ctx context.Context, sessionID, taskID string, approved bool, comment string) (protocol.RunResult, error) {
+	return s.agent.ApproveTask(ctx, s.store, s.sink, sessionID, taskID, approved, comment)
+}
+
 func (s *Service) AttachSources(ctx context.Context, sessionID string, sources []string, replace bool) (protocol.SessionSnapshot, error) {
 	return s.agent.AttachSources(ctx, s.store, s.sink, sessionID, sources, replace)
 }
