@@ -208,6 +208,7 @@ type SkillRunRecord struct {
 	SkillName  SkillName       `json:"skill_name"`
 	TargetKind SkillTargetKind `json:"target_kind"`
 	TargetID   string          `json:"target_id"`
+	PaperIDs   []string        `json:"paper_ids,omitempty"`
 	ArtifactID string          `json:"artifact_id,omitempty"`
 	Status     SkillRunStatus  `json:"status"`
 	Title      string          `json:"title"`

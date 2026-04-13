@@ -1,6 +1,9 @@
 package storage
 
 import (
+	"os"
+	"path/filepath"
+	"reflect"
 	"testing"
 	"time"
 
@@ -621,6 +624,234 @@ func TestSnapshotHidesPaperSkillRunsWhenSourceRemoved(t *testing.T) {
 	}
 	if len(snapshot.Workspaces) != 0 {
 		t.Fatalf("expected no workspaces after source removal, got %+v", snapshot.Workspaces)
+	}
+}
+
+func TestSnapshotKeepsComparisonSkillRunsVisibleAfterPlanInvalidation(t *testing.T) {
+	t.Parallel()
+
+	store := New(t.TempDir())
+	if err := store.Ensure(); err != nil {
+		t.Fatalf("Ensure: %v", err)
+	}
+
+	now := time.Now().UTC()
+	meta := protocol.SessionMeta{
+		SessionID:      "sess_cmp_visible",
+		State:          protocol.SessionStateCompleted,
+		PermissionMode: protocol.PermissionModeAuto,
+		Language:       "zh",
+		Style:          "distill",
+		CreatedAt:      now,
+		UpdatedAt:      now,
+	}
+	if err := store.CreateSession(meta); err != nil {
+		t.Fatalf("CreateSession: %v", err)
+	}
+	sources := []protocol.PaperRef{
+		{PaperID: "paper_1", URI: "/tmp/paper1.pdf", LocalPath: "/tmp/paper1.pdf", SourceType: protocol.SourceTypeLocalPDF, Status: protocol.SourceStatusAttached},
+		{PaperID: "paper_2", URI: "/tmp/paper2.pdf", LocalPath: "/tmp/paper2.pdf", SourceType: protocol.SourceTypeLocalPDF, Status: protocol.SourceStatusAttached},
+	}
+	if err := store.SaveSources(meta.SessionID, sources); err != nil {
+		t.Fatalf("SaveSources: %v", err)
+	}
+	if err := store.SavePlan(meta.SessionID, protocol.PlanResult{PlanID: "plan_cmp", Goal: "compare", CreatedAt: now}); err != nil {
+		t.Fatalf("SavePlan: %v", err)
+	}
+	if err := store.SaveComparison(meta.SessionID, protocol.ComparisonDigest{
+		PaperIDs:    []string{"paper_1", "paper_2"},
+		Goal:        "compare",
+		Language:    "zh",
+		Style:       "distill",
+		GeneratedAt: now,
+	}); err != nil {
+		t.Fatalf("SaveComparison: %v", err)
+	}
+	if err := store.SaveSkillRun(meta.SessionID, protocol.SkillRunRecord{
+		RunID:      "skill_cmp",
+		SessionID:  meta.SessionID,
+		SkillName:  protocol.SkillNameCompareRefinement,
+		TargetKind: protocol.SkillTargetKindComparison,
+		TargetID:   "comparison",
+		PaperIDs:   []string{"paper_1", "paper_2"},
+		ArtifactID: "skill_cmp",
+		Status:     protocol.SkillRunStatusCompleted,
+		Title:      "对比精炼: 对比",
+		CreatedAt:  now,
+		UpdatedAt:  now,
+	}); err != nil {
+		t.Fatalf("SaveSkillRun: %v", err)
+	}
+	if err := store.SaveSkillArtifactManifest(meta.SessionID, protocol.ArtifactManifest{
+		ArtifactID: "skill_cmp",
+		SessionID:  meta.SessionID,
+		Kind:       "compare_refinement_skill",
+		Paths:      map[string]string{"markdown": "/tmp/skill_cmp.md"},
+		Metadata:   map[string]interface{}{"paper_ids": []string{"paper_1", "paper_2"}},
+		CreatedAt:  now,
+	}); err != nil {
+		t.Fatalf("SaveSkillArtifactManifest: %v", err)
+	}
+
+	if err := store.InvalidatePlanState(meta.SessionID); err != nil {
+		t.Fatalf("InvalidatePlanState: %v", err)
+	}
+
+	snapshot, err := store.Snapshot(meta.SessionID)
+	if err != nil {
+		t.Fatalf("Snapshot: %v", err)
+	}
+	if len(snapshot.SkillRuns) != 1 || len(snapshot.SkillArtifacts) != 1 {
+		t.Fatalf("expected comparison skill assets to stay visible, got runs=%d artifacts=%d", len(snapshot.SkillRuns), len(snapshot.SkillArtifacts))
+	}
+	if !reflect.DeepEqual(snapshot.SkillRuns[0].PaperIDs, []string{"paper_1", "paper_2"}) {
+		t.Fatalf("expected paper_ids to survive hydration, got %+v", snapshot.SkillRuns[0].PaperIDs)
+	}
+	if snapshot.TaskBoard == nil {
+		t.Fatalf("expected task board after invalidation when comparison skill run remains visible")
+	}
+	task, ok := findTask(snapshot.TaskBoard, "skill_cmp")
+	if !ok || task.Kind != protocol.NodeKindCompareRefinement {
+		t.Fatalf("expected compare refinement task in task board, got %+v", task)
+	}
+}
+
+func TestSnapshotHidesComparisonSkillRunsWhenPaperSetChanges(t *testing.T) {
+	t.Parallel()
+
+	store := New(t.TempDir())
+	if err := store.Ensure(); err != nil {
+		t.Fatalf("Ensure: %v", err)
+	}
+
+	now := time.Now().UTC()
+	meta := protocol.SessionMeta{
+		SessionID:      "sess_cmp_hidden",
+		State:          protocol.SessionStateCompleted,
+		PermissionMode: protocol.PermissionModeAuto,
+		Language:       "zh",
+		Style:          "distill",
+		CreatedAt:      now,
+		UpdatedAt:      now,
+	}
+	if err := store.CreateSession(meta); err != nil {
+		t.Fatalf("CreateSession: %v", err)
+	}
+	if err := store.SaveSources(meta.SessionID, []protocol.PaperRef{
+		{PaperID: "paper_1", URI: "/tmp/paper1.pdf", LocalPath: "/tmp/paper1.pdf", SourceType: protocol.SourceTypeLocalPDF, Status: protocol.SourceStatusAttached},
+		{PaperID: "paper_2", URI: "/tmp/paper2.pdf", LocalPath: "/tmp/paper2.pdf", SourceType: protocol.SourceTypeLocalPDF, Status: protocol.SourceStatusAttached},
+	}); err != nil {
+		t.Fatalf("SaveSources: %v", err)
+	}
+	if err := store.SaveSkillRun(meta.SessionID, protocol.SkillRunRecord{
+		RunID:      "skill_cmp",
+		SessionID:  meta.SessionID,
+		SkillName:  protocol.SkillNameCompareRefinement,
+		TargetKind: protocol.SkillTargetKindComparison,
+		TargetID:   "comparison",
+		PaperIDs:   []string{"paper_1", "paper_2"},
+		ArtifactID: "skill_cmp",
+		Status:     protocol.SkillRunStatusCompleted,
+		Title:      "对比精炼: 对比",
+		CreatedAt:  now,
+		UpdatedAt:  now,
+	}); err != nil {
+		t.Fatalf("SaveSkillRun: %v", err)
+	}
+	if err := store.SaveSkillArtifactManifest(meta.SessionID, protocol.ArtifactManifest{
+		ArtifactID: "skill_cmp",
+		SessionID:  meta.SessionID,
+		Kind:       "compare_refinement_skill",
+		Paths:      map[string]string{"markdown": "/tmp/skill_cmp.md"},
+		Metadata:   map[string]interface{}{"paper_ids": []string{"paper_1", "paper_2"}},
+		CreatedAt:  now,
+	}); err != nil {
+		t.Fatalf("SaveSkillArtifactManifest: %v", err)
+	}
+
+	if err := store.SaveSources(meta.SessionID, []protocol.PaperRef{
+		{PaperID: "paper_1", URI: "/tmp/paper1.pdf", LocalPath: "/tmp/paper1.pdf", SourceType: protocol.SourceTypeLocalPDF, Status: protocol.SourceStatusAttached},
+	}); err != nil {
+		t.Fatalf("SaveSources(update): %v", err)
+	}
+
+	snapshot, err := store.Snapshot(meta.SessionID)
+	if err != nil {
+		t.Fatalf("Snapshot: %v", err)
+	}
+	if len(snapshot.SkillRuns) != 0 || len(snapshot.SkillArtifacts) != 0 {
+		t.Fatalf("expected comparison skill assets to hide after source-set change, got runs=%d artifacts=%d", len(snapshot.SkillRuns), len(snapshot.SkillArtifacts))
+	}
+}
+
+func TestSnapshotHydratesLegacyComparisonSkillPaperIDsFromArtifactJSON(t *testing.T) {
+	t.Parallel()
+
+	store := New(t.TempDir())
+	if err := store.Ensure(); err != nil {
+		t.Fatalf("Ensure: %v", err)
+	}
+
+	now := time.Now().UTC()
+	meta := protocol.SessionMeta{
+		SessionID:      "sess_cmp_legacy",
+		State:          protocol.SessionStateCompleted,
+		PermissionMode: protocol.PermissionModeAuto,
+		Language:       "zh",
+		Style:          "distill",
+		CreatedAt:      now,
+		UpdatedAt:      now,
+	}
+	if err := store.CreateSession(meta); err != nil {
+		t.Fatalf("CreateSession: %v", err)
+	}
+	if err := store.SaveSources(meta.SessionID, []protocol.PaperRef{
+		{PaperID: "paper_1", URI: "/tmp/paper1.pdf", LocalPath: "/tmp/paper1.pdf", SourceType: protocol.SourceTypeLocalPDF, Status: protocol.SourceStatusAttached},
+		{PaperID: "paper_2", URI: "/tmp/paper2.pdf", LocalPath: "/tmp/paper2.pdf", SourceType: protocol.SourceTypeLocalPDF, Status: protocol.SourceStatusAttached},
+	}); err != nil {
+		t.Fatalf("SaveSources: %v", err)
+	}
+	if err := store.SaveSkillRun(meta.SessionID, protocol.SkillRunRecord{
+		RunID:      "skill_cmp",
+		SessionID:  meta.SessionID,
+		SkillName:  protocol.SkillNameCompareRefinement,
+		TargetKind: protocol.SkillTargetKindComparison,
+		TargetID:   "comparison",
+		ArtifactID: "skill_cmp",
+		Status:     protocol.SkillRunStatusCompleted,
+		Title:      "对比精炼: 对比",
+		CreatedAt:  now,
+		UpdatedAt:  now,
+	}); err != nil {
+		t.Fatalf("SaveSkillRun: %v", err)
+	}
+
+	jsonPath := filepath.Join(store.skillArtifactsDir(meta.SessionID), "skill_cmp.json")
+	if err := os.WriteFile(jsonPath, []byte("{\n  \"paper_ids\": [\"paper_1\", \"paper_2\"]\n}\n"), 0o644); err != nil {
+		t.Fatalf("WriteFile(skill json): %v", err)
+	}
+	if err := store.SaveSkillArtifactManifest(meta.SessionID, protocol.ArtifactManifest{
+		ArtifactID: "skill_cmp",
+		SessionID:  meta.SessionID,
+		Kind:       "compare_refinement_skill",
+		Paths: map[string]string{
+			"markdown": filepath.Join(store.skillArtifactsDir(meta.SessionID), "skill_cmp.md"),
+			"json":     jsonPath,
+		},
+		CreatedAt: now,
+	}); err != nil {
+		t.Fatalf("SaveSkillArtifactManifest: %v", err)
+	}
+
+	snapshot, err := store.Snapshot(meta.SessionID)
+	if err != nil {
+		t.Fatalf("Snapshot: %v", err)
+	}
+	if len(snapshot.SkillRuns) != 1 {
+		t.Fatalf("expected legacy comparison skill run to remain visible, got %+v", snapshot.SkillRuns)
+	}
+	if !reflect.DeepEqual(snapshot.SkillRuns[0].PaperIDs, []string{"paper_1", "paper_2"}) {
+		t.Fatalf("expected hydrated paper_ids from artifact json, got %+v", snapshot.SkillRuns[0].PaperIDs)
 	}
 }
 
