@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/zzqDeco/papersilm/internal/agent"
+	"github.com/zzqDeco/papersilm/internal/config"
 	"github.com/zzqDeco/papersilm/internal/storage"
 	"github.com/zzqDeco/papersilm/pkg/protocol"
 )
@@ -18,13 +19,15 @@ type EventSink interface {
 }
 
 type Service struct {
+	cfg   config.Config
 	store *storage.Store
 	agent *agent.Agent
 	sink  EventSink
 }
 
-func New(store *storage.Store, ag *agent.Agent, sink EventSink) *Service {
+func New(cfg config.Config, store *storage.Store, ag *agent.Agent, sink EventSink) *Service {
 	return &Service{
+		cfg:   cfg,
 		store: store,
 		agent: ag,
 		sink:  sink,
@@ -34,13 +37,15 @@ func New(store *storage.Store, ag *agent.Agent, sink EventSink) *Service {
 func (s *Service) NewSession(mode protocol.PermissionMode, lang, style string) (protocol.SessionMeta, error) {
 	now := time.Now().UTC()
 	meta := protocol.SessionMeta{
-		SessionID:      newSessionID(),
-		State:          protocol.SessionStateIdle,
-		PermissionMode: mode,
-		Language:       lang,
-		Style:          style,
-		CreatedAt:      now,
-		UpdatedAt:      now,
+		SessionID:       newSessionID(),
+		State:           protocol.SessionStateIdle,
+		PermissionMode:  mode,
+		ProviderProfile: s.cfg.ActiveProviderName(),
+		Model:           s.cfg.ActiveProviderConfig().Model,
+		Language:        lang,
+		Style:           style,
+		CreatedAt:       now,
+		UpdatedAt:       now,
 	}
 	if err := s.store.CreateSession(meta); err != nil {
 		return meta, err

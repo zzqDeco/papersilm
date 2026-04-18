@@ -511,6 +511,8 @@ type SessionMeta struct {
 	Name               string         `json:"name,omitempty"`
 	State              SessionState   `json:"state"`
 	PermissionMode     PermissionMode `json:"permission_mode"`
+	ProviderProfile    string         `json:"provider_profile,omitempty"`
+	Model              string         `json:"model,omitempty"`
 	Language           string         `json:"language"`
 	Style              string         `json:"style"`
 	LastTask           string         `json:"last_task,omitempty"`

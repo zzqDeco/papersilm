@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"bufio"
 	"context"
 	"encoding/json"
 	"errors"
@@ -523,6 +524,40 @@ func (s *Store) AppendEvent(sessionID string, event protocol.StreamEvent) error 
 	defer f.Close()
 	_, err = fmt.Fprintln(f, string(raw))
 	return err
+}
+
+func (s *Store) LoadRecentEvents(sessionID string, limit int) ([]protocol.StreamEvent, error) {
+	raw, err := os.ReadFile(s.eventsPath(sessionID))
+	if errors.Is(err, os.ErrNotExist) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	if limit <= 0 {
+		limit = 200
+	}
+
+	scanner := bufio.NewScanner(strings.NewReader(string(raw)))
+	events := make([]protocol.StreamEvent, 0, limit)
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if line == "" {
+			continue
+		}
+		var event protocol.StreamEvent
+		if err := json.Unmarshal([]byte(line), &event); err != nil {
+			continue
+		}
+		events = append(events, event)
+	}
+	if err := scanner.Err(); err != nil {
+		return nil, err
+	}
+	if len(events) <= limit {
+		return events, nil
+	}
+	return append([]protocol.StreamEvent(nil), events[len(events)-limit:]...), nil
 }
 
 func (s *Store) Snapshot(sessionID string) (protocol.SessionSnapshot, error) {
