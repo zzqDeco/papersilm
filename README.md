@@ -50,6 +50,27 @@ The config file is written to `~/.papersilm/config.yaml`.
 
 If no external provider is configured, `papersilm` falls back to a local deterministic tool-calling model so `plan`, `confirm`, `approve`, and `run` still work end-to-end.
 
+Provider config now supports named profiles plus one active profile:
+
+```yaml
+active_provider: local-openai
+providers:
+  local-openai:
+    provider: openai
+    model: gpt-5.4
+    base_url: http://127.0.0.1:8317/v1
+    api_key: <token>
+    timeout: 2m
+provider:
+  provider: openai
+  model: gpt-5.4
+  base_url: http://127.0.0.1:8317/v1
+  api_key: <token>
+  timeout: 2m
+```
+
+Older single-provider configs still load and are migrated in memory to `providers.default`.
+
 ## CLI Modes
 
 `papersilm` supports three execution modes:
@@ -98,8 +119,17 @@ Interactive mode:
 papersilm
 ```
 
+When `papersilm` starts in an interactive TTY with `--output-format text`, it now opens the fullscreen TUI by default. It falls back to the legacy line REPL only when one of these is true:
+
+- `-p/--print` is set
+- `--output-format` is `json` or `stream-json`
+- stdin/stdout are not TTYs
+- `TERM=dumb`
+
 Useful slash commands:
 
+- `/commands`
+- `/model`
 - `/source add <uri>`
 - `/source replace <uri>`
 - `/source list`
@@ -121,6 +151,16 @@ Useful slash commands:
 - `/exit`
 
 `/skill list` and skill artifact markdown follow the current session language. Comparison-level skill runs stay visible across re-plan and `/lang` or `/style` changes as long as the current attached sources still cover the original paper set.
+
+Useful TUI shortcuts:
+
+- `Enter`: submit current input
+- `Ctrl+J`: insert newline
+- `Tab`: apply the selected suggestion
+- `Ctrl+K`: open command palette
+- `Esc`: close the active pane, modal, or suggestion list
+- `PgUp` / `PgDn`: scroll the timeline or active pane
+- `Ctrl+C`: quit
 
 ## Version
 
