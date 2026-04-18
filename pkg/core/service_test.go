@@ -752,6 +752,42 @@ func TestListSkillsReturnsBuiltinDescriptors(t *testing.T) {
 	}
 }
 
+func TestNewSessionCopiesActiveProviderProfileAndModel(t *testing.T) {
+	t.Parallel()
+
+	cfg := config.Default()
+	cfg.BaseDir = t.TempDir()
+	cfg.ActiveProvider = "local-openai"
+	cfg.Providers = map[string]config.ProviderConfig{
+		"local-openai": {
+			Provider: config.ProviderOpenAI,
+			Model:    "gpt-5.4",
+			BaseURL:  "http://127.0.0.1:8317/v1",
+			APIKey:   "local-test",
+			Timeout:  "2m",
+		},
+	}
+	cfg.Provider = cfg.Providers[cfg.ActiveProvider]
+
+	store := storage.New(cfg.BaseDir)
+	if err := store.Ensure(); err != nil {
+		t.Fatalf("Ensure: %v", err)
+	}
+	sink := &testSink{}
+	p := pipeline.New(cfg)
+	registry := tools.New(p)
+	ag := agent.New(registry, cfg)
+	svc := New(cfg, store, ag, sink)
+
+	meta, err := svc.NewSession(protocol.PermissionModePlan, "zh", "distill")
+	if err != nil {
+		t.Fatalf("NewSession: %v", err)
+	}
+	if meta.ProviderProfile != "local-openai" || meta.Model != "gpt-5.4" {
+		t.Fatalf("expected provider/model copied from config, got %+v", meta)
+	}
+}
+
 func TestListSkillsLocalizesDescriptorsBySessionLanguage(t *testing.T) {
 	t.Parallel()
 
@@ -1067,7 +1103,7 @@ func newTestService(t *testing.T) (*Service, *testSink) {
 	p := pipeline.New(cfg)
 	registry := tools.New(p)
 	ag := agent.New(registry, cfg)
-	return New(store, ag, sink), sink
+	return New(cfg, store, ag, sink), sink
 }
 
 func writeTestPDF(t *testing.T, path, title string) string {

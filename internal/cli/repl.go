@@ -83,10 +83,10 @@ func handleSlash(ctx context.Context, svc *core.Service, store *storage.Store, s
 	}
 	switch fields[0] {
 	case "/help":
-		_, err := fmt.Fprintln(os.Stdout, "/help, /plan [task], /approve, /run, /tasks, /task show|run|approve|reject, /skill list|run|show, /lang <zh|en|both>, /style <distill|ultra|reviewer(legacy)>, /source add|replace|list|remove, /workspace list|show|note add|annotation add, /session name <name>, /export, /clear, /exit")
+		_, err := fmt.Fprintln(out.w, "/help, /plan [task], /approve, /run, /tasks, /task show|run|approve|reject, /skill list|run|show, /lang <zh|en|both>, /style <distill|ultra|reviewer(legacy)>, /source add|replace|list|remove, /workspace list|show|note add|annotation add, /session name <name>, /export, /clear, /exit")
 		return err
 	case "/clear":
-		_, err := fmt.Fprintln(os.Stdout, strings.Repeat("-", 72))
+		_, err := fmt.Fprintln(out.w, strings.Repeat("-", 72))
 		return err
 	case "/lang":
 		if len(fields) < 2 {
@@ -156,7 +156,7 @@ func handleSlash(ctx context.Context, svc *core.Service, store *storage.Store, s
 		return out.PrintResult(result)
 	case "/export":
 		for _, artifact := range session.Artifacts {
-			fmt.Fprintf(os.Stdout, "- %s: %s\n", artifact.ArtifactID, artifact.Paths["markdown"])
+			fmt.Fprintf(out.w, "- %s: %s\n", artifact.ArtifactID, artifact.Paths["markdown"])
 		}
 		return nil
 	default:
@@ -171,7 +171,7 @@ func handleSourceCommand(ctx context.Context, svc *core.Service, store *storage.
 	switch fields[1] {
 	case "list":
 		for _, src := range session.Sources {
-			fmt.Fprintf(os.Stdout, "- %s %s (%s)\n", src.PaperID, src.URI, src.Status)
+			fmt.Fprintf(out.w, "- %s %s (%s)\n", src.PaperID, src.URI, src.Status)
 		}
 		return nil
 	case "add":

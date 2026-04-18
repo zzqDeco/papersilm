@@ -2,19 +2,12 @@ package cli
 
 import (
 	"context"
-	"errors"
 	"fmt"
-	"os"
 
 	"github.com/spf13/cobra"
 
-	"github.com/zzqDeco/papersilm/internal/agent"
 	"github.com/zzqDeco/papersilm/internal/config"
-	"github.com/zzqDeco/papersilm/internal/pipeline"
-	"github.com/zzqDeco/papersilm/internal/storage"
-	"github.com/zzqDeco/papersilm/internal/tools"
 	"github.com/zzqDeco/papersilm/internal/version"
-	"github.com/zzqDeco/papersilm/pkg/core"
 	"github.com/zzqDeco/papersilm/pkg/protocol"
 )
 
@@ -36,7 +29,7 @@ func NewRootCommand(ctx context.Context) *cobra.Command {
 		Short:   "Paper-focused document agent CLI",
 		Version: version.Version,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			cfg, store, svc, out, err := buildRuntime(ctx, outputFormat)
+			cfg, err := loadConfig()
 			if err != nil {
 				return err
 			}
@@ -59,21 +52,38 @@ func NewRootCommand(ctx context.Context) *cobra.Command {
 				style = cfg.DefaultStyle
 			}
 
-			var snapshot protocol.SessionSnapshot
-			switch {
-			case resumeID != "":
-				snapshot, err = svc.LoadSession(resumeID)
-				if err != nil {
-					return err
-				}
-			case continueLatest:
-				snapshot, err = svc.LatestSession()
-				if err != nil && !errors.Is(err, os.ErrNotExist) {
-					return err
+			if shouldUseTUI(protocol.OutputFormat(outputFormat), printTask) {
+				if err := RunTUI(ctx, TUIOptions{
+					Config:         cfg,
+					ContinueLatest: continueLatest,
+					ResumeID:       resumeID,
+					Mode:           mode,
+					Lang:           lang,
+					Style:          style,
+				}); err == nil {
+					return nil
 				}
 			}
 
+			cfg, store, svc, out, err := buildRuntime(ctx, outputFormat)
+			if err != nil {
+				return err
+			}
+
 			if printTask != "" {
+				var snapshot protocol.SessionSnapshot
+				switch {
+				case resumeID != "":
+					snapshot, err = svc.LoadSession(resumeID)
+					if err != nil {
+						return err
+					}
+				case continueLatest:
+					snapshot, err = svc.LatestSession()
+					if err != nil {
+						return err
+					}
+				}
 				req := protocol.ClientRequest{
 					Task:           printTask,
 					Sources:        sourceArgs,
@@ -91,15 +101,9 @@ func NewRootCommand(ctx context.Context) *cobra.Command {
 				return out.PrintResult(result)
 			}
 
-			if snapshot.Meta.SessionID == "" {
-				meta, err := svc.NewSession(mode, lang, style)
-				if err != nil {
-					return err
-				}
-				snapshot, err = store.Snapshot(meta.SessionID)
-				if err != nil {
-					return err
-				}
+			snapshot, err := prepareSessionSnapshot(ctx, svc, store, mode, lang, style, continueLatest, resumeID)
+			if err != nil {
+				return err
 			}
 			return RunREPL(ctx, svc, store, snapshot, out)
 		},
@@ -128,23 +132,4 @@ func newVersionCommand() *cobra.Command {
 			return err
 		},
 	}
-}
-
-func buildRuntime(ctx context.Context, outputFormat string) (config.Config, *storage.Store, *core.Service, *OutputWriter, error) {
-	cfgPath := config.ConfigPath("")
-	cfg, err := config.Load(cfgPath)
-	if err != nil {
-		return config.Config{}, nil, nil, nil, err
-	}
-	store := storage.New(cfg.BaseDir)
-	if err := store.Ensure(); err != nil {
-		return config.Config{}, nil, nil, nil, err
-	}
-	out := NewOutputWriter(os.Stdout, protocol.OutputFormat(outputFormat))
-	p := pipeline.New(cfg)
-	registry := tools.New(p)
-	ag := agent.New(registry, cfg)
-	svc := core.New(store, ag, out)
-	_ = ctx
-	return cfg, store, svc, out, nil
 }

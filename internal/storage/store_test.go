@@ -855,6 +855,63 @@ func TestSnapshotHydratesLegacyComparisonSkillPaperIDsFromArtifactJSON(t *testin
 	}
 }
 
+func TestLoadRecentEventsReturnsNewestValidEvents(t *testing.T) {
+	t.Parallel()
+
+	store := New(t.TempDir())
+	if err := store.Ensure(); err != nil {
+		t.Fatalf("Ensure: %v", err)
+	}
+
+	meta := protocol.SessionMeta{
+		SessionID:      "sess_events",
+		State:          protocol.SessionStateIdle,
+		PermissionMode: protocol.PermissionModeConfirm,
+		Language:       "zh",
+		Style:          "distill",
+		CreatedAt:      time.Now().UTC(),
+		UpdatedAt:      time.Now().UTC(),
+	}
+	if err := store.CreateSession(meta); err != nil {
+		t.Fatalf("CreateSession: %v", err)
+	}
+	for _, eventType := range []protocol.StreamEventType{
+		protocol.EventInit,
+		protocol.EventPlan,
+		protocol.EventResult,
+	} {
+		if err := store.AppendEvent(meta.SessionID, protocol.StreamEvent{
+			Type:      eventType,
+			SessionID: meta.SessionID,
+			Message:   string(eventType),
+			CreatedAt: time.Now().UTC(),
+		}); err != nil {
+			t.Fatalf("AppendEvent(%s): %v", eventType, err)
+		}
+	}
+	f, err := os.OpenFile(store.eventsPath(meta.SessionID), os.O_APPEND|os.O_WRONLY, 0o644)
+	if err != nil {
+		t.Fatalf("OpenFile(events): %v", err)
+	}
+	if _, err := f.WriteString("{broken json}\n"); err != nil {
+		t.Fatalf("WriteString(bad line): %v", err)
+	}
+	if err := f.Close(); err != nil {
+		t.Fatalf("Close(events): %v", err)
+	}
+
+	events, err := store.LoadRecentEvents(meta.SessionID, 2)
+	if err != nil {
+		t.Fatalf("LoadRecentEvents: %v", err)
+	}
+	if len(events) != 2 {
+		t.Fatalf("expected 2 recent events, got %+v", events)
+	}
+	if events[0].Type != protocol.EventPlan || events[1].Type != protocol.EventResult {
+		t.Fatalf("expected newest valid events, got %+v", events)
+	}
+}
+
 func workspaceHasResource(workspace protocol.PaperWorkspace, uri string) bool {
 	for _, resource := range workspace.Resources {
 		if resource.URI == uri {
