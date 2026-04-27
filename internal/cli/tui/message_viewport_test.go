@@ -62,3 +62,24 @@ func TestMessageViewportCachesByStableKey(t *testing.T) {
 		t.Fatalf("expected keyed replace, ok=%v content=%q", ok, replaced)
 	}
 }
+
+func TestMessageViewportAnchorSurvivesReflow(t *testing.T) {
+	t.Parallel()
+
+	var viewport MessageViewport
+	viewport.ContentByKey(20, []string{"a", "b", "c"}, func(index int, width int) string {
+		return []string{"one", "two\nline", "three"}[index]
+	})
+	anchor, ok := viewport.AnchorAt(2)
+	if !ok || anchor.Key != "b" || anchor.Delta != 0 {
+		t.Fatalf("unexpected anchor: %+v ok=%v", anchor, ok)
+	}
+
+	viewport.ContentByKey(10, []string{"a", "b", "c"}, func(index int, width int) string {
+		return []string{"one\nwrap", "two\nline\nwrap", "three"}[index]
+	})
+	offset, ok := viewport.OffsetForAnchor(anchor)
+	if !ok || offset != 3 {
+		t.Fatalf("expected anchor to resolve after reflow, offset=%d ok=%v", offset, ok)
+	}
+}

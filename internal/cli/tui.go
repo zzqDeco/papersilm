@@ -1524,10 +1524,17 @@ func (m *tuiModel) reflow() {
 
 	m.timeline.Width = max(20, width-2)
 	m.timeline.Height = timelineHeight
+	anchor, hasAnchor := m.messageViewport.AnchorAt(m.timeline.YOffset)
 	m.timeline.SetContent(m.renderTimelineContent(m.timeline.Width))
 	if m.autoScroll || wasPinned {
 		m.timeline.GotoBottom()
 		m.unread = 0
+	} else if hasAnchor {
+		if offset, ok := m.messageViewport.OffsetForAnchor(anchor); ok {
+			m.timeline.SetYOffset(offset)
+		} else {
+			m.timeline.SetYOffset(max(0, m.timeline.TotalLineCount()-m.timeline.Height-bottomGap))
+		}
 	} else {
 		m.timeline.SetYOffset(max(0, m.timeline.TotalLineCount()-m.timeline.Height-bottomGap))
 	}

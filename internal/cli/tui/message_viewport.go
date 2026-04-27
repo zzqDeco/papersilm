@@ -8,6 +8,11 @@ type MessageViewport struct {
 	keys     []string
 }
 
+type ViewportAnchor struct {
+	Key   string
+	Delta int
+}
+
 func (v *MessageViewport) Reset() {
 	v.width = 0
 	v.rendered = nil
@@ -89,6 +94,63 @@ func (v *MessageViewport) ReplaceLastByKey(width int, key string, rendered strin
 	}
 	v.rendered[len(v.rendered)-1] = rendered
 	return strings.Join(v.rendered, "\n\n"), true
+}
+
+func (v *MessageViewport) AnchorAt(offset int) (ViewportAnchor, bool) {
+	if len(v.keys) == 0 || len(v.keys) != len(v.rendered) {
+		return ViewportAnchor{}, false
+	}
+	starts := v.lineStarts()
+	if len(starts) == 0 {
+		return ViewportAnchor{}, false
+	}
+	if offset < 0 {
+		offset = 0
+	}
+	idx := 0
+	for i, start := range starts {
+		if start > offset {
+			break
+		}
+		idx = i
+	}
+	return ViewportAnchor{Key: v.keys[idx], Delta: offset - starts[idx]}, true
+}
+
+func (v *MessageViewport) OffsetForAnchor(anchor ViewportAnchor) (int, bool) {
+	if anchor.Key == "" || len(v.keys) == 0 || len(v.keys) != len(v.rendered) {
+		return 0, false
+	}
+	starts := v.lineStarts()
+	for i, key := range v.keys {
+		if key != anchor.Key {
+			continue
+		}
+		height := lineCount(v.rendered[i])
+		delta := clamp(anchor.Delta, 0, max(0, height-1))
+		return starts[i] + delta, true
+	}
+	return 0, false
+}
+
+func (v *MessageViewport) lineStarts() []int {
+	starts := make([]int, 0, len(v.rendered))
+	line := 0
+	for i, rendered := range v.rendered {
+		starts = append(starts, line)
+		line += lineCount(rendered)
+		if i < len(v.rendered)-1 {
+			line++
+		}
+	}
+	return starts
+}
+
+func lineCount(value string) int {
+	if value == "" {
+		return 0
+	}
+	return len(strings.Split(value, "\n"))
 }
 
 func sameStrings(a, b []string) bool {
