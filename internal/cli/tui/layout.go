@@ -131,6 +131,25 @@ func OverlayBottom(base, block string, width int) string {
 	return OverlayAt(base, block, max(0, len(strings.Split(base, "\n"))-lipgloss.Height(block)), lipgloss.Left, width)
 }
 
+func OverlayBottomWithPeek(base, block string, width int, peek int) string {
+	baseHeight := len(strings.Split(base, "\n"))
+	peek = clamp(peek, 0, max(0, baseHeight-1))
+	maxOverlayHeight := max(1, baseHeight-peek)
+	block = ClipBlockHeight(block, maxOverlayHeight)
+	return OverlayAt(base, block, max(peek, baseHeight-lipgloss.Height(block)), lipgloss.Left, width)
+}
+
+func ClipBlockHeight(block string, maxHeight int) string {
+	if maxHeight <= 0 {
+		return ""
+	}
+	lines := strings.Split(block, "\n")
+	if len(lines) <= maxHeight {
+		return block
+	}
+	return strings.Join(lines[:maxHeight], "\n")
+}
+
 func OverlayAt(base, block string, top int, align lipgloss.Position, width int) string {
 	baseLines := strings.Split(base, "\n")
 	blockLines := strings.Split(block, "\n")

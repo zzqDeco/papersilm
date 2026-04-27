@@ -41,6 +41,7 @@ const (
 )
 
 type tuiTimelineItem struct {
+	ID        string
 	Kind      tuiItemKind
 	Subtype   string
 	Title     string
@@ -479,11 +480,12 @@ func (m *tuiModel) View() string {
 }
 
 func (m *tuiModel) renderMainScreen() string {
-	bottom := lipgloss.JoinVertical(
-		lipgloss.Left,
-		m.renderInput(),
-		m.renderFooter(),
-	)
+	bottomParts := []string{}
+	if approval := m.renderApprovalStickyPanel(); strings.TrimSpace(approval) != "" {
+		bottomParts = append(bottomParts, approval)
+	}
+	bottomParts = append(bottomParts, m.renderInput(), m.renderFooter())
+	bottom := lipgloss.JoinVertical(lipgloss.Left, bottomParts...)
 	suggestions := m.renderSuggestions()
 	pill := ""
 	if !m.autoScroll {
@@ -538,6 +540,8 @@ func (m *tuiModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch action {
 	case tuiui.ActionQuit:
 		return m, tea.Quit
+	case tuiui.ActionRedraw:
+		return m, tea.ClearScreen
 	case tuiui.ActionOpenTranscript:
 		m.openTranscriptScreen(false)
 		m.reflow()
@@ -610,6 +614,8 @@ func (m *tuiModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.reflow()
 		return m, nil
 	case tuiui.ActionApprovalCommit:
+		return m.commitApprovalSelection(msg.String())
+	case tuiui.ActionApprovalReject:
 		return m.commitApprovalSelection(msg.String())
 	case tuiui.ActionHistoryPrev:
 		if m.shouldUseHistoryUp() {
@@ -699,6 +705,11 @@ func (m *tuiModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 
+	if m.approvalPanelActive() {
+		m.setMainStatus("Approval pending: choose an option")
+		m.reflow()
+		return m, nil
+	}
 	return m.handleTextInput(msg)
 }
 
@@ -723,7 +734,7 @@ func (m *tuiModel) keyContexts() []tuiui.KeyContext {
 		contexts = append(contexts, tuiui.ContextPane)
 	}
 	if m.approvalPanelActive() {
-		contexts = append(contexts, tuiui.ContextApproval)
+		contexts = append(contexts, tuiui.ContextApproval, tuiui.ContextConfirmation)
 	}
 	contexts = append(contexts, tuiui.ContextChat, tuiui.ContextGlobal)
 	return contexts
@@ -731,9 +742,6 @@ func (m *tuiModel) keyContexts() []tuiui.KeyContext {
 
 func (m *tuiModel) approvalPanelActive() bool {
 	if m.busy || m.screen != tuiScreenMain || m.focus != tuiFocusInput || m.paneVisible {
-		return false
-	}
-	if strings.TrimSpace(m.input.Value()) != "" {
 		return false
 	}
 	return m.snapshot.Meta.ApprovalPending || m.snapshot.Meta.State == protocol.SessionStateAwaitingApproval
@@ -804,7 +812,7 @@ func (m *tuiModel) setApprovalSelectionForKey(key string) {
 		m.approvalSelection = approvalOptionIndex(m.approvalOptions(), tuiApprovalApprove)
 	case "i":
 		m.approvalSelection = approvalOptionIndex(m.approvalOptions(), tuiApprovalInspect)
-	case "r":
+	case "r", "n", "esc":
 		m.approvalSelection = approvalOptionIndex(m.approvalOptions(), tuiApprovalReject)
 	}
 }
@@ -840,7 +848,6 @@ func (m *tuiModel) commitApprovalSelection(key string) (tea.Model, tea.Cmd) {
 	m.suggestions = nil
 	m.sel = 0
 	m.historyState.active = false
-	m.input.Reset()
 	m.focus = tuiFocusInput
 	m.busy = true
 	switch option.Action {
@@ -1251,13 +1258,12 @@ func (m *tuiModel) appendItem(item tuiTimelineItem) {
 	if item.CreatedAt.IsZero() {
 		item.CreatedAt = time.Now()
 	}
+	if strings.TrimSpace(item.ID) == "" {
+		item.ID = fmt.Sprintf("%s_%d_%d", item.Kind, item.CreatedAt.UnixNano(), len(m.items))
+	}
 	m.items = append(m.items, item)
 	width := max(20, m.width-6)
-	if content, ok := m.messageViewport.Append(width, len(m.items)-1, m.renderTimelineItem(item, width)); ok {
-		m.timeline.SetContent(content)
-	} else {
-		m.timeline.SetContent(m.renderTimelineContent(width))
-	}
+	m.timeline.SetContent(m.renderTimelineContent(width))
 	if m.autoScroll {
 		m.timeline.GotoBottom()
 		m.unread = 0
@@ -1332,6 +1338,7 @@ func (m *tuiModel) upsertActivityItem(entry protocol.TranscriptEntry) {
 		m.activityStats[key]++
 	}
 	item := timelineItemFromTranscriptEntry(entry)
+	item.ID = "activity.grouped"
 	item.Kind = tuiItemProgress
 	item.Subtype = "activity.grouped"
 	item.Title = "Activity"
@@ -1351,7 +1358,7 @@ func (m *tuiModel) replaceLastItem(item tuiTimelineItem) {
 	}
 	m.items[len(m.items)-1] = item
 	width := max(20, m.width-6)
-	if content, ok := m.messageViewport.ReplaceLast(width, len(m.items), m.renderTimelineItem(item, width)); ok {
+	if content, ok := m.messageViewport.ReplaceLastByKey(width, item.ID, m.renderTimelineItem(item, width)); ok {
 		m.timeline.SetContent(content)
 	} else {
 		m.timeline.SetContent(m.renderTimelineContent(width))
@@ -1402,6 +1409,7 @@ func (m *tuiModel) hydrateTranscript(entries []protocol.TranscriptEntry) {
 
 func (m *tuiModel) ensureWelcomeItem() {
 	m.appendItem(tuiTimelineItem{
+		ID:        "welcome",
 		Kind:      tuiItemSystem,
 		Subtype:   "welcome",
 		Title:     "Welcome",
@@ -1502,6 +1510,7 @@ func (m *tuiModel) reflow() {
 
 	footerHeight := lipgloss.Height(m.renderFooter())
 	inputHeight := lipgloss.Height(m.renderInput())
+	approvalHeight := lipgloss.Height(m.renderApprovalStickyPanel())
 	headerHeight := lipgloss.Height(m.renderHeader())
 	if m.screen == tuiScreenMain {
 		headerHeight += lipgloss.Height(m.renderStickyPromptHeader())
@@ -1511,7 +1520,7 @@ func (m *tuiModel) reflow() {
 	if m.paneVisible {
 		paneHeight = clamp(m.height/4, 8, max(8, m.height/3))
 	}
-	timelineHeight := max(6, m.height-headerHeight-inputHeight-footerHeight)
+	timelineHeight := max(6, m.height-headerHeight-inputHeight-footerHeight-approvalHeight)
 
 	m.timeline.Width = max(20, width-2)
 	m.timeline.Height = timelineHeight
@@ -1637,6 +1646,9 @@ func (m *tuiModel) renderPane() string {
 func (m *tuiModel) renderInput() string {
 	width := max(20, m.width-2)
 	label := " prompt "
+	if m.approvalPanelActive() {
+		label = " prompt · approval pending "
+	}
 	dividerWidth := max(1, width-lipgloss.Width(label))
 	divider := m.styles.footerMuted.Render(label) + m.styles.paneDivider.Render(strings.Repeat("─", dividerWidth))
 	return lipgloss.JoinVertical(
@@ -1644,6 +1656,55 @@ func (m *tuiModel) renderInput() string {
 		divider,
 		m.styles.inputShell.Width(width).Render(m.input.View()),
 	)
+}
+
+func (m *tuiModel) renderApprovalStickyPanel() string {
+	if !m.approvalPanelActive() {
+		return ""
+	}
+	options := m.approvalOptions()
+	if len(options) == 0 {
+		return ""
+	}
+	width := max(20, m.width-2)
+	bodyWidth := max(12, width-4)
+	m.approvalSelection = clamp(m.approvalSelection, 0, len(options)-1)
+
+	summary := strings.TrimSpace(summarizePendingApproval(m.snapshot))
+	if summary == "" {
+		summary = "Plan is waiting for approval."
+	}
+	rows := make([]tuiui.ListRow, 0, len(options))
+	for i, option := range options {
+		selected := i == m.approvalSelection
+		labelStyle := m.styles.suggestionLabel
+		detailStyle := m.styles.suggestionDetail
+		if selected {
+			labelStyle = m.styles.suggestionActiveLabel
+			detailStyle = m.styles.suggestionActiveDetail
+		}
+		if option.Disabled {
+			labelStyle = m.styles.modalDisabled
+			detailStyle = m.styles.modalDisabled
+		}
+		rows = append(rows, tuiui.ListRow{
+			Label:       option.Label,
+			Detail:      option.Detail,
+			Selected:    selected,
+			Disabled:    option.Disabled,
+			MarkerStyle: m.styles.suggestionMarker,
+			LabelStyle:  labelStyle,
+			DetailStyle: detailStyle,
+		})
+	}
+
+	lines := []string{
+		m.styles.paneDivider.Render(strings.Repeat("▔", width)),
+		"  " + m.styles.approvalLabel.Render("Approval required") + m.styles.footerMuted.Render(" · "+truncateRight(summary, bodyWidth)),
+	}
+	lines = append(lines, tuiui.RenderListRows(rows, bodyWidth)...)
+	lines = append(lines, "  "+m.styles.footerMuted.Render("Y/Enter approve · N/Esc keep planning · I inspect · ↑↓ move"))
+	return strings.Join(lines, "\n")
 }
 
 func (m *tuiModel) renderSuggestions() string {
@@ -1745,7 +1806,7 @@ func (m *tuiModel) renderFooter() string {
 		lines = append(lines, m.styles.footer.Width(width).Render(m.renderHistorySearchFooterLine(width)))
 		return lipgloss.JoinVertical(lipgloss.Left, lines...)
 	}
-	if m.hintsVisible {
+	if m.hintsVisible && m.height >= 18 {
 		lines = append(lines, m.styles.footer.Width(width).Render(m.styles.footerMuted.Render(truncateRight(shortcuts, width))))
 	}
 	return lipgloss.JoinVertical(lipgloss.Left, lines...)
@@ -1774,7 +1835,7 @@ func (m *tuiModel) renderModalOver(base string) string {
 	if strings.TrimSpace(box) == "" {
 		return base
 	}
-	return tuiui.OverlayBottom(base, box, m.width)
+	return tuiui.OverlayBottomWithPeek(base, box, m.width, 2)
 }
 
 func (m *tuiModel) renderModal() string {
@@ -1867,7 +1928,15 @@ func (m *tuiModel) renderTranscriptSearchBar(width int) string {
 }
 
 func (m *tuiModel) renderTimelineContent(width int) string {
-	return m.messageViewport.Content(width, len(m.items), func(index int, width int) string {
+	keys := make([]string, 0, len(m.items))
+	for i, item := range m.items {
+		key := strings.TrimSpace(item.ID)
+		if key == "" {
+			key = fmt.Sprintf("%s_%d_%d", item.Kind, item.CreatedAt.UnixNano(), i)
+		}
+		keys = append(keys, key)
+	}
+	return m.messageViewport.ContentByKey(width, keys, func(index int, width int) string {
 		return m.renderTimelineItem(m.items[index], width)
 	})
 }
@@ -1985,6 +2054,9 @@ func (m *tuiModel) renderDecisionItem(item tuiTimelineItem, width, bodyWidth int
 }
 
 func (m *tuiModel) renderApprovalOptions(item tuiTimelineItem, width int) string {
+	if m.approvalPanelActive() {
+		return ""
+	}
 	if !m.shouldRenderApprovalOptions(item) {
 		return ""
 	}
@@ -2251,6 +2323,7 @@ func (m *tuiModel) historyDown() {
 
 func timelineItemFromTranscriptEntry(entry protocol.TranscriptEntry) tuiTimelineItem {
 	item := tuiTimelineItem{
+		ID:        entry.ID,
 		Subtype:   entry.Subtype,
 		Title:     firstNonEmpty(entry.Title, string(entry.Type)),
 		Body:      entry.Body,

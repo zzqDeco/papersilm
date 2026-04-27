@@ -361,14 +361,14 @@ func TestApprovalRequiredRendersDecisionOptions(t *testing.T) {
 	model.reflow()
 
 	view := model.renderMainScreen()
-	for _, want := range []string{"Approval Required", "+ Approve", "Inspect tasks", "Keep planning", "Enter select"} {
+	for _, want := range []string{"Approval required", "+ Approve", "Inspect tasks", "Keep planning", "Y/Enter approve"} {
 		if !strings.Contains(view, want) {
 			t.Fatalf("expected approval decision option %q in view:\n%s", want, view)
 		}
 	}
 }
 
-func TestApprovalContextOnlyWhenInputIsEmpty(t *testing.T) {
+func TestApprovalContextOwnsFocusEvenWithDraft(t *testing.T) {
 	t.Parallel()
 
 	model := newTestTUIModel()
@@ -379,8 +379,8 @@ func TestApprovalContextOnlyWhenInputIsEmpty(t *testing.T) {
 	}
 
 	model.input.SetValue("keep typing")
-	if hasKeyContext(model.keyContexts(), tuiui.ContextApproval) {
-		t.Fatalf("did not expect approval context to steal normal typing")
+	if !hasKeyContext(model.keyContexts(), tuiui.ContextApproval) {
+		t.Fatalf("expected approval context to keep focus while a draft is present")
 	}
 }
 

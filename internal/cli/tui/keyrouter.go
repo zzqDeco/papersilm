@@ -7,11 +7,14 @@ const (
 	ContextChat             KeyContext = "chat"
 	ContextAutocomplete     KeyContext = "autocomplete"
 	ContextApproval         KeyContext = "approval"
+	ContextConfirmation     KeyContext = "confirmation"
 	ContextPane             KeyContext = "pane"
 	ContextModal            KeyContext = "modal"
 	ContextTranscript       KeyContext = "transcript"
 	ContextTranscriptSearch KeyContext = "transcript_search"
 	ContextHistorySearch    KeyContext = "history_search"
+	ContextScroll           KeyContext = "scroll"
+	ContextFooter           KeyContext = "footer"
 )
 
 type KeyAction string
@@ -20,6 +23,7 @@ const (
 	ActionInput KeyAction = "input"
 
 	ActionQuit           KeyAction = "quit"
+	ActionRedraw         KeyAction = "redraw"
 	ActionToggleHints    KeyAction = "toggle_hints"
 	ActionOpenTranscript KeyAction = "open_transcript"
 	ActionOpenHistory    KeyAction = "open_history"
@@ -43,6 +47,7 @@ const (
 	ActionApprovalPrev   KeyAction = "approval_prev"
 	ActionApprovalNext   KeyAction = "approval_next"
 	ActionApprovalCommit KeyAction = "approval_commit"
+	ActionApprovalReject KeyAction = "approval_reject"
 
 	ActionModalClose  KeyAction = "modal_close"
 	ActionModalPrev   KeyAction = "modal_prev"
@@ -63,6 +68,11 @@ const (
 	ActionHistorySearchAccept KeyAction = "history_search_accept"
 	ActionHistorySearchNext   KeyAction = "history_search_next"
 	ActionHistorySearchPrev   KeyAction = "history_search_prev"
+
+	ActionFooterPrev   KeyAction = "footer_prev"
+	ActionFooterNext   KeyAction = "footer_next"
+	ActionFooterCommit KeyAction = "footer_commit"
+	ActionFooterClose  KeyAction = "footer_close"
 )
 
 func RouteKey(contexts []KeyContext, key string) KeyAction {
@@ -78,8 +88,10 @@ func routeContextKey(context KeyContext, key string) (KeyAction, bool) {
 	switch context {
 	case ContextGlobal:
 		switch key {
-		case "ctrl+c":
+		case "ctrl+c", "ctrl+d":
 			return ActionQuit, true
+		case "ctrl+l":
+			return ActionRedraw, true
 		case "ctrl+/", "ctrl+_":
 			return ActionToggleHints, true
 		}
@@ -107,7 +119,7 @@ func routeContextKey(context KeyContext, key string) (KeyAction, bool) {
 		}
 	case ContextTranscript:
 		switch key {
-		case "ctrl+o", "q", "esc":
+		case "ctrl+o", "ctrl+c", "q", "esc":
 			return ActionTranscriptExit, true
 		case "/":
 			return ActionTranscriptSearchOpen, true
@@ -150,6 +162,19 @@ func routeContextKey(context KeyContext, key string) (KeyAction, bool) {
 			return ActionApprovalNext, true
 		case "enter", "a", "y", "r", "i":
 			return ActionApprovalCommit, true
+		case "n", "esc":
+			return ActionApprovalReject, true
+		}
+	case ContextConfirmation:
+		switch key {
+		case "y", "enter":
+			return ActionApprovalCommit, true
+		case "n", "esc":
+			return ActionApprovalReject, true
+		case "up", "left", "shift+tab":
+			return ActionApprovalPrev, true
+		case "down", "right", "tab", "space":
+			return ActionApprovalNext, true
 		}
 	case ContextPane:
 		switch key {
@@ -170,16 +195,32 @@ func routeContextKey(context KeyContext, key string) (KeyAction, bool) {
 			return ActionOpenProvider, true
 		case "esc":
 			return ActionCloseStatus, true
-		case "pgup", "pgdown":
-			return ActionScrollPage, true
 		case "end":
 			return ActionJumpBottom, true
+		case "pgup", "pgdown", "wheelup", "wheeldown":
+			return ActionScrollPage, true
 		case "enter":
 			return ActionSubmit, true
 		case "up":
 			return ActionHistoryPrev, true
 		case "down":
 			return ActionHistoryNext, true
+		}
+	case ContextFooter:
+		switch key {
+		case "left", "up", "ctrl+p":
+			return ActionFooterPrev, true
+		case "right", "down", "ctrl+n":
+			return ActionFooterNext, true
+		case "enter":
+			return ActionFooterCommit, true
+		case "esc":
+			return ActionFooterClose, true
+		}
+	case ContextScroll:
+		switch key {
+		case "pgup", "pgdown", "wheelup", "wheeldown", "ctrl+home", "ctrl+end":
+			return ActionScrollPage, true
 		}
 	}
 	return "", false
