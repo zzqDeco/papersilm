@@ -27,6 +27,14 @@ func TestShouldUseTUIWithTTY(t *testing.T) {
 			want:         true,
 		},
 		{
+			name:         "empty term still uses tui",
+			outputFormat: protocol.OutputFormatText,
+			termValue:    "",
+			stdinTTY:     true,
+			stdoutTTY:    true,
+			want:         true,
+		},
+		{
 			name:         "print mode skips tui",
 			outputFormat: protocol.OutputFormatText,
 			printTask:    "summarize",

@@ -77,6 +77,50 @@ func (a *Agent) executeNode(ctx context.Context, store *storage.Store, sessionID
 		return a.executeCompareRow(store, sessionID, node, state, a.tools.Pipeline().BuildResultsMatrix, "results_matrix")
 	case protocol.NodeKindFinalSynthesis:
 		return a.executeFinalSynthesis(store, sessionID, goal, lang, style, state, node)
+	case protocol.NodeKindWorkspaceInspect:
+		files, err := a.tools.LoadWorkspaceFiles(store)
+		if err != nil {
+			return nil, err
+		}
+		intent := inferWorkspaceIntent(goal, files)
+		response, err := a.executeWorkspaceInspect(ctx, store, goal, intent)
+		if err != nil {
+			return nil, err
+		}
+		return []protocol.NodeOutputRef{newNodeOutput(node.ID, "workspace_response", map[string]any{"response": response})}, nil
+	case protocol.NodeKindWorkspaceSearch:
+		files, err := a.tools.LoadWorkspaceFiles(store)
+		if err != nil {
+			return nil, err
+		}
+		intent := inferWorkspaceIntent(goal, files)
+		response, err := a.executeWorkspaceSearch(ctx, store, goal, intent)
+		if err != nil {
+			return nil, err
+		}
+		return []protocol.NodeOutputRef{newNodeOutput(node.ID, "workspace_response", map[string]any{"response": response})}, nil
+	case protocol.NodeKindWorkspaceEdit:
+		files, err := a.tools.LoadWorkspaceFiles(store)
+		if err != nil {
+			return nil, err
+		}
+		intent := inferWorkspaceIntent(goal, files)
+		response, err := a.executeWorkspaceEdit(ctx, store, goal, intent)
+		if err != nil {
+			return nil, err
+		}
+		return []protocol.NodeOutputRef{newNodeOutput(node.ID, "workspace_response", map[string]any{"response": response, "path": intent.targetPath})}, nil
+	case protocol.NodeKindWorkspaceCommand:
+		files, err := a.tools.LoadWorkspaceFiles(store)
+		if err != nil {
+			return nil, err
+		}
+		intent := inferWorkspaceIntent(goal, files)
+		response, err := a.executeWorkspaceCommand(store, intent)
+		if err != nil {
+			return nil, err
+		}
+		return []protocol.NodeOutputRef{newNodeOutput(node.ID, "workspace_response", map[string]any{"response": response})}, nil
 	case protocol.NodeKind("distill_paper"):
 		return a.executeLegacyDistill(ctx, store, sessionID, goal, lang, style, node)
 	case protocol.NodeKind("compare_papers"):

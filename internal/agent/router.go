@@ -301,12 +301,46 @@ func (a *Agent) planSession(ctx context.Context, store *storage.Store, sink Even
 	if err := store.InvalidatePlanState(sessionID); err != nil {
 		return protocol.PlanResult{}, nil, err
 	}
+	existingRefs, err := store.LoadSources(sessionID)
+	if err != nil {
+		return protocol.PlanResult{}, nil, err
+	}
+	mode := classifySessionTask(goal, existingRefs)
+	if mode != sessionTaskWorkspace {
+		if _, err := a.ensurePaperContext(ctx, store, sink, sessionID, goal); err != nil {
+			return protocol.PlanResult{}, nil, err
+		}
+	}
 	refs, err := a.tools.InspectSources(ctx, store, sessionID, nil)
 	if err != nil {
 		return protocol.PlanResult{}, nil, err
 	}
 	if len(refs) == 0 {
-		return protocol.PlanResult{}, nil, fmt.Errorf("no sources attached")
+		if mode == sessionTaskWorkspace {
+			files, err := a.tools.LoadWorkspaceFiles(store)
+			if err != nil {
+				return protocol.PlanResult{}, nil, err
+			}
+			intent := inferWorkspaceIntent(goal, files)
+			planResult := buildWorkspacePlan(goal, approvalRequired, intent)
+			state := buildExecutionState(planResult.PlanID, planResult.DAG)
+			if err := store.SavePlan(sessionID, planResult); err != nil {
+				return protocol.PlanResult{}, nil, err
+			}
+			if err := store.SaveExecutionState(sessionID, state); err != nil {
+				return protocol.PlanResult{}, nil, err
+			}
+			snapshot, err := store.Snapshot(sessionID)
+			if err != nil {
+				return protocol.PlanResult{}, nil, err
+			}
+			planResult.TaskBoard = snapshot.TaskBoard
+			if err := a.emit(store, sink, sessionID, protocol.EventPlan, "workspace plan ready", planResult); err != nil {
+				return protocol.PlanResult{}, nil, err
+			}
+			return planResult, &state, nil
+		}
+		return protocol.PlanResult{}, nil, fmt.Errorf("no paper context found in the current workspace; add /source or mention an arXiv URL/ID")
 	}
 	if err := a.emit(store, sink, sessionID, protocol.EventAnalysis, "source inspection complete", refs); err != nil {
 		return protocol.PlanResult{}, nil, err
@@ -529,6 +563,7 @@ func (a *Agent) runDAGExecution(ctx context.Context, store *storage.Store, sink 
 		Digests:    snapshot.Digests,
 		Comparison: snapshot.Compare,
 		Artifacts:  snapshot.Artifacts,
+		Response:   workspaceResponseFromOutputs(execState.Outputs),
 	}, nil
 }
 

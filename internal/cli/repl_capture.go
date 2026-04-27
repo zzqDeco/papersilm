@@ -67,7 +67,9 @@ func classifyPaneCommand(line string) (string, bool) {
 		return "Tasks", true
 	case strings.HasPrefix(trimmed, "/task show "):
 		return "Task", true
-	case strings.HasPrefix(trimmed, "/workspace "):
+	case trimmed == "/workspace show" || strings.HasPrefix(trimmed, "/workspace files") || strings.HasPrefix(trimmed, "/workspace search ") || trimmed == "/workspace sessions":
+		return "Workspace", true
+	case strings.HasPrefix(trimmed, "/paper "):
 		return "Workspace", true
 	case strings.HasPrefix(trimmed, "/skill list"):
 		return "Skills", true
@@ -77,6 +79,8 @@ func classifyPaneCommand(line string) (string, bool) {
 		return "Artifacts", true
 	case trimmed == "/source list":
 		return "Sources", true
+	case strings.HasPrefix(trimmed, "/open "):
+		return "File", true
 	default:
 		return "", false
 	}

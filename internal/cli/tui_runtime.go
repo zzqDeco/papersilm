@@ -78,6 +78,14 @@ func newTUIRuntimeManager(ctx context.Context, opts TUIOptions) (*tuiRuntimeMana
 
 func (r *tuiRuntimeManager) ensureSessionRuntimeMeta(snapshot *protocol.SessionSnapshot) (bool, error) {
 	changed := false
+	if strings.TrimSpace(snapshot.Meta.WorkspaceRoot) == "" {
+		snapshot.Meta.WorkspaceRoot = r.store.WorkspaceRoot()
+		changed = true
+	}
+	if strings.TrimSpace(snapshot.Meta.WorkspaceID) == "" && snapshot.Workspace != nil && strings.TrimSpace(snapshot.Workspace.WorkspaceID) != "" {
+		snapshot.Meta.WorkspaceID = snapshot.Workspace.WorkspaceID
+		changed = true
+	}
 	if strings.TrimSpace(snapshot.Meta.ProviderProfile) == "" {
 		snapshot.Meta.ProviderProfile = r.cfg.ActiveProviderName()
 		changed = true
@@ -95,6 +103,20 @@ func (r *tuiRuntimeManager) ensureSessionRuntimeMeta(snapshot *protocol.SessionS
 
 func (r *tuiRuntimeManager) loadRecentEvents(sessionID string, limit int) ([]protocol.StreamEvent, error) {
 	return r.store.LoadRecentEvents(sessionID, limit)
+}
+
+func (r *tuiRuntimeManager) loadTranscript(sessionID string) ([]protocol.TranscriptEntry, error) {
+	return r.store.LoadTranscript(sessionID)
+}
+
+func (r *tuiRuntimeManager) drainPendingStartupEvents() {
+	for {
+		select {
+		case <-r.sink.ch:
+		default:
+			return
+		}
+	}
 }
 
 func (r *tuiRuntimeManager) switchProviderModel(snapshot *protocol.SessionSnapshot, profile, model string) error {

@@ -157,7 +157,8 @@ func (s *Service) writeAlphaXivMissingCache(sessionID, paperID string, source pr
 }
 
 func (s *Service) alphaXivCachePaths(sessionID, paperID string, source protocol.ContentSource) (string, string) {
-	cacheDir := filepath.Join(s.config.BaseDir, "sessions", sessionID, "cache")
+	_ = sessionID
+	cacheDir := filepath.Join(s.config.BaseDir, "cache", "alphaxiv")
 	name := sanitizeCacheName(paperID + "." + string(source))
 	return filepath.Join(cacheDir, name+".md"), filepath.Join(cacheDir, name+".missing")
 }

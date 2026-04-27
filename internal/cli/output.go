@@ -50,6 +50,14 @@ func (o *OutputWriter) PrintResult(result protocol.RunResult) error {
 	case protocol.OutputFormatStreamJSON:
 		return nil
 	case protocol.OutputFormatText:
+		if strings.TrimSpace(result.Response) != "" {
+			if _, err := fmt.Fprintln(o.w, strings.TrimSpace(result.Response)); err != nil {
+				return err
+			}
+			if result.Comparison == nil && len(result.Digests) == 0 {
+				return nil
+			}
+		}
 		if result.Approval != nil {
 			if err := o.printApproval(*result.Approval); err != nil {
 				return err

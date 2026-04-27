@@ -79,6 +79,10 @@ const (
 	NodeKindExperimentCompare NodeKind = "experiment_compare"
 	NodeKindResultsCompare    NodeKind = "results_compare"
 	NodeKindFinalSynthesis    NodeKind = "final_synthesis"
+	NodeKindWorkspaceInspect  NodeKind = "workspace_inspect"
+	NodeKindWorkspaceSearch   NodeKind = "workspace_search"
+	NodeKindWorkspaceEdit     NodeKind = "workspace_edit"
+	NodeKindWorkspaceCommand  NodeKind = "workspace_command"
 	NodeKindReviewerSkill     NodeKind = "reviewer_skill"
 	NodeKindEquationExplain   NodeKind = "equation_explain_skill"
 	NodeKindRelatedWorkMap    NodeKind = "related_work_map_skill"
@@ -288,6 +292,54 @@ type PaperWorkspace struct {
 	CreatedAt   time.Time         `json:"created_at"`
 	UpdatedAt   time.Time         `json:"updated_at"`
 }
+
+type WorkspaceFileKind string
+
+const (
+	WorkspaceFileKindText   WorkspaceFileKind = "text"
+	WorkspaceFileKindCode   WorkspaceFileKind = "code"
+	WorkspaceFileKindPaper  WorkspaceFileKind = "paper"
+	WorkspaceFileKindConfig WorkspaceFileKind = "config"
+	WorkspaceFileKindOther  WorkspaceFileKind = "other"
+)
+
+type WorkspaceFile struct {
+	Path           string            `json:"path"`
+	AbsolutePath   string            `json:"absolute_path,omitempty"`
+	Kind           WorkspaceFileKind `json:"kind"`
+	SizeBytes      int64             `json:"size_bytes"`
+	ModifiedAt     time.Time         `json:"modified_at"`
+	PaperCandidate bool              `json:"paper_candidate,omitempty"`
+}
+
+type WorkspaceSummary struct {
+	WorkspaceID    string    `json:"workspace_id"`
+	Root           string    `json:"root"`
+	Name           string    `json:"name"`
+	FileCount      int       `json:"file_count"`
+	TextFileCount  int       `json:"text_file_count"`
+	PaperFileCount int       `json:"paper_file_count"`
+	SessionCount   int       `json:"session_count"`
+	IndexedAt      time.Time `json:"indexed_at"`
+}
+
+type WorkspaceSearchHit struct {
+	Path    string `json:"path"`
+	Line    int    `json:"line"`
+	Snippet string `json:"snippet"`
+}
+
+type WorkspaceCommandRecord struct {
+	Command     string    `json:"command"`
+	Cwd         string    `json:"cwd"`
+	ExitCode    int       `json:"exit_code"`
+	Stdout      string    `json:"stdout,omitempty"`
+	Stderr      string    `json:"stderr,omitempty"`
+	StartedAt   time.Time `json:"started_at"`
+	CompletedAt time.Time `json:"completed_at,omitempty"`
+}
+
+const DefaultWorkspaceID = "workspace"
 
 type TaskStatus string
 
@@ -511,6 +563,8 @@ type SessionMeta struct {
 	Name               string         `json:"name,omitempty"`
 	State              SessionState   `json:"state"`
 	PermissionMode     PermissionMode `json:"permission_mode"`
+	WorkspaceRoot      string         `json:"workspace_root,omitempty"`
+	WorkspaceID        string         `json:"workspace_id,omitempty"`
 	ProviderProfile    string         `json:"provider_profile,omitempty"`
 	Model              string         `json:"model,omitempty"`
 	Language           string         `json:"language"`
@@ -526,6 +580,7 @@ type SessionMeta struct {
 
 type SessionSnapshot struct {
 	Meta           SessionMeta        `json:"meta"`
+	Workspace      *WorkspaceSummary  `json:"workspace,omitempty"`
 	Sources        []PaperRef         `json:"sources"`
 	Plan           *PlanResult        `json:"plan,omitempty"`
 	TaskBoard      *TaskBoard         `json:"task_board,omitempty"`
@@ -554,4 +609,5 @@ type RunResult struct {
 	Digests    []PaperDigest      `json:"digests,omitempty"`
 	Comparison *ComparisonDigest  `json:"comparison,omitempty"`
 	Artifacts  []ArtifactManifest `json:"artifacts,omitempty"`
+	Response   string             `json:"response,omitempty"`
 }

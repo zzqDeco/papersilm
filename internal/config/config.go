@@ -31,11 +31,20 @@ type ProviderConfig struct {
 	Timeout  string       `yaml:"timeout,omitempty" json:"timeout,omitempty"`
 }
 
+type ThemeSetting string
+
+const (
+	ThemeAuto  ThemeSetting = "auto"
+	ThemeDark  ThemeSetting = "dark"
+	ThemeLight ThemeSetting = "light"
+)
+
 type Config struct {
 	BaseDir        string                    `yaml:"base_dir" json:"base_dir"`
 	DefaultLang    string                    `yaml:"default_lang" json:"default_lang"`
 	DefaultStyle   string                    `yaml:"default_style" json:"default_style"`
 	PermissionMode protocol.PermissionMode   `yaml:"permission_mode" json:"permission_mode"`
+	Theme          ThemeSetting              `yaml:"theme,omitempty" json:"theme,omitempty"`
 	ActiveProvider string                    `yaml:"active_provider,omitempty" json:"active_provider,omitempty"`
 	Providers      map[string]ProviderConfig `yaml:"providers,omitempty" json:"providers,omitempty"`
 	Provider       ProviderConfig            `yaml:"provider" json:"provider"`
@@ -57,6 +66,7 @@ func Default() Config {
 		DefaultLang:    "zh",
 		DefaultStyle:   "distill",
 		PermissionMode: protocol.PermissionModeConfirm,
+		Theme:          ThemeAuto,
 		ActiveProvider: DefaultProviderProfile,
 		Providers: map[string]ProviderConfig{
 			DefaultProviderProfile: provider,
@@ -130,6 +140,9 @@ func (c *Config) Normalize() {
 	}
 	if c.PermissionMode == "" {
 		c.PermissionMode = defaults.PermissionMode
+	}
+	if !c.Theme.Valid() {
+		c.Theme = defaults.Theme
 	}
 
 	if len(c.Providers) == 0 {
@@ -216,6 +229,24 @@ func (c Config) ActiveProviderConfig() ProviderConfig {
 		return cfg.Provider
 	}
 	return provider
+}
+
+func (t ThemeSetting) Valid() bool {
+	switch t {
+	case ThemeAuto, ThemeDark, ThemeLight:
+		return true
+	default:
+		return false
+	}
+}
+
+func (c *Config) SetTheme(theme ThemeSetting) error {
+	theme = ThemeSetting(strings.TrimSpace(string(theme)))
+	if !theme.Valid() {
+		return fmt.Errorf("theme must be one of auto|dark|light")
+	}
+	c.Theme = theme
+	return nil
 }
 
 func (c *Config) SetActiveProvider(name string) error {

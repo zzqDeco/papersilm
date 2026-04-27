@@ -3,6 +3,8 @@ package cli
 import (
 	"context"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -13,6 +15,8 @@ import (
 	"github.com/charmbracelet/glamour"
 	"github.com/charmbracelet/lipgloss"
 
+	tuiui "github.com/zzqDeco/papersilm/internal/cli/tui"
+	"github.com/zzqDeco/papersilm/internal/config"
 	"github.com/zzqDeco/papersilm/pkg/protocol"
 )
 
@@ -38,9 +42,11 @@ const (
 
 type tuiTimelineItem struct {
 	Kind      tuiItemKind
+	Subtype   string
 	Title     string
 	Body      string
 	Markdown  bool
+	Compact   bool
 	CreatedAt time.Time
 }
 
@@ -48,6 +54,22 @@ type tuiChoice struct {
 	Label    string
 	Value    string
 	Detail   string
+	Disabled bool
+}
+
+type tuiApprovalAction string
+
+const (
+	tuiApprovalApprove tuiApprovalAction = "approve"
+	tuiApprovalInspect tuiApprovalAction = "inspect"
+	tuiApprovalReject  tuiApprovalAction = "reject"
+)
+
+type tuiApprovalOption struct {
+	Label    string
+	Detail   string
+	Action   tuiApprovalAction
+	Command  string
 	Disabled bool
 }
 
@@ -67,13 +89,14 @@ type tuiEventMsg struct {
 }
 
 type tuiExecDoneMsg struct {
-	Input     string
-	Pane      bool
-	PaneTitle string
-	Before    protocol.SessionSnapshot
-	After     protocol.SessionSnapshot
-	Text      string
-	Err       error
+	Input       string
+	Pane        bool
+	PaneTitle   string
+	SkipHistory bool
+	Before      protocol.SessionSnapshot
+	After       protocol.SessionSnapshot
+	Text        string
+	Err         error
 }
 
 type tuiDiscoverModelsMsg struct {
@@ -90,25 +113,45 @@ type tuiSwitchProviderMsg struct {
 }
 
 type tuiStyles struct {
-	background       lipgloss.Style
-	header           lipgloss.Style
-	headerMuted      lipgloss.Style
-	headerAccent     lipgloss.Style
-	userCard         lipgloss.Style
-	assistantCard    lipgloss.Style
-	approvalCard     lipgloss.Style
-	errorCard        lipgloss.Style
-	pane             lipgloss.Style
-	input            lipgloss.Style
-	footer           lipgloss.Style
-	systemLine       lipgloss.Style
-	progressLine     lipgloss.Style
-	suggestionBox    lipgloss.Style
-	suggestionNormal lipgloss.Style
-	suggestionActive lipgloss.Style
-	modal            lipgloss.Style
-	modalTitle       lipgloss.Style
-	modalMessage     lipgloss.Style
+	theme                  config.ThemeSetting
+	markdownStyle          string
+	background             lipgloss.Style
+	body                   lipgloss.Style
+	header                 lipgloss.Style
+	headerMuted            lipgloss.Style
+	headerAccent           lipgloss.Style
+	headerStatus           lipgloss.Style
+	userShell              lipgloss.Style
+	userLabel              lipgloss.Style
+	assistantLabel         lipgloss.Style
+	approvalShell          lipgloss.Style
+	approvalLabel          lipgloss.Style
+	successShell           lipgloss.Style
+	successLabel           lipgloss.Style
+	rejectionShell         lipgloss.Style
+	rejectionLabel         lipgloss.Style
+	errorShell             lipgloss.Style
+	errorLabel             lipgloss.Style
+	paneDivider            lipgloss.Style
+	paneTitle              lipgloss.Style
+	paneBody               lipgloss.Style
+	inputShell             lipgloss.Style
+	footer                 lipgloss.Style
+	footerMuted            lipgloss.Style
+	footerAccent           lipgloss.Style
+	keycap                 lipgloss.Style
+	systemLine             lipgloss.Style
+	progressLine           lipgloss.Style
+	suggestionMarker       lipgloss.Style
+	suggestionLabel        lipgloss.Style
+	suggestionDetail       lipgloss.Style
+	suggestionActiveLabel  lipgloss.Style
+	suggestionActiveDetail lipgloss.Style
+	modalShell             lipgloss.Style
+	modalTitle             lipgloss.Style
+	modalMessage           lipgloss.Style
+	modalHint              lipgloss.Style
+	modalDisabled          lipgloss.Style
 }
 
 type tuiModel struct {
@@ -117,15 +160,38 @@ type tuiModel struct {
 
 	snapshot protocol.SessionSnapshot
 
-	timeline viewport.Model
-	pane     viewport.Model
-	input    textarea.Model
-	modalIn  textinput.Model
+	timeline   viewport.Model
+	transcript viewport.Model
+	pane       viewport.Model
+	input      textarea.Model
+	modalIn    textinput.Model
+	searchIn   textinput.Model
+	historyIn  textinput.Model
 
-	items       []tuiTimelineItem
-	history     []string
-	suggestions []tuiSuggestion
-	sel         int
+	items                []tuiTimelineItem
+	messageViewport      tuiui.MessageViewport
+	messageStore         tuiui.MessageStore
+	transcriptFrozen     bool
+	transcriptFrozenLen  int
+	history              []string
+	suggestions          []tuiSuggestion
+	sel                  int
+	screen               tuiScreen
+	focus                tuiFocus
+	historyState         tuiHistoryState
+	historyMatches       []protocol.TranscriptEntry
+	historySelection     int
+	historyStatus        string
+	historyDraft         string
+	searchMatches        []int
+	searchSelection      int
+	searchStatus         string
+	workspaceName        string
+	workspaceDisplayPath string
+	activityCount        int
+	activityStarted      time.Time
+	activityStats        map[string]int
+	approvalSelection    int
 
 	paneVisible bool
 	paneTitle   string
@@ -133,14 +199,31 @@ type tuiModel struct {
 
 	modal tuiModalState
 
-	width      int
-	height     int
-	ready      bool
-	busy       bool
-	status     string
-	autoScroll bool
+	width        int
+	height       int
+	ready        bool
+	busy         bool
+	mainStatus   string
+	autoScroll   bool
+	unread       int
+	hintsVisible bool
 
 	styles tuiStyles
+}
+
+type tuiStartupError struct {
+	attempts []string
+}
+
+func (e *tuiStartupError) Error() string {
+	if e == nil || len(e.attempts) == 0 {
+		return ErrTUIStartup.Error()
+	}
+	return fmt.Sprintf("%s: %s", ErrTUIStartup, strings.Join(e.attempts, "; "))
+}
+
+func (e *tuiStartupError) Is(target error) bool {
+	return target == ErrTUIStartup
 }
 
 func RunTUI(ctx context.Context, opts TUIOptions) error {
@@ -148,24 +231,63 @@ func RunTUI(ctx context.Context, opts TUIOptions) error {
 	if err != nil {
 		return err
 	}
-	model := newTUIModel(ctx, manager, snapshot)
-	events, err := manager.loadRecentEvents(snapshot.Meta.SessionID, 200)
+	firstErr := runTUIProgram(ctx, manager, snapshot, tea.WithAltScreen(), tea.WithMouseCellMotion())
+	if firstErr == nil {
+		return nil
+	}
+	secondErr := runTUIProgram(ctx, manager, snapshot, tea.WithAltScreen())
+	if secondErr == nil {
+		return nil
+	}
+	return &tuiStartupError{
+		attempts: []string{
+			fmt.Sprintf("mouse mode failed: %v", firstErr),
+			fmt.Sprintf("plain mode failed: %v", secondErr),
+		},
+	}
+}
+
+func runTUIProgram(
+	ctx context.Context,
+	manager *tuiRuntimeManager,
+	snapshot protocol.SessionSnapshot,
+	opts ...tea.ProgramOption,
+) error {
+	model, err := loadTUIModel(ctx, manager, snapshot)
 	if err != nil {
 		return err
 	}
-	model.hydrateTimeline(events)
-
-	program := tea.NewProgram(model, tea.WithAltScreen(), tea.WithMouseAllMotion())
+	manager.drainPendingStartupEvents()
+	program := tea.NewProgram(model, opts...)
 	if _, err := program.Run(); err != nil && err != tea.ErrProgramKilled {
 		return err
 	}
 	return nil
 }
 
+func loadTUIModel(ctx context.Context, manager *tuiRuntimeManager, snapshot protocol.SessionSnapshot) (*tuiModel, error) {
+	model := newTUIModel(ctx, manager, snapshot)
+	transcript, err := manager.loadTranscript(snapshot.Meta.SessionID)
+	if err != nil {
+		return nil, err
+	}
+	if len(transcript) > 0 {
+		model.hydrateTranscript(transcript)
+		return model, nil
+	}
+	events, err := manager.loadRecentEvents(snapshot.Meta.SessionID, 200)
+	if err != nil {
+		return nil, err
+	}
+	if len(events) > 0 {
+		model.hydrateTimeline(events)
+	}
+	return model, nil
+}
+
 func newTUIModel(ctx context.Context, runtime *tuiRuntimeManager, snapshot protocol.SessionSnapshot) *tuiModel {
 	input := textarea.New()
-	input.Prompt = "▌ "
-	input.Placeholder = "Ask about the current papers, or type /commands"
+	input.Placeholder = "Ask about the current workspace, papers, or type /commands"
 	input.ShowLineNumbers = false
 	input.SetHeight(3)
 	input.CharLimit = 0
@@ -173,59 +295,67 @@ func newTUIModel(ctx context.Context, runtime *tuiRuntimeManager, snapshot proto
 
 	modalIn := textinput.New()
 	modalIn.Placeholder = "Filter"
+	searchIn := textinput.New()
+	searchIn.Placeholder = "Search transcript"
+	historyIn := textinput.New()
+	historyIn.Placeholder = "Search prompt history"
+
+	workspaceRoot, _ := os.Getwd()
+	workspaceRoot = strings.TrimSpace(workspaceRoot)
+	workspaceName := filepath.Base(workspaceRoot)
+	if workspaceName == "." || workspaceName == string(filepath.Separator) {
+		workspaceName = "workspace"
+	}
+	if snapshot.Workspace != nil {
+		if strings.TrimSpace(snapshot.Workspace.Root) != "" {
+			workspaceRoot = snapshot.Workspace.Root
+		}
+		if strings.TrimSpace(snapshot.Workspace.Name) != "" {
+			workspaceName = snapshot.Workspace.Name
+		}
+	}
 
 	model := &tuiModel{
-		ctx:        ctx,
-		runtime:    runtime,
-		snapshot:   snapshot,
-		timeline:   viewport.New(0, 0),
-		pane:       viewport.New(0, 0),
-		input:      input,
-		modalIn:    modalIn,
-		styles:     newTUIStyles(),
-		autoScroll: true,
+		ctx:                  ctx,
+		runtime:              runtime,
+		snapshot:             snapshot,
+		timeline:             viewport.New(0, 0),
+		transcript:           viewport.New(0, 0),
+		pane:                 viewport.New(0, 0),
+		input:                input,
+		modalIn:              modalIn,
+		searchIn:             searchIn,
+		historyIn:            historyIn,
+		screen:               tuiScreenMain,
+		focus:                tuiFocusInput,
+		autoScroll:           true,
+		hintsVisible:         true,
+		workspaceName:        workspaceName,
+		workspaceDisplayPath: workspaceRoot,
+		activityStats:        make(map[string]int),
 	}
+	model.applyTheme(runtime.cfg.Theme)
 	model.timeline.MouseWheelEnabled = true
+	model.transcript.MouseWheelEnabled = true
 	model.pane.MouseWheelEnabled = true
-	model.setStatus("Interactive session ready")
 	model.refreshSuggestions()
 	if len(model.items) == 0 {
-		model.appendItem(tuiTimelineItem{
-			Kind:      tuiItemSystem,
-			Title:     "Session",
-			Body:      "Type /help for commands, Ctrl+K for the palette, or /model to switch runtime.",
-			CreatedAt: time.Now(),
-		})
+		model.ensureWelcomeItem()
 	}
 	return model
 }
 
-func newTUIStyles() tuiStyles {
-	return tuiStyles{
-		background:       lipgloss.NewStyle().Background(lipgloss.Color("#0B1220")).Foreground(lipgloss.Color("#E2E8F0")),
-		header:           lipgloss.NewStyle().Bold(true).Background(lipgloss.Color("#12344D")).Foreground(lipgloss.Color("#F8FAFC")).Padding(0, 1),
-		headerMuted:      lipgloss.NewStyle().Foreground(lipgloss.Color("#BFDBFE")),
-		headerAccent:     lipgloss.NewStyle().Foreground(lipgloss.Color("#FBBF24")).Bold(true),
-		userCard:         lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(lipgloss.Color("#38BDF8")).Padding(0, 1),
-		assistantCard:    lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(lipgloss.Color("#14B8A6")).Padding(0, 1),
-		approvalCard:     lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(lipgloss.Color("#F59E0B")).Padding(0, 1),
-		errorCard:        lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(lipgloss.Color("#EF4444")).Padding(0, 1),
-		pane:             lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(lipgloss.Color("#64748B")).Padding(0, 1),
-		input:            lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(lipgloss.Color("#334155")).Padding(0, 1),
-		footer:           lipgloss.NewStyle().Foreground(lipgloss.Color("#94A3B8")).Padding(0, 1),
-		systemLine:       lipgloss.NewStyle().Foreground(lipgloss.Color("#94A3B8")),
-		progressLine:     lipgloss.NewStyle().Foreground(lipgloss.Color("#7DD3FC")),
-		suggestionBox:    lipgloss.NewStyle().Border(lipgloss.NormalBorder()).BorderForeground(lipgloss.Color("#334155")).Padding(0, 1),
-		suggestionNormal: lipgloss.NewStyle().Foreground(lipgloss.Color("#CBD5E1")),
-		suggestionActive: lipgloss.NewStyle().Foreground(lipgloss.Color("#0F172A")).Background(lipgloss.Color("#FBBF24")).Bold(true),
-		modal:            lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(lipgloss.Color("#F59E0B")).Padding(1, 2),
-		modalTitle:       lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#F8FAFC")),
-		modalMessage:     lipgloss.NewStyle().Foreground(lipgloss.Color("#FBBF24")),
-	}
-}
-
 func (m *tuiModel) Init() tea.Cmd {
 	return tea.Batch(m.input.Focus(), waitForTUIEvent(m.runtime.sink.ch))
+}
+
+func (m *tuiModel) applyTheme(theme config.ThemeSetting) {
+	m.styles = newTUIStyles(theme)
+	m.runtime.cfg.Theme = theme
+	applyTextareaTheme(&m.input, m.styles)
+	applyTextInputTheme(&m.modalIn, m.styles)
+	applyTextInputTheme(&m.searchIn, m.styles)
+	applyTextInputTheme(&m.historyIn, m.styles)
 }
 
 func (m *tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -237,28 +367,37 @@ func (m *tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.reflow()
 		return m, nil
 	case tuiEventMsg:
-		m.appendItem(eventToTimelineItem(msg.Event))
+		m.appendEvent(msg.Event)
 		m.reflow()
 		return m, waitForTUIEvent(m.runtime.sink.ch)
 	case tuiExecDoneMsg:
 		m.busy = false
 		if msg.Err != nil {
 			m.appendError(msg.Err)
-			m.setStatus(msg.Err.Error())
+			m.setMainStatus(msg.Err.Error())
 			m.reflow()
 			return m, nil
 		}
 		m.snapshot = msg.After
-		m.recordHistory(msg.Input)
+		m.syncApprovalSelection()
+		if theme, ok := themeCommandValue(msg.Input); ok {
+			m.applyTheme(theme)
+		}
+		if !msg.SkipHistory {
+			m.recordHistory(msg.Input)
+		}
 		if msg.Pane {
 			m.openPane(msg.PaneTitle, msg.Text)
-			m.setStatus(fmt.Sprintf("%s opened", msg.PaneTitle))
+			m.setMainStatus(fmt.Sprintf("%s opened", msg.PaneTitle))
 		} else {
-			item := executionToTimelineItem(msg.Input, msg.Before, msg.After, msg.Text)
-			if strings.TrimSpace(item.Body) != "" {
-				m.appendItem(item)
+			for _, entry := range executionToTranscriptEntries(msg.Input, msg.Before, msg.After, msg.Text) {
+				if strings.TrimSpace(entry.Body) == "" && strings.TrimSpace(entry.Title) == "" {
+					continue
+				}
+				m.appendTranscript(entry, true)
 			}
 			m.paneVisible = false
+			m.setMainStatus(statusForSnapshot(m.snapshot))
 		}
 		m.refreshSuggestions()
 		m.reflow()
@@ -293,19 +432,21 @@ func (m *tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.busy = false
 		if msg.Err != nil {
 			m.appendError(msg.Err)
-			m.setStatus(msg.Err.Error())
+			m.setMainStatus(msg.Err.Error())
 			m.reflow()
 			return m, nil
 		}
 		m.snapshot = msg.After
-		m.appendItem(tuiTimelineItem{
-			Kind:      tuiItemSystem,
-			Title:     "Runtime",
-			Body:      fmt.Sprintf("Switched to %s / %s", msg.Profile, msg.Model),
-			CreatedAt: time.Now(),
-		})
+		m.syncApprovalSelection()
+		m.appendTranscript(newTranscriptEntry(
+			m.snapshot.Meta.SessionID,
+			protocol.TranscriptEntrySystem,
+			"Runtime",
+			fmt.Sprintf("Switched to %s / %s", msg.Profile, msg.Model),
+			withTranscriptSubtype("runtime"),
+		), true)
 		m.closeModal()
-		m.setStatus("Provider and model updated")
+		m.setMainStatus("Provider and model updated")
 		m.refreshSuggestions()
 		m.reflow()
 		return m, nil
@@ -322,25 +463,64 @@ func (m *tuiModel) View() string {
 	if !m.ready {
 		return "Loading papersilm workspace..."
 	}
+	if m.screen == tuiScreenTranscript {
+		view := m.renderTranscriptScreen()
+		if m.modal.Kind != tuiModalNone {
+			return m.renderModalOver(view)
+		}
+		return m.styles.background.Width(m.width).Height(m.height).Render(view)
+	}
 
-	main := lipgloss.JoinVertical(
+	main := m.renderMainScreen()
+	if m.modal.Kind != tuiModalNone {
+		return m.renderModalOver(main)
+	}
+	return m.styles.background.Width(m.width).Height(m.height).Render(main)
+}
+
+func (m *tuiModel) renderMainScreen() string {
+	bottom := lipgloss.JoinVertical(
 		lipgloss.Left,
-		m.renderHeader(),
-		m.timeline.View(),
-		m.renderPane(),
 		m.renderInput(),
-		m.renderSuggestions(),
 		m.renderFooter(),
 	)
-	if m.modal.Kind == tuiModalNone {
-		return m.styles.background.Width(m.width).Height(m.height).Render(main)
+	suggestions := m.renderSuggestions()
+	pill := ""
+	if !m.autoScroll {
+		pill = m.renderScrollPill()
 	}
-	return m.renderModal()
+	return tuiui.RenderFullscreenLayout(tuiui.FullscreenLayout{
+		Width:         m.width,
+		Header:        m.renderHeader(),
+		StickyHeader:  m.renderStickyPromptHeader(),
+		Scrollable:    m.timeline.View(),
+		Bottom:        bottom,
+		Pane:          m.renderPane(),
+		PromptOverlay: suggestions,
+		ScrollPill:    pill,
+	})
+}
+
+func (m *tuiModel) renderScrollPill() string {
+	text := "Jump to bottom ↓"
+	if m.unread > 0 {
+		label := "new message"
+		if m.unread != 1 {
+			label = "new messages"
+		}
+		text = fmt.Sprintf("%d %s ↓", m.unread, label)
+	}
+	return m.styles.footerAccent.Render(" " + text + " ")
 }
 
 func (m *tuiModel) handleMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 	if m.modal.Kind != tuiModalNone {
 		return m, nil
+	}
+	if m.screen == tuiScreenTranscript {
+		var cmd tea.Cmd
+		m.transcript, cmd = m.transcript.Update(msg)
+		return m, cmd
 	}
 	if m.paneVisible {
 		var cmd tea.Cmd
@@ -349,99 +529,382 @@ func (m *tuiModel) handleMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 	}
 	var cmd tea.Cmd
 	m.timeline, cmd = m.timeline.Update(msg)
-	m.autoScroll = false
+	m.updateScrollState()
 	return m, cmd
 }
 
 func (m *tuiModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	switch {
-	case m.modal.Kind != tuiModalNone:
-		return m.handleModalKey(msg)
-	case msg.String() == "ctrl+c":
+	action := tuiui.RouteKey(m.keyContexts(), msg.String())
+	switch action {
+	case tuiui.ActionQuit:
 		return m, tea.Quit
-	case msg.String() == "ctrl+k":
-		m.openCommandPalette()
-		m.reflow()
-		return m, m.modalIn.Focus()
-	case msg.String() == "esc":
-		if m.paneVisible {
-			m.paneVisible = false
-			m.setStatus("Pane closed")
-		} else if len(m.suggestions) > 0 {
-			m.suggestions = nil
-			m.sel = 0
-		} else {
-			m.setStatus("")
-		}
+	case tuiui.ActionOpenTranscript:
+		m.openTranscriptScreen(false)
 		m.reflow()
 		return m, nil
-	case msg.String() == "pgup" || msg.String() == "pgdown":
-		if m.paneVisible {
-			var cmd tea.Cmd
-			m.pane, cmd = m.pane.Update(msg)
-			return m, cmd
-		}
+	case tuiui.ActionOpenHistory:
+		cmd := m.openHistorySearch()
+		m.reflow()
+		return m, cmd
+	case tuiui.ActionOpenCommands:
+		cmd := m.openCommandPalette()
+		m.reflow()
+		return m, cmd
+	case tuiui.ActionOpenProvider:
+		cmd := m.openProviderModal()
+		m.reflow()
+		return m, cmd
+	case tuiui.ActionToggleHints:
+		m.toggleHints()
+		m.reflow()
+		return m, nil
+	case tuiui.ActionSuggestionClose:
+		m.suggestions = nil
+		m.sel = 0
+		m.focus = tuiFocusInput
+		m.reflow()
+		return m, nil
+	case tuiui.ActionClosePane:
+		m.paneVisible = false
+		m.focus = tuiFocusInput
+		m.setMainStatus("Pane closed")
+		m.reflow()
+		return m, nil
+	case tuiui.ActionCloseStatus:
+		m.setMainStatus("")
+		m.reflow()
+		return m, nil
+	case tuiui.ActionPaneScroll:
+		var cmd tea.Cmd
+		m.pane, cmd = m.pane.Update(msg)
+		return m, cmd
+	case tuiui.ActionScrollPage:
 		var cmd tea.Cmd
 		m.timeline, cmd = m.timeline.Update(msg)
-		m.autoScroll = false
+		m.updateScrollState()
 		return m, cmd
-	case msg.String() == "up" && len(m.suggestions) > 0:
+	case tuiui.ActionJumpBottom:
+		m.jumpMainToBottom()
+		m.reflow()
+		return m, nil
+	case tuiui.ActionSuggestionPrev:
+		m.focus = tuiFocusSuggestion
 		m.sel = clamp(m.sel-1, 0, len(m.suggestions)-1)
 		m.reflow()
 		return m, nil
-	case msg.String() == "down" && len(m.suggestions) > 0:
+	case tuiui.ActionSuggestionNext:
+		m.focus = tuiFocusSuggestion
 		m.sel = clamp(m.sel+1, 0, len(m.suggestions)-1)
 		m.reflow()
 		return m, nil
-	case msg.String() == "tab" && len(m.suggestions) > 0:
+	case tuiui.ActionSuggestionAccept:
 		m.applySuggestion(m.suggestions[m.sel])
 		m.reflow()
 		return m, nil
-	case msg.String() == "enter":
+	case tuiui.ActionApprovalPrev:
+		m.moveApprovalSelection(-1)
+		m.reflow()
+		return m, nil
+	case tuiui.ActionApprovalNext:
+		m.moveApprovalSelection(1)
+		m.reflow()
+		return m, nil
+	case tuiui.ActionApprovalCommit:
+		return m.commitApprovalSelection(msg.String())
+	case tuiui.ActionHistoryPrev:
+		if m.shouldUseHistoryUp() {
+			m.historyUp()
+			m.refreshSuggestions()
+			m.reflow()
+			return m, nil
+		}
+	case tuiui.ActionHistoryNext:
+		if m.shouldUseHistoryDown() {
+			m.historyDown()
+			m.refreshSuggestions()
+			m.reflow()
+			return m, nil
+		}
+	case tuiui.ActionSubmit:
 		return m.submitInput()
-	}
-
-	var cmd tea.Cmd
-	m.input, cmd = m.input.Update(msg)
-	m.refreshSuggestions()
-	m.reflow()
-	return m, cmd
-}
-
-func (m *tuiModel) handleModalKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	switch msg.String() {
-	case "ctrl+c":
-		return m, tea.Quit
-	case "esc":
+	case tuiui.ActionModalClose:
 		m.closeModal()
 		m.reflow()
 		return m, nil
-	case "up":
+	case tuiui.ActionModalPrev:
 		if len(m.modal.Visible) > 0 {
 			m.modal.Selection = clamp(m.modal.Selection-1, 0, len(m.modal.Visible)-1)
 		}
 		m.reflow()
 		return m, nil
-	case "down":
+	case tuiui.ActionModalNext:
 		if len(m.modal.Visible) > 0 {
 			m.modal.Selection = clamp(m.modal.Selection+1, 0, len(m.modal.Visible)-1)
 		}
 		m.reflow()
 		return m, nil
-	case "enter":
+	case tuiui.ActionModalCommit:
 		return m.commitModalSelection()
+	case tuiui.ActionTranscriptExit:
+		m.closeTranscriptScreen()
+		m.reflow()
+		return m, nil
+	case tuiui.ActionTranscriptSearchOpen:
+		m.openTranscriptSearch()
+		m.reflow()
+		return m, m.searchIn.Focus()
+	case tuiui.ActionTranscriptSearchNext:
+		m.moveTranscriptSearchSelection(1)
+		m.reflow()
+		return m, nil
+	case tuiui.ActionTranscriptSearchPrev:
+		m.moveTranscriptSearchSelection(-1)
+		m.reflow()
+		return m, nil
+	case tuiui.ActionTranscriptScroll:
+		var cmd tea.Cmd
+		m.transcript, cmd = m.transcript.Update(msg)
+		return m, cmd
+	case tuiui.ActionTranscriptSearchClose:
+		m.closeTranscriptSearch(true)
+		m.reflow()
+		return m, nil
+	case tuiui.ActionTranscriptSearchAccept:
+		m.jumpToSearchSelection()
+		m.closeTranscriptSearch(false)
+		m.reflow()
+		return m, nil
+	case tuiui.ActionHistorySearchCancel:
+		cmd := m.closeHistorySearch(true)
+		m.reflow()
+		return m, cmd
+	case tuiui.ActionHistorySearchClose:
+		cmd := m.acceptHistorySearch(false)
+		m.reflow()
+		return m, cmd
+	case tuiui.ActionHistorySearchAccept:
+		cmd := m.acceptHistorySearch(true)
+		m.reflow()
+		if cmd == nil {
+			return m, nil
+		}
+		return m, cmd
+	case tuiui.ActionHistorySearchNext:
+		m.moveHistorySearchSelection(1)
+		m.reflow()
+		return m, nil
+	case tuiui.ActionHistorySearchPrev:
+		m.moveHistorySearchSelection(-1)
+		m.reflow()
+		return m, nil
+	}
+
+	return m.handleTextInput(msg)
+}
+
+func (m *tuiModel) keyContexts() []tuiui.KeyContext {
+	if m.modal.Kind != tuiModalNone {
+		return []tuiui.KeyContext{tuiui.ContextModal, tuiui.ContextGlobal}
+	}
+	if m.screen == tuiScreenTranscript {
+		if m.focus == tuiFocusTranscriptSearch {
+			return []tuiui.KeyContext{tuiui.ContextTranscriptSearch, tuiui.ContextTranscript, tuiui.ContextGlobal}
+		}
+		return []tuiui.KeyContext{tuiui.ContextTranscript, tuiui.ContextGlobal}
+	}
+	if m.focus == tuiFocusHistorySearch {
+		return []tuiui.KeyContext{tuiui.ContextHistorySearch, tuiui.ContextGlobal}
+	}
+	contexts := make([]tuiui.KeyContext, 0, 4)
+	if len(m.suggestions) > 0 {
+		contexts = append(contexts, tuiui.ContextAutocomplete)
+	}
+	if m.paneVisible {
+		contexts = append(contexts, tuiui.ContextPane)
+	}
+	if m.approvalPanelActive() {
+		contexts = append(contexts, tuiui.ContextApproval)
+	}
+	contexts = append(contexts, tuiui.ContextChat, tuiui.ContextGlobal)
+	return contexts
+}
+
+func (m *tuiModel) approvalPanelActive() bool {
+	if m.busy || m.screen != tuiScreenMain || m.focus != tuiFocusInput || m.paneVisible {
+		return false
+	}
+	if strings.TrimSpace(m.input.Value()) != "" {
+		return false
+	}
+	return m.snapshot.Meta.ApprovalPending || m.snapshot.Meta.State == protocol.SessionStateAwaitingApproval
+}
+
+func (m *tuiModel) approvalOptions() []tuiApprovalOption {
+	planLabel := firstNonEmpty(m.snapshot.Meta.ActivePlanID, taskBoardPlanID(m.snapshot.TaskBoard), planResultID(m.snapshot.Plan), "current plan")
+	pendingTasks := awaitingApprovalTasks(m.snapshot.TaskBoard)
+	pendingDetail := fmt.Sprintf("Run %s now", planLabel)
+	if len(pendingTasks) > 0 {
+		pendingDetail = fmt.Sprintf("Run %d pending %s now", len(pendingTasks), pluralWord(len(pendingTasks), "task"))
+	}
+
+	return []tuiApprovalOption{
+		{
+			Label:   "Approve",
+			Detail:  pendingDetail,
+			Action:  tuiApprovalApprove,
+			Command: "/approve",
+		},
+		{
+			Label:   "Inspect tasks",
+			Detail:  "Open the task board before deciding",
+			Action:  tuiApprovalInspect,
+			Command: "/tasks",
+		},
+		{
+			Label:   "Keep planning",
+			Detail:  "Reject this checkpoint without running it",
+			Action:  tuiApprovalReject,
+			Command: "/reject",
+		},
+	}
+}
+
+func (m *tuiModel) moveApprovalSelection(delta int) {
+	options := m.approvalOptions()
+	if len(options) == 0 {
+		m.approvalSelection = 0
+		return
+	}
+	next := m.approvalSelection + delta
+	if next < 0 {
+		next = len(options) - 1
+	}
+	if next >= len(options) {
+		next = 0
+	}
+	m.approvalSelection = next
+}
+
+func (m *tuiModel) syncApprovalSelection() {
+	if !m.snapshot.Meta.ApprovalPending && m.snapshot.Meta.State != protocol.SessionStateAwaitingApproval {
+		m.approvalSelection = 0
+		return
+	}
+	options := m.approvalOptions()
+	if len(options) == 0 {
+		m.approvalSelection = 0
+		return
+	}
+	m.approvalSelection = clamp(m.approvalSelection, 0, len(options)-1)
+}
+
+func (m *tuiModel) setApprovalSelectionForKey(key string) {
+	switch key {
+	case "a", "y":
+		m.approvalSelection = approvalOptionIndex(m.approvalOptions(), tuiApprovalApprove)
+	case "i":
+		m.approvalSelection = approvalOptionIndex(m.approvalOptions(), tuiApprovalInspect)
+	case "r":
+		m.approvalSelection = approvalOptionIndex(m.approvalOptions(), tuiApprovalReject)
+	}
+}
+
+func approvalOptionIndex(options []tuiApprovalOption, action tuiApprovalAction) int {
+	for i, option := range options {
+		if option.Action == action && !option.Disabled {
+			return i
+		}
+	}
+	return 0
+}
+
+func (m *tuiModel) commitApprovalSelection(key string) (tea.Model, tea.Cmd) {
+	if m.busy {
+		m.setMainStatus("A run is already in progress")
+		m.reflow()
+		return m, nil
+	}
+	m.setApprovalSelectionForKey(key)
+	options := m.approvalOptions()
+	if len(options) == 0 {
+		return m, nil
+	}
+	m.approvalSelection = clamp(m.approvalSelection, 0, len(options)-1)
+	option := options[m.approvalSelection]
+	if option.Disabled {
+		m.setMainStatus("That approval action is unavailable")
+		m.reflow()
+		return m, nil
+	}
+
+	m.suggestions = nil
+	m.sel = 0
+	m.historyState.active = false
+	m.input.Reset()
+	m.focus = tuiFocusInput
+	m.busy = true
+	switch option.Action {
+	case tuiApprovalApprove:
+		m.setMainStatus("Approving...")
+		m.reflow()
+		return m, runSlashCmdWithHistory(m.ctx, m.runtime, m.snapshot, option.Command, "", false, true)
+	case tuiApprovalInspect:
+		m.setMainStatus("Opening tasks...")
+		m.reflow()
+		return m, runSlashCmdWithHistory(m.ctx, m.runtime, m.snapshot, option.Command, "Tasks", true, true)
+	case tuiApprovalReject:
+		m.setMainStatus("Keeping plan open...")
+		m.reflow()
+		return m, runApprovalRejectCmd(m.ctx, m.runtime, m.snapshot)
+	default:
+		m.busy = false
+		m.setMainStatus("Unknown approval action")
+		m.reflow()
+		return m, nil
+	}
+}
+
+func (m *tuiModel) handleTextInput(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	if m.modal.Kind != tuiModalNone {
+		var cmd tea.Cmd
+		m.modalIn, cmd = m.modalIn.Update(msg)
+		m.refreshModalChoices()
+		m.reflow()
+		return m, cmd
+	}
+	if m.focus == tuiFocusHistorySearch {
+		var cmd tea.Cmd
+		m.historyIn, cmd = m.historyIn.Update(msg)
+		m.refreshHistorySearch()
+		m.reflow()
+		return m, cmd
+	}
+	if m.focus == tuiFocusTranscriptSearch {
+		var cmd tea.Cmd
+		m.searchIn, cmd = m.searchIn.Update(msg)
+		m.refreshTranscriptSearch()
+		m.reflow()
+		return m, cmd
+	}
+	if m.screen == tuiScreenTranscript {
+		return m, nil
 	}
 
 	var cmd tea.Cmd
-	m.modalIn, cmd = m.modalIn.Update(msg)
-	m.refreshModalChoices()
+	m.input, cmd = m.input.Update(msg)
+	m.focus = tuiFocusInput
+	if m.historyState.active {
+		m.historyState.active = false
+		m.historyState.index = 0
+	}
+	m.refreshSuggestions()
 	m.reflow()
 	return m, cmd
 }
 
 func (m *tuiModel) submitInput() (tea.Model, tea.Cmd) {
 	if m.busy {
-		m.setStatus("A run is already in progress")
+		m.setMainStatus("A run is already in progress")
 		m.reflow()
 		return m, nil
 	}
@@ -449,46 +912,85 @@ func (m *tuiModel) submitInput() (tea.Model, tea.Cmd) {
 	if line == "" {
 		return m, nil
 	}
+	if visible, ok, err := parseHintsCommand(line, m.hintsVisible); ok {
+		m.consumeSubmittedInput()
+		if err != nil {
+			m.setMainStatus(err.Error())
+			m.reflow()
+			return m, nil
+		}
+		m.setHintsVisible(visible)
+		m.reflow()
+		return m, nil
+	}
+	if theme, ok, err := parseThemeCommand(line); ok {
+		m.consumeSubmittedInput()
+		if err != nil {
+			m.setMainStatus(err.Error())
+			m.reflow()
+			return m, nil
+		}
+		if err := m.runtime.cfg.SetTheme(theme); err != nil {
+			m.setMainStatus(err.Error())
+			m.reflow()
+			return m, nil
+		}
+		if err := config.Save(config.ConfigPath(m.runtime.cfg.BaseDir), m.runtime.cfg); err != nil {
+			m.setMainStatus(err.Error())
+			m.reflow()
+			return m, nil
+		}
+		m.applyTheme(theme)
+		m.setMainStatus(fmt.Sprintf("Theme set to %s", theme))
+		m.reflow()
+		return m, nil
+	}
 	switch line {
 	case "/exit", "/quit":
 		return m, tea.Quit
-	case "/commands":
-		m.openCommandPalette()
+	case "/transcript":
+		m.consumeSubmittedInput()
+		m.openTranscriptScreen(false)
 		m.reflow()
-		return m, m.modalIn.Focus()
+		return m, nil
+	case "/commands":
+		m.consumeSubmittedInput()
+		cmd := m.openCommandPalette()
+		m.reflow()
+		return m, cmd
 	case "/model":
+		m.consumeSubmittedInput()
 		cmd := m.openProviderModal()
 		m.reflow()
 		return m, cmd
 	}
 
-	m.input.SetValue("")
-	m.refreshSuggestions()
+	line = m.consumeSubmittedInput()
 
 	if strings.HasPrefix(line, "/") {
 		title, pane := classifyPaneCommand(line)
-		if !pane {
-			m.appendItem(tuiTimelineItem{
-				Kind:      tuiItemUser,
-				Title:     "Command",
-				Body:      line,
-				CreatedAt: time.Now(),
-			})
-		}
+		m.appendTranscript(newTranscriptEntry(
+			m.snapshot.Meta.SessionID,
+			protocol.TranscriptEntryCommand,
+			"Command",
+			line,
+			withTranscriptInputMode(protocol.TranscriptInputCommand),
+		), true)
 		m.busy = true
-		m.setStatus("Running command...")
+		m.setMainStatus("Running command...")
 		m.reflow()
 		return m, runSlashCmd(m.ctx, m.runtime, m.snapshot, line, title, pane)
 	}
 
-	m.appendItem(tuiTimelineItem{
-		Kind:      tuiItemUser,
-		Title:     "You",
-		Body:      line,
-		CreatedAt: time.Now(),
-	})
+	m.appendTranscript(newTranscriptEntry(
+		m.snapshot.Meta.SessionID,
+		protocol.TranscriptEntryUser,
+		"You",
+		line,
+		withTranscriptInputMode(protocol.TranscriptInputPrompt),
+	), true)
 	m.busy = true
-	m.setStatus("Running task...")
+	m.setMainStatus("Running task...")
 	m.reflow()
 	return m, runPromptCmd(m.ctx, m.runtime, m.snapshot, line)
 }
@@ -532,7 +1034,7 @@ func (m *tuiModel) commitModalSelection() (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		m.busy = true
-		m.setStatus("Switching runtime...")
+		m.setMainStatus("Switching runtime...")
 		m.reflow()
 		return m, switchProviderCmd(m.runtime, m.snapshot, m.modal.Provider, modelName)
 	default:
@@ -540,8 +1042,9 @@ func (m *tuiModel) commitModalSelection() (tea.Model, tea.Cmd) {
 	}
 }
 
-func (m *tuiModel) openCommandPalette() {
+func (m *tuiModel) openCommandPalette() tea.Cmd {
 	m.input.Blur()
+	m.focus = tuiFocusModal
 	m.modal = tuiModalState{
 		Kind:    tuiModalCommands,
 		Title:   "Command Palette",
@@ -550,10 +1053,12 @@ func (m *tuiModel) openCommandPalette() {
 	m.modalIn.SetValue("")
 	m.modalIn.Placeholder = "Type to filter commands or recipes"
 	m.refreshModalChoices()
+	return m.modalIn.Focus()
 }
 
 func (m *tuiModel) openProviderModal() tea.Cmd {
 	m.input.Blur()
+	m.focus = tuiFocusModal
 	choices := make([]tuiChoice, 0, len(m.runtime.profileNames()))
 	for _, name := range m.runtime.profileNames() {
 		provider, _ := m.runtime.providerProfile(name)
@@ -583,6 +1088,7 @@ func (m *tuiModel) openProviderModal() tea.Cmd {
 
 func (m *tuiModel) openModelModal(profile string) tea.Cmd {
 	provider, _ := m.runtime.providerProfile(profile)
+	m.focus = tuiFocusModal
 	m.modal = tuiModalState{
 		Kind:     tuiModalModels,
 		Title:    "Model Picker",
@@ -601,6 +1107,7 @@ func (m *tuiModel) closeModal() {
 	m.modal = tuiModalState{}
 	m.modalIn.SetValue("")
 	m.modalIn.Blur()
+	m.focus = tuiFocusInput
 	m.input.Focus()
 }
 
@@ -653,6 +1160,11 @@ func (m *tuiModel) recordHistory(input string) {
 }
 
 func (m *tuiModel) refreshSuggestions() {
+	if strings.TrimSpace(m.input.Value()) == "" {
+		m.suggestions = nil
+		m.sel = 0
+		return
+	}
 	m.suggestions = buildInputSuggestions(m.input.Value(), m.snapshot, m.history)
 	if len(m.suggestions) == 0 {
 		m.sel = 0
@@ -664,11 +1176,13 @@ func (m *tuiModel) refreshSuggestions() {
 func (m *tuiModel) applySuggestion(suggestion tuiSuggestion) {
 	m.input.SetValue(suggestion.Insert)
 	m.refreshSuggestions()
-	m.setStatus(fmt.Sprintf("Inserted %s", suggestion.Label))
+	m.focus = tuiFocusInput
+	m.setMainStatus(fmt.Sprintf("Inserted %s", suggestion.Label))
 }
 
 func (m *tuiModel) openPane(title, body string) {
 	m.paneVisible = true
+	m.focus = tuiFocusPane
 	m.paneTitle = title
 	if strings.TrimSpace(body) == "" {
 		body = "No output."
@@ -678,14 +1192,173 @@ func (m *tuiModel) openPane(title, body string) {
 	m.pane.GotoTop()
 }
 
+func (m *tuiModel) openTranscriptScreen(withSearch bool) tea.Cmd {
+	if m.screen != tuiScreenTranscript {
+		m.transcriptFrozen = true
+		m.transcriptFrozenLen = m.messageStore.Len()
+	}
+	m.screen = tuiScreenTranscript
+	m.input.Blur()
+	if withSearch {
+		m.focus = tuiFocusTranscriptSearch
+		m.refreshTranscriptSearch()
+		return m.searchIn.Focus()
+	}
+	m.searchIn.Blur()
+	m.focus = tuiFocusTranscript
+	return nil
+}
+
+func (m *tuiModel) closeTranscriptScreen() {
+	m.screen = tuiScreenMain
+	m.focus = tuiFocusInput
+	m.transcriptFrozen = false
+	m.transcriptFrozenLen = 0
+	m.clearTranscriptSearch()
+	m.input.Focus()
+}
+
+func (m *tuiModel) openHistorySearch() tea.Cmd {
+	m.historyDraft = m.input.Value()
+	m.historyIn.SetValue("")
+	m.historySelection = 0
+	m.historyStatus = ""
+	m.focus = tuiFocusHistorySearch
+	m.suggestions = nil
+	m.sel = 0
+	m.input.Blur()
+	m.refreshHistorySearch()
+	return m.historyIn.Focus()
+}
+
+func (m *tuiModel) closeHistorySearch(restoreDraft bool) tea.Cmd {
+	if restoreDraft {
+		m.input.SetValue(m.historyDraft)
+		m.input.CursorEnd()
+	}
+	m.historyIn.SetValue("")
+	m.historyIn.Blur()
+	m.historyMatches = nil
+	m.historySelection = 0
+	m.historyStatus = ""
+	m.historyDraft = ""
+	m.focus = tuiFocusInput
+	m.refreshSuggestions()
+	return m.input.Focus()
+}
+
 func (m *tuiModel) appendItem(item tuiTimelineItem) {
 	if item.CreatedAt.IsZero() {
 		item.CreatedAt = time.Now()
 	}
 	m.items = append(m.items, item)
-	m.timeline.SetContent(m.renderTimelineContent(max(20, m.width-6)))
+	width := max(20, m.width-6)
+	if content, ok := m.messageViewport.Append(width, len(m.items)-1, m.renderTimelineItem(item, width)); ok {
+		m.timeline.SetContent(content)
+	} else {
+		m.timeline.SetContent(m.renderTimelineContent(width))
+	}
 	if m.autoScroll {
 		m.timeline.GotoBottom()
+		m.unread = 0
+	}
+}
+
+func (m *tuiModel) appendTranscript(entry protocol.TranscriptEntry, persist bool) {
+	if entry.CreatedAt.IsZero() {
+		entry.CreatedAt = time.Now().UTC()
+	}
+	if strings.TrimSpace(entry.SessionID) == "" {
+		entry.SessionID = m.snapshot.Meta.SessionID
+	}
+	m.messageStore.Append(entry)
+	if persist && m.runtime != nil && m.runtime.store != nil {
+		_ = m.runtime.store.AppendTranscriptEntry(entry.SessionID, entry)
+	}
+	if entry.Type == protocol.TranscriptEntryUser || entry.Type == protocol.TranscriptEntryCommand {
+		m.recordHistory(entry.Body)
+	}
+	visible, countUnread := m.appendTranscriptProjection(entry)
+	m.transcript.SetContent(m.renderTranscriptContent(max(20, m.width-2)))
+	if m.screen == tuiScreenTranscript && m.transcript.AtBottom() {
+		m.transcript.GotoBottom()
+	} else if visible && countUnread && !m.autoScroll {
+		m.unread++
+	}
+	if m.focus == tuiFocusTranscriptSearch {
+		m.refreshTranscriptSearch()
+	}
+}
+
+func (m *tuiModel) appendEvent(event protocol.StreamEvent) {
+	entry, ok := transcriptEntryFromEvent(event)
+	if !ok {
+		return
+	}
+	m.appendTranscript(entry, true)
+}
+
+func (m *tuiModel) appendTranscriptProjection(entry protocol.TranscriptEntry) (bool, bool) {
+	visibility, presentation := transcriptDisplayForEntry(entry)
+	switch {
+	case presentation == protocol.TranscriptPresentationHidden:
+		return false, false
+	case visibility == protocol.TranscriptVisibilityAmbient || visibility == protocol.TranscriptVisibilityDebug:
+		return false, false
+	case visibility == protocol.TranscriptVisibilityActivity || presentation == protocol.TranscriptPresentationGrouped:
+		m.upsertActivityItem(entry)
+		return true, false
+	default:
+		m.activityCount = 0
+		m.activityStarted = time.Time{}
+		m.activityStats = make(map[string]int)
+		m.appendItem(timelineItemFromTranscriptEntry(entry))
+		return true, true
+	}
+}
+
+func (m *tuiModel) upsertActivityItem(entry protocol.TranscriptEntry) {
+	if m.activityCount == 0 {
+		m.activityStarted = entry.CreatedAt
+		if m.activityStarted.IsZero() {
+			m.activityStarted = time.Now()
+		}
+	}
+	m.activityCount++
+	if m.activityStats == nil {
+		m.activityStats = make(map[string]int)
+	}
+	if key := activityKey(entry); key != "" && shouldCountActivity(entry) {
+		m.activityStats[key]++
+	}
+	item := timelineItemFromTranscriptEntry(entry)
+	item.Kind = tuiItemProgress
+	item.Subtype = "activity.grouped"
+	item.Title = "Activity"
+	item.Body = activitySummary(entry, m.activityStats, m.activityCount, m.activityStarted)
+	item.CreatedAt = m.activityStarted
+	if len(m.items) > 0 && m.items[len(m.items)-1].Kind == tuiItemProgress && m.items[len(m.items)-1].Subtype == "activity.grouped" {
+		m.replaceLastItem(item)
+		return
+	}
+	m.appendItem(item)
+}
+
+func (m *tuiModel) replaceLastItem(item tuiTimelineItem) {
+	if len(m.items) == 0 {
+		m.appendItem(item)
+		return
+	}
+	m.items[len(m.items)-1] = item
+	width := max(20, m.width-6)
+	if content, ok := m.messageViewport.ReplaceLast(width, len(m.items), m.renderTimelineItem(item, width)); ok {
+		m.timeline.SetContent(content)
+	} else {
+		m.timeline.SetContent(m.renderTimelineContent(width))
+	}
+	if m.autoScroll {
+		m.timeline.GotoBottom()
+		m.unread = 0
 	}
 }
 
@@ -693,27 +1366,123 @@ func (m *tuiModel) appendError(err error) {
 	if err == nil {
 		return
 	}
+	m.appendTranscript(newTranscriptEntry(
+		m.snapshot.Meta.SessionID,
+		protocol.TranscriptEntryError,
+		"Error",
+		err.Error(),
+	), true)
+}
+
+func (m *tuiModel) hydrateTimeline(events []protocol.StreamEvent) {
+	m.hydrateTranscript(transcriptEntriesFromLegacyEvents(events))
+}
+
+func (m *tuiModel) hydrateTranscript(entries []protocol.TranscriptEntry) {
+	m.messageStore.Reset(entries)
+	m.items = m.items[:0]
+	m.messageViewport.Reset()
+	m.activityCount = 0
+	m.activityStarted = time.Time{}
+	m.history = nil
+	for _, entry := range entries {
+		if entry.Type == protocol.TranscriptEntryUser || entry.Type == protocol.TranscriptEntryCommand {
+			m.recordHistory(entry.Body)
+		}
+		m.appendTranscriptProjection(entry)
+	}
+	if len(m.items) == 0 {
+		m.ensureWelcomeItem()
+	}
+	m.timeline.SetContent(m.renderTimelineContent(max(20, m.width-6)))
+	m.timeline.GotoBottom()
+	m.transcript.SetContent(m.renderTranscriptContent(max(20, m.width-2)))
+	m.transcript.GotoBottom()
+}
+
+func (m *tuiModel) ensureWelcomeItem() {
 	m.appendItem(tuiTimelineItem{
-		Kind:      tuiItemError,
-		Title:     "Error",
-		Body:      err.Error(),
+		Kind:      tuiItemSystem,
+		Subtype:   "welcome",
+		Title:     "Welcome",
+		Body:      "Ask about this workspace, edit files, or attach papers when needed.",
 		CreatedAt: time.Now(),
 	})
 }
 
-func (m *tuiModel) hydrateTimeline(events []protocol.StreamEvent) {
-	for _, event := range events {
-		m.items = append(m.items, eventToTimelineItem(event))
-	}
-	if len(m.items) == 0 {
-		return
-	}
-	m.timeline.SetContent(m.renderTimelineContent(max(20, m.width-6)))
-	m.timeline.GotoBottom()
+func (m *tuiModel) consumeSubmittedInput() string {
+	line := strings.TrimSpace(m.input.Value())
+	m.input.SetValue("")
+	m.historyState = tuiHistoryState{}
+	m.focus = tuiFocusInput
+	m.suggestions = nil
+	m.sel = 0
+	return line
 }
 
-func (m *tuiModel) setStatus(status string) {
-	m.status = strings.TrimSpace(status)
+func (m *tuiModel) toggleHints() {
+	m.setHintsVisible(!m.hintsVisible)
+}
+
+func (m *tuiModel) setHintsVisible(visible bool) {
+	m.hintsVisible = visible
+	if visible {
+		m.setMainStatus("Hints shown")
+		return
+	}
+	m.setMainStatus("Hints hidden")
+}
+
+func (m *tuiModel) clearTranscriptSearch() {
+	m.searchStatus = ""
+	m.searchMatches = nil
+	m.searchSelection = 0
+	m.searchIn.SetValue("")
+	m.searchIn.Blur()
+}
+
+func (m *tuiModel) openTranscriptSearch() {
+	m.focus = tuiFocusTranscriptSearch
+	m.searchIn.SetValue("")
+	m.searchStatus = ""
+	m.searchMatches = nil
+	m.searchSelection = 0
+	m.searchIn.Focus()
+}
+
+func (m *tuiModel) closeTranscriptSearch(clear bool) {
+	m.focus = tuiFocusTranscript
+	m.searchIn.Blur()
+	if clear {
+		m.clearTranscriptSearch()
+	}
+}
+
+func (m *tuiModel) moveTranscriptSearchSelection(delta int) {
+	if len(m.searchMatches) == 0 {
+		return
+	}
+	next := m.searchSelection + delta
+	if next < 0 {
+		next = len(m.searchMatches) - 1
+	}
+	if next >= len(m.searchMatches) {
+		next = 0
+	}
+	m.searchSelection = next
+	m.jumpToSearchSelection()
+	m.searchStatus = fmt.Sprintf("%d matches", len(m.searchMatches))
+}
+
+func (m *tuiModel) setMainStatus(status string) {
+	m.mainStatus = strings.TrimSpace(status)
+}
+
+func statusForSnapshot(snapshot protocol.SessionSnapshot) string {
+	if snapshot.Meta.ApprovalPending || snapshot.Meta.State == protocol.SessionStateAwaitingApproval {
+		return "Awaiting approval"
+	}
+	return ""
 }
 
 func (m *tuiModel) reflow() {
@@ -721,31 +1490,48 @@ func (m *tuiModel) reflow() {
 		return
 	}
 	width := max(30, m.width-2)
+	wasPinned := m.timeline.AtBottom()
+	bottomGap := max(0, m.timeline.TotalLineCount()-(m.timeline.YOffset+m.timeline.Height))
 
-	m.input.SetWidth(max(20, width-6))
+	m.input.SetWidth(max(20, width-4))
 	lines := clamp(m.input.LineCount()+1, 3, 7)
 	m.input.SetHeight(lines)
+	m.modalIn.Width = clamp(width-16, 18, 72)
+	m.searchIn.Width = clamp(width-16, 18, 72)
+	m.historyIn.Width = clamp(width-24, 18, 72)
 
-	suggestionsHeight := lipgloss.Height(m.renderSuggestions())
 	footerHeight := lipgloss.Height(m.renderFooter())
 	inputHeight := lipgloss.Height(m.renderInput())
 	headerHeight := lipgloss.Height(m.renderHeader())
+	if m.screen == tuiScreenMain {
+		headerHeight += lipgloss.Height(m.renderStickyPromptHeader())
+	}
 
 	paneHeight := 0
 	if m.paneVisible {
 		paneHeight = clamp(m.height/4, 8, max(8, m.height/3))
 	}
-	timelineHeight := max(6, m.height-headerHeight-inputHeight-suggestionsHeight-footerHeight-paneHeight)
+	timelineHeight := max(6, m.height-headerHeight-inputHeight-footerHeight)
 
 	m.timeline.Width = max(20, width-2)
 	m.timeline.Height = timelineHeight
 	m.timeline.SetContent(m.renderTimelineContent(m.timeline.Width))
-	if m.autoScroll {
+	if m.autoScroll || wasPinned {
 		m.timeline.GotoBottom()
+		m.unread = 0
+	} else {
+		m.timeline.SetYOffset(max(0, m.timeline.TotalLineCount()-m.timeline.Height-bottomGap))
 	}
+	transcriptSearchHeight := 0
+	if m.screen == tuiScreenTranscript && m.focus == tuiFocusTranscriptSearch {
+		transcriptSearchHeight = lipgloss.Height(m.renderTranscriptSearchBar(width))
+	}
+	m.transcript.Width = max(20, width-2)
+	m.transcript.Height = max(6, m.height-headerHeight-footerHeight-transcriptSearchHeight-3)
+	m.transcript.SetContent(m.renderTranscriptContent(m.transcript.Width))
 
 	if m.paneVisible {
-		m.pane.Width = max(20, width-6)
+		m.pane.Width = max(20, width-4)
 		m.pane.Height = max(4, paneHeight-2)
 		m.pane.SetContent(m.renderPaneBody(m.pane.Width))
 	}
@@ -753,6 +1539,142 @@ func (m *tuiModel) reflow() {
 
 func (m *tuiModel) renderHeader() string {
 	width := max(30, m.width-2)
+	workspaceName := m.workspaceName
+	if m.snapshot.Workspace != nil && strings.TrimSpace(m.snapshot.Workspace.Name) != "" {
+		workspaceName = m.snapshot.Workspace.Name
+	}
+	state := string(m.snapshot.Meta.State)
+	if state == "" {
+		state = "idle"
+	}
+	profile := firstNonEmpty(m.snapshot.Meta.ProviderProfile, m.runtime.cfg.ActiveProviderName())
+	model := firstNonEmpty(m.snapshot.Meta.Model, m.runtime.cfg.ActiveProviderConfig().Model)
+	rightParts := []string{
+		sessionLabel(m.snapshot.Meta),
+		state,
+	}
+	if profile != "" || model != "" {
+		rightParts = append(rightParts, strings.Trim(strings.Join([]string{profile, model}, "/"), "/"))
+	}
+	if m.busy {
+		rightParts = append(rightParts, "running")
+	}
+	if m.screen == tuiScreenTranscript {
+		rightParts = append(rightParts, "transcript")
+	}
+	right := strings.Join(rightParts, " · ")
+
+	rightWidth := 0
+	if width >= 48 {
+		rightWidth = clamp(width/2, 18, 48)
+	} else if width >= 36 {
+		rightWidth = clamp(width/3, 10, 18)
+	}
+	leftWidth := width
+	if rightWidth > 0 {
+		leftWidth = max(12, width-rightWidth-1)
+	}
+	workspaceBudget := max(0, leftWidth-lipgloss.Width("papersilm · "))
+	workspaceName = truncateRight(workspaceName, workspaceBudget)
+	leftRaw := "papersilm · " + workspaceName
+	right = truncateRight(right, rightWidth)
+
+	line := m.styles.headerAccent.Render("papersilm") + m.styles.headerMuted.Render(" · "+workspaceName)
+	if right != "" {
+		gap := max(1, width-lipgloss.Width(leftRaw)-lipgloss.Width(right))
+		line += strings.Repeat(" ", gap) + m.styles.headerStatus.Render(right)
+	}
+	return line
+}
+
+func (m *tuiModel) renderStickyPromptHeader() string {
+	if m.screen != tuiScreenMain || m.autoScroll {
+		return ""
+	}
+	prompt := m.lastUserPrompt()
+	if strings.TrimSpace(prompt) == "" {
+		return ""
+	}
+	width := max(20, m.width-2)
+	return m.styles.footerMuted.Width(width).Render(truncateRight("› "+prompt, width))
+}
+
+func (m *tuiModel) lastUserPrompt() string {
+	if body := strings.TrimSpace(m.messageStore.LatestInput()); body != "" {
+		return strings.ReplaceAll(body, "\n", " ")
+	}
+	for i := len(m.items) - 1; i >= 0; i-- {
+		item := m.items[i]
+		if item.Kind != tuiItemUser {
+			continue
+		}
+		if body := strings.TrimSpace(item.Body); body != "" {
+			return strings.ReplaceAll(body, "\n", " ")
+		}
+	}
+	return ""
+}
+
+func (m *tuiModel) renderPane() string {
+	if !m.paneVisible {
+		return ""
+	}
+	width := max(20, m.width-2)
+	divider := m.styles.paneDivider.Width(width).Render(strings.Repeat("─", max(1, width)))
+	body := lipgloss.JoinVertical(
+		lipgloss.Left,
+		m.styles.paneTitle.Render(m.paneTitle),
+		m.pane.View(),
+	)
+	return lipgloss.JoinVertical(
+		lipgloss.Left,
+		"",
+		divider,
+		m.styles.paneBody.Width(width).Render(body),
+	)
+}
+
+func (m *tuiModel) renderInput() string {
+	width := max(20, m.width-2)
+	label := " prompt "
+	dividerWidth := max(1, width-lipgloss.Width(label))
+	divider := m.styles.footerMuted.Render(label) + m.styles.paneDivider.Render(strings.Repeat("─", dividerWidth))
+	return lipgloss.JoinVertical(
+		lipgloss.Left,
+		divider,
+		m.styles.inputShell.Width(width).Render(m.input.View()),
+	)
+}
+
+func (m *tuiModel) renderSuggestions() string {
+	if len(m.suggestions) == 0 {
+		return ""
+	}
+	width := clamp(m.width-4, 24, 96)
+	visible, start := windowSuggestions(m.suggestions, m.sel, 5)
+	rows := make([]tuiui.ListRow, 0, len(visible))
+	for i, suggestion := range visible {
+		selected := start+i == m.sel
+		labelStyle := m.styles.suggestionLabel
+		detailStyle := m.styles.suggestionDetail
+		if selected {
+			labelStyle = m.styles.suggestionActiveLabel
+			detailStyle = m.styles.suggestionActiveDetail
+		}
+		rows = append(rows, tuiui.ListRow{
+			Label:       suggestion.Label,
+			Detail:      suggestion.Detail,
+			Selected:    selected,
+			MarkerStyle: m.styles.suggestionMarker,
+			LabelStyle:  labelStyle,
+			DetailStyle: detailStyle,
+		})
+	}
+	return strings.Join(tuiui.RenderListRows(rows, width), "\n")
+}
+
+func (m *tuiModel) renderFooter() string {
+	width := max(20, m.width-2)
 	profile := m.snapshot.Meta.ProviderProfile
 	if profile == "" {
 		profile = m.runtime.cfg.ActiveProviderName()
@@ -761,11 +1683,6 @@ func (m *tuiModel) renderHeader() string {
 	if model == "" {
 		model = m.runtime.cfg.ActiveProviderConfig().Model
 	}
-	state := string(m.snapshot.Meta.State)
-	if state == "" {
-		state = "idle"
-	}
-
 	taskCount := 0
 	approvals := 0
 	if m.snapshot.TaskBoard != nil {
@@ -777,111 +1694,202 @@ func (m *tuiModel) renderHeader() string {
 		}
 	}
 	if m.snapshot.Meta.ApprovalPending {
-		approvals++
-	}
-
-	left := fmt.Sprintf("papersilm  %s  %s/%s", sessionLabel(m.snapshot.Meta), m.snapshot.Meta.Language, m.snapshot.Meta.Style)
-	right := fmt.Sprintf("%s · %s · %s/%s · sources=%d · tasks=%d · approvals=%d",
-		state,
-		m.snapshot.Meta.PermissionMode,
-		profile,
-		model,
-		len(m.snapshot.Sources),
-		taskCount,
-		approvals,
-	)
-	if m.busy {
-		right += " · busy"
-	}
-	line := truncateRight(left+"  "+right, max(10, width-2))
-	return m.styles.header.Width(width).Render(line)
-}
-
-func (m *tuiModel) renderPane() string {
-	if !m.paneVisible {
-		return ""
-	}
-	width := max(20, m.width-2)
-	body := lipgloss.JoinVertical(
-		lipgloss.Left,
-		lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#E2E8F0")).Render(m.paneTitle),
-		m.pane.View(),
-	)
-	return m.styles.pane.Width(width).Render(body)
-}
-
-func (m *tuiModel) renderInput() string {
-	width := max(20, m.width-2)
-	return m.styles.input.Width(width).Render(m.input.View())
-}
-
-func (m *tuiModel) renderSuggestions() string {
-	if len(m.suggestions) == 0 {
-		return ""
-	}
-	width := max(20, m.width-2)
-	lines := make([]string, 0, len(m.suggestions))
-	for i, suggestion := range limitSuggestions(m.suggestions, 6) {
-		line := fmt.Sprintf("%s  %s", suggestion.Label, suggestion.Detail)
-		if i == m.sel {
-			lines = append(lines, m.styles.suggestionActive.Width(width-4).Render(truncateRight(line, width-6)))
-			continue
+		if approvals == 0 {
+			approvals = 1
 		}
-		lines = append(lines, m.styles.suggestionNormal.Render(truncateRight(line, width-6)))
 	}
-	return m.styles.suggestionBox.Width(width).Render(strings.Join(lines, "\n"))
+	leftParts := []string{string(m.snapshot.Meta.PermissionMode)}
+	if m.screen == tuiScreenMain {
+		if m.busy {
+			leftParts = append(leftParts, "running")
+		}
+		if strings.TrimSpace(m.mainStatus) != "" {
+			leftParts = append(leftParts, strings.TrimSpace(m.mainStatus))
+		}
+	} else if m.screen == tuiScreenTranscript {
+		leftParts = append(leftParts, "transcript")
+	}
+	if taskCount > 0 {
+		leftParts = append(leftParts, fmt.Sprintf("%d tasks", taskCount))
+	}
+	if approvals > 0 {
+		leftParts = append(leftParts, fmt.Sprintf("%d approvals", approvals))
+	}
+	if len(m.snapshot.Sources) > 0 {
+		leftParts = append(leftParts, fmt.Sprintf("%d sources", len(m.snapshot.Sources)))
+	}
+	left := strings.Join(leftParts, " · ")
+	rightParts := []string{}
+	if profile != "" || model != "" {
+		rightParts = append(rightParts, strings.Trim(strings.Join([]string{profile, model}, "/"), "/"))
+	}
+	if workspace := compactWorkspaceName(m.workspaceDisplayPath, m.workspaceName); workspace != "" {
+		rightParts = append(rightParts, workspace)
+	}
+	rightParts = append(rightParts, string(m.styles.theme))
+	right := strings.Join(rightParts, " · ")
+	metaLine := renderSplitLine(
+		width,
+		left,
+		right,
+		m.styles.footerMuted,
+		m.styles.footerMuted,
+	)
+
+	shortcuts := "Enter send · Tab complete · Ctrl+K commands · Ctrl+O transcript · Ctrl+R history · Ctrl+/ hints · Esc close"
+	if m.screen == tuiScreenTranscript {
+		shortcuts = "/ search · n/N next · q/Esc back · Ctrl+/ hints"
+	}
+	lines := []string{m.styles.footer.Width(width).Render(metaLine)}
+	if m.screen == tuiScreenMain && m.focus == tuiFocusHistorySearch {
+		lines = append(lines, m.styles.footer.Width(width).Render(m.renderHistorySearchFooterLine(width)))
+		return lipgloss.JoinVertical(lipgloss.Left, lines...)
+	}
+	if m.hintsVisible {
+		lines = append(lines, m.styles.footer.Width(width).Render(m.styles.footerMuted.Render(truncateRight(shortcuts, width))))
+	}
+	return lipgloss.JoinVertical(lipgloss.Left, lines...)
 }
 
-func (m *tuiModel) renderFooter() string {
-	width := max(20, m.width-2)
-	status := "Enter submit • Ctrl+J newline • Tab apply • Ctrl+K palette • /model picker • Esc close • Ctrl+C quit"
-	if m.status != "" {
-		status = status + "   " + m.status
+func (m *tuiModel) renderHistorySearchFooterLine(width int) string {
+	label := "search prompts:"
+	if len(m.historyMatches) == 0 && strings.TrimSpace(m.historyIn.Value()) != "" {
+		label = "no matching prompt:"
 	}
-	return m.styles.footer.Width(width).Render(truncateRight(status, width-2))
+	status := strings.TrimSpace(m.historyStatus)
+	left := m.styles.footerMuted.Render(label + " ")
+	inputWidth := max(8, width-lipgloss.Width(label)-lipgloss.Width(status)-6)
+	line := left + m.styles.body.Width(inputWidth).Render(m.historyIn.View())
+	if status != "" {
+		line += m.styles.footerMuted.Render(" · ") + m.styles.footerAccent.Render(status)
+	}
+	if lipgloss.Width(line) > width {
+		return truncateRight(line, width)
+	}
+	return line
+}
+
+func (m *tuiModel) renderModalOver(base string) string {
+	box := m.renderModalBox()
+	if strings.TrimSpace(box) == "" {
+		return base
+	}
+	return tuiui.OverlayBottom(base, box, m.width)
 }
 
 func (m *tuiModel) renderModal() string {
-	width := clamp(m.width-8, 40, 96)
-	bodyWidth := max(20, width-8)
-	header := m.styles.modalTitle.Render(m.modal.Title)
+	box := m.renderModalBox()
+	return lipgloss.Place(m.width, m.height, lipgloss.Left, lipgloss.Bottom, box)
+}
+
+func (m *tuiModel) renderModalBox() string {
+	width := max(40, m.width)
+	bodyWidth := max(20, width-4)
+	filter := m.modalIn.View()
 	if m.modal.Kind == tuiModalModels && m.modal.Provider != "" {
-		header = header + "\n" + m.styles.systemLine.Render("Profile: "+m.modal.Provider)
+		filter = m.styles.modalHint.Render("profile "+m.modal.Provider) + "\n  " + filter
 	}
-	lines := []string{header, m.modalIn.View()}
-	if m.modal.Message != "" {
-		lines = append(lines, m.styles.modalMessage.Render(m.modal.Message))
-	}
+	message := strings.TrimSpace(m.modal.Message)
 	if m.modal.Loading {
-		lines = append(lines, m.styles.progressLine.Render("Loading models..."))
+		if message != "" {
+			message += " · "
+		}
+		message += "Loading models..."
 	}
 	if len(m.modal.Visible) == 0 && !m.modal.Loading && strings.TrimSpace(m.modalIn.Value()) != "" {
-		lines = append(lines, m.styles.systemLine.Render("Press Enter to use the typed value."))
+		if message != "" {
+			message += " · "
+		}
+		message += "Press Enter to use the typed value."
 	}
-	for i, choice := range limitChoices(m.modal.Visible, 10) {
-		line := fmt.Sprintf("%s  %s", choice.Label, choice.Detail)
-		style := m.styles.suggestionNormal
+	choiceLimit := clamp(m.height/3, 5, 10)
+	visible, start := windowChoices(m.modal.Visible, m.modal.Selection, choiceLimit)
+	rows := make([]tuiui.ListRow, 0, len(visible))
+	for i, choice := range visible {
+		selected := start+i == m.modal.Selection
+		labelStyle := m.styles.suggestionLabel
+		detailStyle := m.styles.suggestionDetail
 		if choice.Disabled {
-			style = style.Foreground(lipgloss.Color("#FCA5A5"))
+			labelStyle = m.styles.modalDisabled
+			detailStyle = m.styles.modalHint
 		}
-		if i == m.modal.Selection {
-			style = m.styles.suggestionActive
+		if selected {
+			if !choice.Disabled {
+				labelStyle = m.styles.suggestionActiveLabel
+				detailStyle = m.styles.suggestionActiveDetail
+			}
 		}
-		lines = append(lines, style.Width(bodyWidth).Render(truncateRight(line, bodyWidth)))
+		rows = append(rows, tuiui.ListRow{
+			Label:       choice.Label,
+			Detail:      choice.Detail,
+			Selected:    selected,
+			Disabled:    choice.Disabled,
+			MarkerStyle: m.styles.suggestionMarker,
+			LabelStyle:  labelStyle,
+			DetailStyle: detailStyle,
+		})
 	}
-	box := m.styles.modal.Width(width).Render(strings.Join(lines, "\n"))
-	return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, box)
+	return tuiui.RenderBottomDrawer(tuiui.Drawer{
+		Width:        width,
+		Title:        m.modal.Title,
+		Message:      truncateRight(message, bodyWidth),
+		Filter:       filter,
+		Rows:         rows,
+		DividerStyle: m.styles.approvalLabel,
+		TitleStyle:   m.styles.modalTitle,
+		MutedStyle:   m.styles.modalMessage,
+		BodyStyle:    m.styles.body,
+	})
+}
+
+func (m *tuiModel) renderTranscriptScreen() string {
+	width := max(20, m.width-2)
+	lines := []string{m.renderHeader()}
+	lines = append(lines, m.transcript.View())
+	if m.focus == tuiFocusTranscriptSearch {
+		lines = append(lines, m.renderTranscriptSearchBar(width))
+	}
+	lines = append(lines, m.renderFooter())
+	return lipgloss.JoinVertical(lipgloss.Left, lines...)
+}
+
+func (m *tuiModel) renderTranscriptSearchBar(width int) string {
+	header := m.styles.footerMuted.Render("/ search transcript")
+	if len(m.searchMatches) > 0 {
+		header = header + m.styles.footerMuted.Render(" · ") + m.styles.footerAccent.Render(
+			fmt.Sprintf("%d/%d", m.searchSelection+1, len(m.searchMatches)),
+		)
+	} else if strings.TrimSpace(m.searchStatus) != "" {
+		header = header + m.styles.footerMuted.Render(" · ") + m.styles.footerAccent.Render(m.searchStatus)
+	}
+	search := lipgloss.JoinVertical(lipgloss.Left, header, m.searchIn.View())
+	return m.styles.inputShell.Width(width).Render(search)
 }
 
 func (m *tuiModel) renderTimelineContent(width int) string {
-	if len(m.items) == 0 {
-		return ""
+	return m.messageViewport.Content(width, len(m.items), func(index int, width int) string {
+		return m.renderTimelineItem(m.items[index], width)
+	})
+}
+
+func (m *tuiModel) renderTranscriptContent(width int) string {
+	entries := m.transcriptEntries()
+	if len(entries) == 0 {
+		return m.styles.footerMuted.Width(width).Render("No transcript entries yet.")
 	}
-	rendered := make([]string, 0, len(m.items))
-	for _, item := range m.items {
-		rendered = append(rendered, m.renderTimelineItem(item, width))
+	rendered := make([]string, 0, len(entries))
+	for idx, entry := range entries {
+		selected := len(m.searchMatches) > 0 && m.searchMatches[m.searchSelection] == idx
+		rendered = append(rendered, m.renderTranscriptEntry(entry, width, selected))
 	}
 	return strings.Join(rendered, "\n\n")
+}
+
+func (m *tuiModel) transcriptEntries() []protocol.TranscriptEntry {
+	if !m.transcriptFrozen {
+		return m.messageStore.Entries()
+	}
+	return m.messageStore.Frozen(m.transcriptFrozenLen)
 }
 
 func (m *tuiModel) renderPaneBody(width int) string {
@@ -891,43 +1899,857 @@ func (m *tuiModel) renderPaneBody(width int) string {
 	if strings.TrimSpace(m.paneBody) == "" {
 		return ""
 	}
-	if looksLikeMarkdown(m.paneBody) {
+	if paneLooksLikeMarkdown(m.paneBody) {
 		return m.renderMarkdown(m.paneBody, width)
 	}
-	return lipgloss.NewStyle().Width(width).Render(m.paneBody)
+	return m.styles.body.Width(width).Render(m.paneBody)
 }
 
 func (m *tuiModel) renderTimelineItem(item tuiTimelineItem, width int) string {
-	bodyWidth := max(10, width-6)
-	timestamp := item.CreatedAt.Local().Format("15:04:05")
+	bodyWidth := max(10, width-4)
+	timestamp := item.CreatedAt.Local().Format("15:04")
 	switch item.Kind {
 	case tuiItemUser:
-		body := lipgloss.NewStyle().Width(bodyWidth).Render(item.Body)
-		return m.styles.userCard.Width(width).Render(fmt.Sprintf("%s\n%s", timestamp+"  "+item.Title, body))
+		body := m.styles.body.Width(bodyWidth).Render(item.Body)
+		label := "you"
+		if text := strings.TrimSpace(item.Title); text != "" {
+			label = strings.ToLower(text)
+		}
+		header := renderMutedTimestamp(m.styles.userLabel, m.styles.footerMuted, label, timestamp)
+		return m.styles.userShell.Width(width).Render(header + "\n" + body)
 	case tuiItemAssistant:
 		body := item.Body
 		if item.Markdown {
 			body = m.renderMarkdown(item.Body, bodyWidth)
 		} else {
-			body = lipgloss.NewStyle().Width(bodyWidth).Render(item.Body)
+			body = m.styles.body.Width(bodyWidth).Render(item.Body)
 		}
-		return m.styles.assistantCard.Width(width).Render(fmt.Sprintf("%s\n%s", timestamp+"  "+item.Title, body))
+		if !shouldRenderAssistantHeader(item.Title) {
+			return body
+		}
+		header := renderMutedTimestamp(m.styles.assistantLabel, m.styles.footerMuted, strings.ToLower(item.Title), timestamp)
+		return lipgloss.JoinVertical(lipgloss.Left, header, body)
 	case tuiItemApproval:
-		body := lipgloss.NewStyle().Width(bodyWidth).Render(item.Body)
-		return m.styles.approvalCard.Width(width).Render(fmt.Sprintf("%s\n%s", timestamp+"  "+item.Title, body))
+		return m.renderDecisionItem(item, width, bodyWidth, timestamp)
 	case tuiItemError:
-		body := lipgloss.NewStyle().Width(bodyWidth).Render(item.Body)
-		return m.styles.errorCard.Width(width).Render(fmt.Sprintf("%s\n%s", timestamp+"  "+item.Title, body))
+		body := m.styles.body.Width(bodyWidth).Render(item.Body)
+		header := renderMutedTimestamp(m.styles.errorLabel, m.styles.footerMuted, item.Title, timestamp)
+		return m.styles.errorShell.Width(width).Render(header + "\n" + body)
 	case tuiItemProgress:
-		return m.styles.progressLine.Width(width).Render(fmt.Sprintf("%s  %s", timestamp, truncateRight(item.Body, width-2)))
+		line := "  " + strings.TrimSpace(item.Body)
+		return m.styles.progressLine.Width(width).Render(truncateRight(line, width))
 	default:
-		return m.styles.systemLine.Width(width).Render(fmt.Sprintf("%s  %s", timestamp, truncateRight(item.Body, width-2)))
+		if item.Subtype == "welcome" {
+			return m.renderWelcomeItem(item, width)
+		}
+		line := fmt.Sprintf("%s  %s", timestamp, item.Body)
+		return m.styles.systemLine.Width(width).Render(truncateRight(line, width))
+	}
+}
+
+func (m *tuiModel) renderWelcomeItem(item tuiTimelineItem, width int) string {
+	workspace := compactWorkspaceName(m.workspaceDisplayPath, m.workspaceName)
+	hint := strings.TrimSpace(item.Body)
+	if hint == "" {
+		hint = "Ask about this workspace or type /commands"
+	}
+	prefix := "Workspace ready"
+	if workspace != "" {
+		prefix = "Workspace " + truncateRight(workspace, max(8, width-20))
+	}
+	line := prefix + " · " + hint + " · /commands · /model"
+	return m.styles.footerMuted.Render(truncateRight(line, width))
+}
+
+func (m *tuiModel) renderDecisionItem(item tuiTimelineItem, width, bodyWidth int, timestamp string) string {
+	switch item.Subtype {
+	case transcriptSubtypeApprovalApproved:
+		body := m.styles.body.Width(bodyWidth).Render(item.Body)
+		header := renderMutedTimestamp(m.styles.successLabel, m.styles.footerMuted, firstNonEmpty(item.Title, "Approved"), timestamp)
+		return m.styles.successShell.Width(width).Render(header + "\n" + body)
+	case transcriptSubtypeApprovalRejected:
+		if item.Compact {
+			return renderCompactDecisionLine(m.styles.rejectionLabel, m.styles.footerMuted, firstNonEmpty(item.Title, "Rejected"), timestamp, item.Body, width)
+		}
+		body := m.styles.body.Width(bodyWidth).Render(item.Body)
+		header := renderMutedTimestamp(m.styles.rejectionLabel, m.styles.footerMuted, firstNonEmpty(item.Title, "Rejected"), timestamp)
+		return m.styles.rejectionShell.Width(width).Render(header + "\n" + body)
+	default:
+		body := m.styles.body.Width(bodyWidth).Render(item.Body)
+		if options := m.renderApprovalOptions(item, bodyWidth); strings.TrimSpace(options) != "" {
+			body = lipgloss.JoinVertical(lipgloss.Left, body, "", options)
+		}
+		header := renderMutedTimestamp(m.styles.approvalLabel, m.styles.footerMuted, firstNonEmpty(item.Title, "Approval Required"), timestamp)
+		return m.styles.approvalShell.Width(width).Render(header + "\n" + body)
+	}
+}
+
+func (m *tuiModel) renderApprovalOptions(item tuiTimelineItem, width int) string {
+	if !m.shouldRenderApprovalOptions(item) {
+		return ""
+	}
+	options := m.approvalOptions()
+	if len(options) == 0 {
+		return ""
+	}
+	m.approvalSelection = clamp(m.approvalSelection, 0, len(options)-1)
+	rows := make([]tuiui.ListRow, 0, len(options))
+	for i, option := range options {
+		selected := i == m.approvalSelection
+		labelStyle := m.styles.suggestionLabel
+		detailStyle := m.styles.suggestionDetail
+		if selected {
+			labelStyle = m.styles.suggestionActiveLabel
+			detailStyle = m.styles.suggestionActiveDetail
+		}
+		if option.Disabled {
+			labelStyle = m.styles.modalDisabled
+			detailStyle = m.styles.modalDisabled
+		}
+		rows = append(rows, tuiui.ListRow{
+			Label:       option.Label,
+			Detail:      option.Detail,
+			Selected:    selected,
+			Disabled:    option.Disabled,
+			MarkerStyle: m.styles.suggestionMarker,
+			LabelStyle:  labelStyle,
+			DetailStyle: detailStyle,
+		})
+	}
+	lines := tuiui.RenderListRows(rows, width)
+	hint := m.styles.footerMuted.Render("  Enter select · Tab/↑↓ move · A approve · R keep planning · I inspect")
+	lines = append(lines, hint)
+	return strings.Join(lines, "\n")
+}
+
+func (m *tuiModel) shouldRenderApprovalOptions(item tuiTimelineItem) bool {
+	if !m.approvalPanelActive() || item.Subtype != transcriptSubtypeApprovalRequired {
+		return false
+	}
+	for i := len(m.items) - 1; i >= 0; i-- {
+		candidate := m.items[i]
+		if candidate.Kind != tuiItemApproval || candidate.Subtype != transcriptSubtypeApprovalRequired {
+			continue
+		}
+		return candidate.CreatedAt.Equal(item.CreatedAt) && candidate.Body == item.Body && candidate.Title == item.Title
+	}
+	return true
+}
+
+func renderCompactDecisionLine(labelStyle, mutedStyle lipgloss.Style, title, timestamp, body string, width int) string {
+	title = strings.TrimSpace(title)
+	body = strings.TrimSpace(strings.ReplaceAll(body, "\n", " "))
+	available := max(0, width-lipgloss.Width(title)-lipgloss.Width(timestamp)-4)
+	if body != "" {
+		body = truncateRight(body, available)
+	}
+	line := labelStyle.Render(title) + mutedStyle.Render(" · "+timestamp)
+	if body != "" {
+		line += mutedStyle.Render("  " + body)
+	}
+	return line
+}
+
+func (m *tuiModel) renderTranscriptEntry(entry protocol.TranscriptEntry, width int, selected bool) string {
+	block := m.renderTimelineItem(timelineItemFromTranscriptEntry(entry), width)
+	if !selected {
+		return block
+	}
+	return m.styles.footerAccent.Render("› ") + block
+}
+
+func renderMutedTimestamp(labelStyle lipgloss.Style, timeStyle lipgloss.Style, label, timestamp string) string {
+	label = strings.TrimSpace(label)
+	if label == "" {
+		return timeStyle.Render(timestamp)
+	}
+	return labelStyle.Render(label) + timeStyle.Render(" · "+timestamp)
+}
+
+func shouldRenderAssistantHeader(title string) bool {
+	title = strings.TrimSpace(strings.ToLower(title))
+	return title != "" && title != "assistant"
+}
+
+func (m *tuiModel) refreshTranscriptSearch() {
+	m.searchMatches = transcriptSearchMatches(m.transcriptEntries(), m.searchIn.Value())
+	if len(m.searchMatches) == 0 {
+		m.searchSelection = 0
+		if strings.TrimSpace(m.searchIn.Value()) == "" {
+			m.searchStatus = ""
+		} else {
+			m.searchStatus = "No matches"
+		}
+		return
+	}
+	m.searchSelection = clamp(m.searchSelection, 0, len(m.searchMatches)-1)
+	m.jumpToSearchSelection()
+	m.searchStatus = fmt.Sprintf("%d matches", len(m.searchMatches))
+}
+
+func (m *tuiModel) refreshHistorySearch() {
+	mode := transcriptInputModeForValue(m.historyDraft)
+	if strings.TrimSpace(m.historyDraft) == "" {
+		mode = protocol.TranscriptInputPrompt
+	}
+	query := strings.TrimSpace(strings.ToLower(m.historyIn.Value()))
+	candidates := m.messageStore.History(mode)
+	if len(candidates) == 0 && len(m.history) > 0 {
+		for i := len(m.history) - 1; i >= 0; i-- {
+			value := strings.TrimSpace(m.history[i])
+			if value == "" || transcriptInputModeForValue(value) != mode {
+				continue
+			}
+			candidates = append(candidates, protocol.TranscriptEntry{
+				ID:        fmt.Sprintf("history_%d", i),
+				Type:      protocol.TranscriptEntryUser,
+				Title:     "History",
+				Body:      value,
+				InputMode: mode,
+			})
+		}
+	}
+	m.historyMatches = m.historyMatches[:0]
+	for _, entry := range candidates {
+		if query == "" || strings.Contains(strings.ToLower(entry.Body), query) || strings.Contains(strings.ToLower(entry.Title), query) {
+			m.historyMatches = append(m.historyMatches, entry)
+		}
+	}
+	if len(m.historyMatches) == 0 {
+		m.historySelection = 0
+		if query == "" {
+			m.historyStatus = "No prompt history"
+		} else {
+			m.historyStatus = "No matching prompt"
+		}
+		return
+	}
+	m.historySelection = clamp(m.historySelection, 0, len(m.historyMatches)-1)
+	m.historyStatus = fmt.Sprintf("%d/%d", m.historySelection+1, len(m.historyMatches))
+}
+
+func (m *tuiModel) moveHistorySearchSelection(delta int) {
+	if len(m.historyMatches) == 0 {
+		return
+	}
+	next := m.historySelection + delta
+	if next < 0 {
+		next = len(m.historyMatches) - 1
+	}
+	if next >= len(m.historyMatches) {
+		next = 0
+	}
+	m.historySelection = next
+	m.historyStatus = fmt.Sprintf("%d/%d", m.historySelection+1, len(m.historyMatches))
+}
+
+func (m *tuiModel) acceptHistorySearch(execute bool) tea.Cmd {
+	if len(m.historyMatches) == 0 {
+		return m.closeHistorySearch(false)
+	}
+	value := m.historyMatches[m.historySelection].Body
+	cmd := m.closeHistorySearch(false)
+	m.input.SetValue(value)
+	m.input.CursorEnd()
+	m.refreshSuggestions()
+	if !execute {
+		return cmd
+	}
+	_, submitCmd := m.submitInput()
+	if cmd == nil {
+		return submitCmd
+	}
+	return tea.Batch(cmd, submitCmd)
+}
+
+func (m *tuiModel) jumpToSearchSelection() {
+	if len(m.searchMatches) == 0 {
+		return
+	}
+	index := m.searchMatches[m.searchSelection]
+	offset := transcriptOffsetForIndex(m.transcriptEntries(), index, m.transcript.Width)
+	target := max(0, offset-max(0, m.transcript.Height/3))
+	m.transcript.SetYOffset(target)
+}
+
+func (m *tuiModel) updateScrollState() {
+	m.autoScroll = m.timeline.AtBottom()
+	if m.autoScroll {
+		m.unread = 0
+	}
+}
+
+func (m *tuiModel) jumpMainToBottom() {
+	m.autoScroll = true
+	m.unread = 0
+	m.timeline.GotoBottom()
+}
+
+func (m *tuiModel) shouldUseHistoryUp() bool {
+	if m.paneVisible || m.screen != tuiScreenMain {
+		return false
+	}
+	if strings.TrimSpace(m.input.Value()) == "" {
+		return true
+	}
+	return m.input.Line() == 0 && m.input.LineInfo().RowOffset == 0
+}
+
+func (m *tuiModel) shouldUseHistoryDown() bool {
+	if m.screen != tuiScreenMain {
+		return false
+	}
+	if m.historyState.active {
+		return true
+	}
+	return m.input.Line() >= max(0, m.input.LineCount()-1)
+}
+
+func (m *tuiModel) historyUp() {
+	mode := transcriptInputModeForValue(m.input.Value())
+	entries := m.messageStore.History(mode)
+	if len(entries) == 0 {
+		return
+	}
+	if !m.historyState.active || m.historyState.mode != mode {
+		m.historyState = tuiHistoryState{
+			active: true,
+			draft:  m.input.Value(),
+			mode:   mode,
+		}
+	}
+	if m.historyState.index >= len(entries) {
+		return
+	}
+	entry := entries[m.historyState.index]
+	m.historyState.index++
+	m.input.SetValue(entry.Body)
+	m.input.CursorEnd()
+}
+
+func (m *tuiModel) historyDown() {
+	if !m.historyState.active {
+		return
+	}
+	mode := m.historyState.mode
+	entries := m.messageStore.History(mode)
+	if len(entries) == 0 {
+		m.historyState = tuiHistoryState{}
+		return
+	}
+	if m.historyState.index > 1 {
+		m.historyState.index--
+		entry := entries[m.historyState.index-1]
+		m.input.SetValue(entry.Body)
+		m.input.CursorEnd()
+		return
+	}
+	m.input.SetValue(m.historyState.draft)
+	m.input.CursorEnd()
+	m.historyState = tuiHistoryState{}
+}
+
+func timelineItemFromTranscriptEntry(entry protocol.TranscriptEntry) tuiTimelineItem {
+	item := tuiTimelineItem{
+		Subtype:   entry.Subtype,
+		Title:     firstNonEmpty(entry.Title, string(entry.Type)),
+		Body:      entry.Body,
+		Markdown:  entry.Markdown,
+		CreatedAt: entry.CreatedAt,
+	}
+	switch entry.Type {
+	case protocol.TranscriptEntryUser, protocol.TranscriptEntryCommand:
+		item.Kind = tuiItemUser
+	case protocol.TranscriptEntryAssistant:
+		item.Kind = tuiItemAssistant
+	case protocol.TranscriptEntryApproval:
+		item.Kind = tuiItemApproval
+		item.Compact = entry.Subtype == transcriptSubtypeApprovalRejected && !strings.Contains(strings.TrimSpace(entry.Body), "\n")
+	case protocol.TranscriptEntryError:
+		item.Kind = tuiItemError
+	case protocol.TranscriptEntryProgress:
+		item.Kind = tuiItemProgress
+	default:
+		item.Kind = tuiItemSystem
+	}
+	if entry.Type == protocol.TranscriptEntryDivider {
+		item.Kind = tuiItemSystem
+		item.Body = strings.Repeat("─", 48)
+	}
+	return item
+}
+
+func transcriptDisplayForEntry(entry protocol.TranscriptEntry) (protocol.TranscriptVisibility, protocol.TranscriptPresentation) {
+	visibility := entry.Visibility
+	presentation := entry.Presentation
+	if visibility == "" {
+		switch entry.Type {
+		case protocol.TranscriptEntryUser, protocol.TranscriptEntryCommand, protocol.TranscriptEntryAssistant, protocol.TranscriptEntryDivider:
+			visibility = protocol.TranscriptVisibilityPrimary
+		case protocol.TranscriptEntryApproval:
+			visibility = protocol.TranscriptVisibilityDecision
+		case protocol.TranscriptEntryError:
+			visibility = protocol.TranscriptVisibilityDecision
+		case protocol.TranscriptEntryProgress:
+			visibility = protocol.TranscriptVisibilityActivity
+		default:
+			visibility = protocol.TranscriptVisibilityAmbient
+		}
+	}
+	if presentation == "" {
+		switch visibility {
+		case protocol.TranscriptVisibilityActivity:
+			presentation = protocol.TranscriptPresentationGrouped
+		case protocol.TranscriptVisibilityAmbient, protocol.TranscriptVisibilityDebug:
+			presentation = protocol.TranscriptPresentationHidden
+		default:
+			presentation = protocol.TranscriptPresentationBlock
+		}
+	}
+	return visibility, presentation
+}
+
+func activitySummary(entry protocol.TranscriptEntry, stats map[string]int, count int, started time.Time) string {
+	verb := activityVerb(entry, stats)
+	last := strings.TrimSpace(entry.Body)
+	if last == "" {
+		last = strings.TrimSpace(entry.Title)
+	}
+	parts := []string{verb}
+	statText := activityStatsText(stats)
+	if statText != "" {
+		parts = append(parts, statText)
+	} else if count > 1 {
+		parts = append(parts, fmt.Sprintf("%d updates", count))
+	}
+	if !started.IsZero() {
+		if elapsed := time.Since(started).Round(time.Second); elapsed > 0 {
+			parts = append(parts, elapsed.String())
+		}
+	}
+	if last != "" && statText == "" {
+		parts = append(parts, truncateRight(last, 72))
+	}
+	return strings.Join(parts, " · ")
+}
+
+func activityVerb(entry protocol.TranscriptEntry, stats map[string]int) string {
+	if stats["write"] > 0 {
+		return "Editing workspace"
+	}
+	if stats["command"] > 0 {
+		return "Running command"
+	}
+	if stats["download"] > 0 || stats["paper"] > 0 {
+		return "Preparing paper context"
+	}
+	if stats["search"] > 0 || stats["read"] > 0 {
+		return "Inspecting workspace"
+	}
+	text := strings.ToLower(strings.Join([]string{entry.Subtype, entry.Title, entry.Body}, " "))
+	switch {
+	case strings.Contains(text, "workspace"):
+		return "Inspecting workspace"
+	case strings.Contains(text, "source") || strings.Contains(text, "paper"):
+		return "Preparing paper context"
+	case strings.Contains(text, "artifact") || strings.Contains(text, "write"):
+		return "Writing artifact"
+	case strings.Contains(text, "skill"):
+		return "Running skill"
+	case strings.Contains(text, "plan"):
+		return "Planning"
+	case strings.Contains(text, "node"):
+		return "Running plan"
+	default:
+		return "Working"
+	}
+}
+
+func activityKey(entry protocol.TranscriptEntry) string {
+	text := strings.ToLower(strings.Join([]string{entry.Subtype, entry.Title, entry.Body}, " "))
+	switch {
+	case strings.Contains(text, "workspace_search") || strings.Contains(text, "search"):
+		return "search"
+	case strings.Contains(text, "workspace_inspect") || strings.Contains(text, "read") || strings.Contains(text, "open"):
+		return "read"
+	case strings.Contains(text, "workspace_edit") || strings.Contains(text, "write") || strings.Contains(text, "artifact"):
+		return "write"
+	case strings.Contains(text, "workspace_command") || strings.Contains(text, "shell") || strings.Contains(text, "command"):
+		return "command"
+	case strings.Contains(text, "download"):
+		return "download"
+	case strings.Contains(text, "paper") || strings.Contains(text, "source"):
+		return "paper"
+	default:
+		return ""
+	}
+}
+
+func shouldCountActivity(entry protocol.TranscriptEntry) bool {
+	text := strings.ToLower(entry.Body)
+	if strings.Contains(text, "completed") || strings.Contains(text, "failed") {
+		return false
+	}
+	return true
+}
+
+func activityStatsText(stats map[string]int) string {
+	if len(stats) == 0 {
+		return ""
+	}
+	ordered := []struct {
+		key   string
+		label string
+	}{
+		{key: "read", label: "read"},
+		{key: "search", label: "search"},
+		{key: "write", label: "write"},
+		{key: "command", label: "command"},
+		{key: "download", label: "download"},
+		{key: "paper", label: "paper"},
+	}
+	parts := make([]string, 0, len(ordered))
+	for _, item := range ordered {
+		n := stats[item.key]
+		if n <= 0 {
+			continue
+		}
+		label := item.label
+		if n > 1 {
+			label += "s"
+		}
+		parts = append(parts, fmt.Sprintf("%d %s", n, label))
+	}
+	return strings.Join(parts, " · ")
+}
+
+func executionToTranscriptEntries(input string, before, after protocol.SessionSnapshot, fallback string) []protocol.TranscriptEntry {
+	entries := make([]protocol.TranscriptEntry, 0, 2)
+	if decision, ok := approvalDecisionTranscriptEntry(input, before, after); ok {
+		entries = append(entries, decision)
+	}
+	if decision, ok := pendingApprovalTranscriptEntry(after); ok {
+		entries = append(entries, decision)
+		return entries
+	}
+
+	title := resultTitle(input)
+	if markdown := newestComparisonMarkdown(before, after); markdown != "" {
+		entries = append(entries, newTranscriptEntry(after.Meta.SessionID, protocol.TranscriptEntryAssistant, title, markdown, withTranscriptMarkdown(true)))
+		return entries
+	}
+	if markdown := newestDigestMarkdown(before, after); markdown != "" {
+		entries = append(entries, newTranscriptEntry(after.Meta.SessionID, protocol.TranscriptEntryAssistant, title, markdown, withTranscriptMarkdown(true)))
+		return entries
+	}
+	if markdown := newestSkillArtifactMarkdown(before, after); markdown != "" {
+		entries = append(entries, newTranscriptEntry(after.Meta.SessionID, protocol.TranscriptEntryAssistant, title, markdown, withTranscriptMarkdown(true)))
+		return entries
+	}
+
+	if len(entries) > 0 {
+		return entries
+	}
+
+	entryType := protocol.TranscriptEntryAssistant
+	if strings.TrimSpace(fallback) == "" {
+		entryType = protocol.TranscriptEntrySystem
+	}
+	if strings.TrimSpace(input) == "/clear" {
+		entryType = protocol.TranscriptEntryDivider
+	}
+	entries = append(entries, newTranscriptEntry(after.Meta.SessionID, entryType, title, fallback, withTranscriptMarkdown(looksLikeMarkdown(fallback))))
+	return entries
+}
+
+func approvalDecisionTranscriptEntry(input string, before, after protocol.SessionSnapshot) (protocol.TranscriptEntry, bool) {
+	fields := strings.Fields(strings.TrimSpace(input))
+	if len(fields) == 0 {
+		return protocol.TranscriptEntry{}, false
+	}
+	switch fields[0] {
+	case "/approve":
+		title, body := summarizeSessionApproval(before, after)
+		if title == "" {
+			return protocol.TranscriptEntry{}, false
+		}
+		return newTranscriptEntry(
+			after.Meta.SessionID,
+			protocol.TranscriptEntryApproval,
+			title,
+			body,
+			withTranscriptSubtype(transcriptSubtypeApprovalApproved),
+		), true
+	case "/reject":
+		title, body, compact := summarizeSessionRejection(before, after)
+		if title == "" {
+			return protocol.TranscriptEntry{}, false
+		}
+		entry := newTranscriptEntry(
+			after.Meta.SessionID,
+			protocol.TranscriptEntryApproval,
+			title,
+			body,
+			withTranscriptSubtype(transcriptSubtypeApprovalRejected),
+		)
+		if compact {
+			entry.RenderState = protocol.TranscriptRenderCollapsed
+		}
+		return entry, true
+	case "/task":
+		if len(fields) < 3 {
+			return protocol.TranscriptEntry{}, false
+		}
+		switch fields[1] {
+		case "approve":
+			title, body := summarizeTaskApproval(fields[2], before, after)
+			if title == "" {
+				return protocol.TranscriptEntry{}, false
+			}
+			return newTranscriptEntry(
+				after.Meta.SessionID,
+				protocol.TranscriptEntryApproval,
+				title,
+				body,
+				withTranscriptSubtype(transcriptSubtypeApprovalApproved),
+			), true
+		case "reject":
+			title, body, compact := summarizeTaskRejection(fields[2], before, after)
+			if title == "" {
+				return protocol.TranscriptEntry{}, false
+			}
+			entry := newTranscriptEntry(
+				after.Meta.SessionID,
+				protocol.TranscriptEntryApproval,
+				title,
+				body,
+				withTranscriptSubtype(transcriptSubtypeApprovalRejected),
+			)
+			if compact {
+				entry.RenderState = protocol.TranscriptRenderCollapsed
+			}
+			return entry, true
+		}
+	}
+	return protocol.TranscriptEntry{}, false
+}
+
+func pendingApprovalTranscriptEntry(after protocol.SessionSnapshot) (protocol.TranscriptEntry, bool) {
+	if !after.Meta.ApprovalPending && after.Meta.State != protocol.SessionStateAwaitingApproval {
+		return protocol.TranscriptEntry{}, false
+	}
+	body := summarizePendingApproval(after)
+	if strings.TrimSpace(body) == "" {
+		body = "Plan is waiting for approval."
+	}
+	return newTranscriptEntry(
+		after.Meta.SessionID,
+		protocol.TranscriptEntryApproval,
+		"Approval Required",
+		body,
+		withTranscriptSubtype(transcriptSubtypeApprovalRequired),
+	), true
+}
+
+func summarizePendingApproval(after protocol.SessionSnapshot) string {
+	planID := firstNonEmpty(after.Meta.ActivePlanID, taskBoardPlanID(after.TaskBoard), planResultID(after.Plan))
+	tasks := awaitingApprovalTasks(after.TaskBoard)
+	parts := make([]string, 0, 4)
+	if planID != "" {
+		parts = append(parts, "Plan "+planID)
+	}
+	if len(tasks) > 0 {
+		parts = append(parts, fmt.Sprintf("%d pending %s", len(tasks), pluralWord(len(tasks), "task")))
+		parts = append(parts, strings.Join(tasks, ", "))
+	}
+	if after.Meta.ActiveCheckpointID != "" {
+		parts = append(parts, "checkpoint "+after.Meta.ActiveCheckpointID)
+	}
+	return strings.Join(parts, " · ")
+}
+
+func taskBoardPlanID(board *protocol.TaskBoard) string {
+	if board == nil {
+		return ""
+	}
+	return strings.TrimSpace(board.PlanID)
+}
+
+func planResultID(plan *protocol.PlanResult) string {
+	if plan == nil {
+		return ""
+	}
+	return strings.TrimSpace(plan.PlanID)
+}
+
+func awaitingApprovalTasks(board *protocol.TaskBoard) []string {
+	if board == nil {
+		return nil
+	}
+	tasks := make([]string, 0, len(board.Tasks))
+	for _, task := range board.Tasks {
+		if task.Status != protocol.TaskStatusAwaitingApproval {
+			continue
+		}
+		label := firstNonEmpty(task.Title, task.NodeID, task.TaskID)
+		if label == "" {
+			continue
+		}
+		tasks = append(tasks, truncateRight(label, 36))
+		if len(tasks) >= 3 {
+			break
+		}
+	}
+	return tasks
+}
+
+func pluralWord(count int, singular string) string {
+	if count == 1 {
+		return singular
+	}
+	return singular + "s"
+}
+
+func summarizeSessionApproval(before, after protocol.SessionSnapshot) (string, string) {
+	pendingBefore := pendingApprovalCount(before)
+	pendingAfter := pendingApprovalCount(after)
+	bodyParts := []string{"Approved the current checkpoint."}
+	if pendingBefore > pendingAfter {
+		bodyParts = append(bodyParts, fmt.Sprintf("%d approval item(s) were released.", pendingBefore-pendingAfter))
+	}
+	switch after.Meta.State {
+	case protocol.SessionStateCompleted:
+		bodyParts = append(bodyParts, "Execution completed.")
+	case protocol.SessionStateAwaitingApproval:
+		bodyParts = append(bodyParts, fmt.Sprintf("%d task(s) still need approval.", pendingAfter))
+	default:
+		bodyParts = append(bodyParts, "Execution resumed.")
+	}
+	return "Approved", strings.Join(bodyParts, " ")
+}
+
+func summarizeSessionRejection(before, after protocol.SessionSnapshot) (string, string, bool) {
+	pendingBefore := pendingApprovalCount(before)
+	pendingAfter := pendingApprovalCount(after)
+	bodyParts := []string{"Kept the plan open without running the checkpoint."}
+	if pendingBefore > 0 && pendingAfter < pendingBefore {
+		bodyParts = append(bodyParts, fmt.Sprintf("%d approval item(s) were cleared.", pendingBefore-pendingAfter))
+	}
+	if after.Meta.State == protocol.SessionStatePlanned {
+		bodyParts = append(bodyParts, "You can keep editing the request or inspect tasks.")
+	}
+	return "Rejected", strings.Join(bodyParts, " "), true
+}
+
+func summarizeTaskApproval(taskID string, before, after protocol.SessionSnapshot) (string, string) {
+	beforeTask, _ := findTaskByID(before.TaskBoard, taskID)
+	afterTask, ok := findTaskByID(after.TaskBoard, taskID)
+	name := taskDisplayName(afterTask, beforeTask, taskID)
+	if !ok && beforeTask.TaskID == "" {
+		return "", ""
+	}
+	bodyParts := []string{fmt.Sprintf("Approved %s.", name)}
+	if status := friendlyTaskStatus(afterTask.Status); status != "" {
+		bodyParts = append(bodyParts, fmt.Sprintf("Status is now %s.", status))
+	}
+	if after.Meta.ApprovalPending {
+		bodyParts = append(bodyParts, fmt.Sprintf("%d task(s) still need approval.", pendingApprovalCount(after)))
+	} else if after.Meta.State == protocol.SessionStateCompleted {
+		bodyParts = append(bodyParts, "The active run is complete.")
+	} else {
+		bodyParts = append(bodyParts, "Execution resumed.")
+	}
+	return "Approved", strings.Join(bodyParts, " ")
+}
+
+func summarizeTaskRejection(taskID string, before, after protocol.SessionSnapshot) (string, string, bool) {
+	beforeTask, _ := findTaskByID(before.TaskBoard, taskID)
+	afterTask, ok := findTaskByID(after.TaskBoard, taskID)
+	name := taskDisplayName(afterTask, beforeTask, taskID)
+	if !ok && beforeTask.TaskID == "" {
+		return "", "", false
+	}
+	summary := fmt.Sprintf("%s was rejected.", name)
+	if status := friendlyTaskStatus(afterTask.Status); status != "" {
+		summary = fmt.Sprintf("%s Status is now %s.", summary, status)
+	}
+	reason := strings.TrimSpace(afterTask.Error)
+	if reason == "" {
+		return "Rejected", summary, true
+	}
+	body := summary + "\n\nReason: " + reason
+	return "Rejected", body, false
+}
+
+func pendingApprovalCount(snapshot protocol.SessionSnapshot) int {
+	total := 0
+	if snapshot.TaskBoard != nil {
+		for _, task := range snapshot.TaskBoard.Tasks {
+			if task.Status == protocol.TaskStatusAwaitingApproval {
+				total++
+			}
+		}
+	}
+	if snapshot.Meta.ApprovalPending {
+		if total == 0 {
+			total = 1
+		}
+	}
+	return total
+}
+
+func taskDisplayName(afterTask, beforeTask protocol.TaskCard, fallback string) string {
+	for _, task := range []protocol.TaskCard{afterTask, beforeTask} {
+		if strings.TrimSpace(task.Title) != "" {
+			return task.Title
+		}
+		if strings.TrimSpace(task.TaskID) != "" {
+			return task.TaskID
+		}
+	}
+	return fallback
+}
+
+func friendlyTaskStatus(status protocol.TaskStatus) string {
+	text := strings.TrimSpace(string(status))
+	if text == "" {
+		return ""
+	}
+	return strings.ReplaceAll(text, "_", " ")
+}
+
+func transcriptOffsetForIndex(entries []protocol.TranscriptEntry, index, width int) int {
+	if index <= 0 || len(entries) == 0 {
+		return 0
+	}
+	offset := 0
+	for i := 0; i < len(entries) && i < index; i++ {
+		block := timelineItemFromTranscriptEntry(entries[i])
+		rendered := renderTimelinePreview(block, max(20, width))
+		offset += lipgloss.Height(rendered) + 2
+	}
+	return offset
+}
+
+func renderTimelinePreview(item tuiTimelineItem, width int) string {
+	bodyWidth := max(10, width-4)
+	timestamp := item.CreatedAt.Local().Format("15:04")
+	switch item.Kind {
+	case tuiItemUser:
+		label := firstNonEmpty(strings.ToLower(strings.TrimSpace(item.Title)), "you")
+		return label + " · " + timestamp + "\n" + truncateRight(item.Body, bodyWidth)
+	case tuiItemAssistant:
+		return strings.ToLower(item.Title) + " · " + timestamp + "\n" + truncateRight(item.Body, bodyWidth)
+	case tuiItemApproval, tuiItemError:
+		return item.Title + " · " + timestamp + "\n" + truncateRight(item.Body, bodyWidth)
+	default:
+		return timestamp + "  " + truncateRight(item.Body, width)
 	}
 }
 
 func (m *tuiModel) renderMarkdown(markdown string, width int) string {
 	renderer, err := glamour.NewTermRenderer(
-		glamour.WithAutoStyle(),
+		glamour.WithStandardStyle(m.styles.markdownStyle),
 		glamour.WithWordWrap(max(20, width)),
 	)
 	if err != nil {
@@ -962,23 +2784,47 @@ func runPromptCmd(ctx context.Context, runtime *tuiRuntimeManager, snapshot prot
 }
 
 func runSlashCmd(ctx context.Context, runtime *tuiRuntimeManager, snapshot protocol.SessionSnapshot, line, paneTitle string, pane bool) tea.Cmd {
+	return runSlashCmdWithHistory(ctx, runtime, snapshot, line, paneTitle, pane, false)
+}
+
+func runSlashCmdWithHistory(ctx context.Context, runtime *tuiRuntimeManager, snapshot protocol.SessionSnapshot, line, paneTitle string, pane, skipHistory bool) tea.Cmd {
 	return func() tea.Msg {
 		before := snapshot
 		after := snapshot
 		result, err := executeSlashCommandText(ctx, runtime.svc, runtime.store, &after, line)
 		if err != nil {
-			return tuiExecDoneMsg{Input: line, Before: before, After: after, Err: err}
+			return tuiExecDoneMsg{Input: line, SkipHistory: skipHistory, Before: before, After: after, Err: err}
 		}
 		if paneTitle == "" {
 			paneTitle = result.PaneTitle
 		}
 		return tuiExecDoneMsg{
-			Input:     line,
-			Before:    before,
-			After:     after,
-			Text:      result.Text,
-			Pane:      pane || result.Pane,
-			PaneTitle: paneTitle,
+			Input:       line,
+			SkipHistory: skipHistory,
+			Before:      before,
+			After:       after,
+			Text:        result.Text,
+			Pane:        pane || result.Pane,
+			PaneTitle:   paneTitle,
+		}
+	}
+}
+
+func runApprovalRejectCmd(ctx context.Context, runtime *tuiRuntimeManager, snapshot protocol.SessionSnapshot) tea.Cmd {
+	return func() tea.Msg {
+		before := snapshot
+		result, err := runtime.svc.Approve(ctx, snapshot.Meta.SessionID, false, "")
+		after := snapshot
+		if err == nil {
+			after = result.Session
+		}
+		return tuiExecDoneMsg{
+			Input:       "/reject",
+			SkipHistory: true,
+			Before:      before,
+			After:       after,
+			Text:        "Kept the plan open without running the checkpoint.",
+			Err:         err,
 		}
 	}
 }
@@ -1028,7 +2874,7 @@ func eventToTimelineItem(event protocol.StreamEvent) tuiTimelineItem {
 		if summary := approvalSummary(event.Payload); summary != "" {
 			body = summary
 		}
-		return tuiTimelineItem{Kind: tuiItemApproval, Title: "Approval Required", Body: body, CreatedAt: event.CreatedAt}
+		return tuiTimelineItem{Kind: tuiItemApproval, Subtype: transcriptSubtypeApprovalRequired, Title: "Approval Required", Body: body, CreatedAt: event.CreatedAt}
 	case protocol.EventError:
 		return tuiTimelineItem{Kind: tuiItemError, Title: "Error", Body: body, CreatedAt: event.CreatedAt}
 	case protocol.EventProgress:
@@ -1153,6 +2999,9 @@ func progressSummary(payload interface{}) string {
 	switch v := payload.(type) {
 	case protocol.PlanProgress:
 		parts := []string{string(v.Status)}
+		if v.Tool != "" {
+			parts = append(parts, "tool="+v.Tool)
+		}
 		if v.NodeID != "" {
 			parts = append(parts, "node="+v.NodeID)
 		}
@@ -1168,6 +3017,9 @@ func progressSummary(payload interface{}) string {
 		return strings.Join(parts, " · ")
 	case map[string]interface{}:
 		parts := []string{anyString(v["status"])}
+		if tool := anyString(v["tool"]); tool != "" {
+			parts = append(parts, "tool="+tool)
+		}
 		if nodeID := anyString(v["node_id"]); nodeID != "" {
 			parts = append(parts, "node="+nodeID)
 		}
@@ -1215,6 +3067,8 @@ func resultTitle(input string) string {
 		return "Run Result"
 	case "/approve":
 		return "Approval Result"
+	case "/reject":
+		return "Approval Result"
 	case "/task":
 		if len(fields) > 1 {
 			return "Task " + strings.Title(fields[1])
@@ -1229,11 +3083,33 @@ func resultTitle(input string) string {
 	return "Command Result"
 }
 
+func isHintsToggleKey(value string) bool {
+	switch strings.TrimSpace(value) {
+	case "ctrl+/", "ctrl+_":
+		return true
+	default:
+		return false
+	}
+}
+
 func looksLikeMarkdown(text string) bool {
 	if strings.TrimSpace(text) == "" {
 		return false
 	}
 	markers := []string{"# ", "## ", "### ", "```", "\n- ", "\n1. ", "| ---", "\n> "}
+	for _, marker := range markers {
+		if strings.Contains(text, marker) {
+			return true
+		}
+	}
+	return false
+}
+
+func paneLooksLikeMarkdown(text string) bool {
+	if strings.TrimSpace(text) == "" {
+		return false
+	}
+	markers := []string{"# ", "## ", "### ", "```", "| ---", "\n> "}
 	for _, marker := range markers {
 		if strings.Contains(text, marker) {
 			return true
@@ -1252,11 +3128,69 @@ func sessionLabel(meta protocol.SessionMeta) string {
 	return meta.SessionID[:14]
 }
 
+func themeCommandValue(line string) (config.ThemeSetting, bool) {
+	theme, ok, err := parseThemeCommand(line)
+	return theme, ok && err == nil
+}
+
+func parseThemeCommand(line string) (config.ThemeSetting, bool, error) {
+	fields := strings.Fields(strings.TrimSpace(line))
+	if len(fields) == 0 || fields[0] != "/theme" {
+		return "", false, nil
+	}
+	if len(fields) != 2 {
+		return "", true, fmt.Errorf("usage: /theme <auto|dark|light>")
+	}
+	theme := config.ThemeSetting(fields[1])
+	if !theme.Valid() {
+		return "", true, fmt.Errorf("usage: /theme <auto|dark|light>")
+	}
+	return theme, true, nil
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if strings.TrimSpace(value) != "" {
+			return value
+		}
+	}
+	return ""
+}
+
 func limitChoices(choices []tuiChoice, limit int) []tuiChoice {
 	if limit <= 0 || len(choices) <= limit {
 		return choices
 	}
 	return choices[:limit]
+}
+
+func windowSuggestions(suggestions []tuiSuggestion, selected, limit int) ([]tuiSuggestion, int) {
+	start, end := windowRange(len(suggestions), selected, limit)
+	if start == end {
+		return nil, 0
+	}
+	return suggestions[start:end], start
+}
+
+func windowChoices(choices []tuiChoice, selected, limit int) ([]tuiChoice, int) {
+	start, end := windowRange(len(choices), selected, limit)
+	if start == end {
+		return nil, 0
+	}
+	return choices[start:end], start
+}
+
+func windowRange(total, selected, limit int) (int, int) {
+	if total <= 0 {
+		return 0, 0
+	}
+	if limit <= 0 || total <= limit {
+		return 0, total
+	}
+	selected = clamp(selected, 0, total-1)
+	start := max(0, min(selected-limit/2, total-limit))
+	end := min(total, start+limit)
+	return start, end
 }
 
 func anyString(value interface{}) string {
@@ -1297,6 +3231,54 @@ func truncateRight(value string, width int) string {
 	return string(runes[:width-1]) + "…"
 }
 
+func compactWorkspaceName(pathValue, fallback string) string {
+	if name := strings.TrimSpace(fallback); name != "" {
+		return name
+	}
+	pathValue = strings.TrimSpace(pathValue)
+	if pathValue == "" {
+		return ""
+	}
+	name := filepath.Base(pathValue)
+	if name == "." || name == string(filepath.Separator) {
+		return pathValue
+	}
+	return name
+}
+
+func renderSplitLine(width int, left, right string, leftStyle, rightStyle lipgloss.Style) string {
+	width = max(0, width)
+	if width == 0 {
+		return ""
+	}
+	rightBudget := 0
+	if right != "" && width >= 36 {
+		rightBudget = clamp(width/2, 12, min(44, width-12))
+	}
+	leftBudget := width
+	if rightBudget > 0 {
+		leftBudget = max(0, width-rightBudget-1)
+	}
+	left = truncateRight(left, leftBudget)
+	right = truncateRight(right, rightBudget)
+	if right == "" {
+		return leftStyle.Render(truncateRight(left, width))
+	}
+	gap := max(1, width-lipgloss.Width(left)-lipgloss.Width(right))
+	return leftStyle.Render(left) + strings.Repeat(" ", gap) + rightStyle.Render(right)
+}
+
+func padRight(value string, width int) string {
+	if width <= 0 {
+		return value
+	}
+	padding := width - lipgloss.Width(value)
+	if padding <= 0 {
+		return value
+	}
+	return value + strings.Repeat(" ", padding)
+}
+
 func clamp(value, minValue, maxValue int) int {
 	if value < minValue {
 		return minValue
@@ -1309,6 +3291,13 @@ func clamp(value, minValue, maxValue int) int {
 
 func max(a, b int) int {
 	if a > b {
+		return a
+	}
+	return b
+}
+
+func min(a, b int) int {
+	if a < b {
 		return a
 	}
 	return b

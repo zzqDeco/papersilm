@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"golang.org/x/term"
@@ -17,17 +18,40 @@ import (
 	"github.com/zzqDeco/papersilm/pkg/protocol"
 )
 
+var ErrTUIStartup = errors.New("tui startup failed")
+
 func loadConfig() (config.Config, error) {
 	return config.Load(config.ConfigPath(""))
 }
 
+func resolveWorkspaceStoreDir() (string, error) {
+	root, err := os.Getwd()
+	if err != nil {
+		return "", err
+	}
+	root, err = filepath.Abs(root)
+	if err != nil {
+		return "", err
+	}
+	if resolved, err := filepath.EvalSymlinks(root); err == nil && strings.TrimSpace(resolved) != "" {
+		root = resolved
+	}
+	return filepath.Join(root, ".papersilm"), nil
+}
+
 func buildServiceRuntime(ctx context.Context, cfg config.Config, sink core.EventSink) (config.Config, *storage.Store, *core.Service, error) {
 	cfg.Normalize()
-	store := storage.New(cfg.BaseDir)
+	workspaceStoreDir, err := resolveWorkspaceStoreDir()
+	if err != nil {
+		return config.Config{}, nil, nil, err
+	}
+	store := storage.New(workspaceStoreDir)
 	if err := store.Ensure(); err != nil {
 		return config.Config{}, nil, nil, err
 	}
-	p := pipeline.New(cfg)
+	runtimeCfg := cfg
+	runtimeCfg.BaseDir = workspaceStoreDir
+	p := pipeline.New(runtimeCfg)
 	registry := tools.New(p)
 	ag := agent.New(registry, cfg)
 	svc := core.New(cfg, store, ag, sink)

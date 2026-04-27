@@ -19,7 +19,8 @@ import (
 )
 
 type Store struct {
-	baseDir string
+	baseDir       string
+	workspaceRoot string
 }
 
 type workspaceState struct {
@@ -32,16 +33,33 @@ type workspaceState struct {
 }
 
 func New(baseDir string) *Store {
-	return &Store{baseDir: baseDir}
+	baseDir = filepath.Clean(strings.TrimSpace(baseDir))
+	workspaceRoot := baseDir
+	if filepath.Base(baseDir) == ".papersilm" {
+		workspaceRoot = filepath.Dir(baseDir)
+	}
+	return &Store{
+		baseDir:       baseDir,
+		workspaceRoot: workspaceRoot,
+	}
 }
 
 func (s *Store) BaseDir() string {
 	return s.baseDir
 }
 
+func (s *Store) WorkspaceRoot() string {
+	return s.workspaceRoot
+}
+
 func (s *Store) Ensure() error {
 	for _, dir := range []string{
 		filepath.Join(s.baseDir, "sessions"),
+		filepath.Join(s.baseDir, "index"),
+		filepath.Join(s.baseDir, "cache", "papers"),
+		filepath.Join(s.baseDir, "cache", "alphaxiv"),
+		filepath.Join(s.baseDir, "cache", "pages"),
+		filepath.Join(s.baseDir, "ops", "commands"),
 		filepath.Join(s.baseDir, "output-styles"),
 		filepath.Join(s.baseDir, "skills"),
 	} {
@@ -49,7 +67,7 @@ func (s *Store) Ensure() error {
 			return err
 		}
 	}
-	return nil
+	return s.RefreshWorkspaceState()
 }
 
 func (s *Store) SessionsDir() string {
@@ -110,6 +128,10 @@ func (s *Store) skillArtifactsDir(sessionID string) string {
 
 func (s *Store) eventsPath(sessionID string) string {
 	return filepath.Join(s.SessionDir(sessionID), "events.jsonl")
+}
+
+func (s *Store) transcriptPath(sessionID string) string {
+	return filepath.Join(s.SessionDir(sessionID), "transcript.jsonl")
 }
 
 func (s *Store) CreateSession(meta protocol.SessionMeta) error {
@@ -510,14 +532,22 @@ func (s *Store) LoadArtifactManifests(sessionID string) ([]protocol.ArtifactMani
 }
 
 func (s *Store) AppendEvent(sessionID string, event protocol.StreamEvent) error {
-	if err := os.MkdirAll(s.SessionDir(sessionID), 0o755); err != nil {
+	return s.appendJSONL(s.eventsPath(sessionID), event)
+}
+
+func (s *Store) AppendTranscriptEntry(sessionID string, entry protocol.TranscriptEntry) error {
+	return s.appendJSONL(s.transcriptPath(sessionID), entry)
+}
+
+func (s *Store) appendJSONL(path string, value interface{}) error {
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return err
 	}
-	raw, err := json.Marshal(event)
+	raw, err := json.Marshal(value)
 	if err != nil {
 		return err
 	}
-	f, err := os.OpenFile(s.eventsPath(sessionID), os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o644)
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o644)
 	if err != nil {
 		return err
 	}
@@ -527,37 +557,48 @@ func (s *Store) AppendEvent(sessionID string, event protocol.StreamEvent) error 
 }
 
 func (s *Store) LoadRecentEvents(sessionID string, limit int) ([]protocol.StreamEvent, error) {
-	raw, err := os.ReadFile(s.eventsPath(sessionID))
-	if errors.Is(err, os.ErrNotExist) {
-		return nil, nil
-	}
-	if err != nil {
-		return nil, err
-	}
 	if limit <= 0 {
 		limit = 200
 	}
-
-	scanner := bufio.NewScanner(strings.NewReader(string(raw)))
-	events := make([]protocol.StreamEvent, 0, limit)
-	for scanner.Scan() {
-		line := strings.TrimSpace(scanner.Text())
-		if line == "" {
-			continue
-		}
-		var event protocol.StreamEvent
-		if err := json.Unmarshal([]byte(line), &event); err != nil {
-			continue
-		}
-		events = append(events, event)
-	}
-	if err := scanner.Err(); err != nil {
+	events, err := loadJSONL[protocol.StreamEvent](s.eventsPath(sessionID))
+	if err != nil {
 		return nil, err
 	}
 	if len(events) <= limit {
 		return events, nil
 	}
 	return append([]protocol.StreamEvent(nil), events[len(events)-limit:]...), nil
+}
+
+func (s *Store) LoadTranscript(sessionID string) ([]protocol.TranscriptEntry, error) {
+	return loadJSONL[protocol.TranscriptEntry](s.transcriptPath(sessionID))
+}
+
+func loadJSONL[T any](path string) ([]T, error) {
+	raw, err := os.ReadFile(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	scanner := bufio.NewScanner(strings.NewReader(string(raw)))
+	values := make([]T, 0)
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if line == "" {
+			continue
+		}
+		var value T
+		if err := json.Unmarshal([]byte(line), &value); err != nil {
+			continue
+		}
+		values = append(values, value)
+	}
+	if err := scanner.Err(); err != nil {
+		return nil, err
+	}
+	return values, nil
 }
 
 func (s *Store) Snapshot(sessionID string) (protocol.SessionSnapshot, error) {
@@ -606,12 +647,17 @@ func (s *Store) Snapshot(sessionID string) (protocol.SessionSnapshot, error) {
 	if err != nil {
 		return protocol.SessionSnapshot{}, err
 	}
+	workspace, err := s.LoadWorkspaceSummary()
+	if err != nil {
+		return protocol.SessionSnapshot{}, err
+	}
 	board := taskboard.Build(meta, plan, execution, artifacts, workspaces, visibleSkillRuns)
 	if plan != nil {
 		plan.TaskBoard = board
 	}
 	return protocol.SessionSnapshot{
 		Meta:           meta,
+		Workspace:      workspace,
 		Sources:        sources,
 		Plan:           plan,
 		TaskBoard:      board,

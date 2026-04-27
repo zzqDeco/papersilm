@@ -108,7 +108,7 @@ func (s *Service) ensureLocalPDF(ctx context.Context, sessionID string, ref prot
 	if err != nil {
 		return "", err
 	}
-	cachePath := filepath.Join(s.config.BaseDir, "sessions", sessionID, "cache", ref.PaperID+".pdf")
+	cachePath := filepath.Join(s.config.BaseDir, "cache", "papers", ref.PaperID+".pdf")
 	if _, err := os.Stat(cachePath); err == nil {
 		return cachePath, nil
 	}
@@ -277,7 +277,8 @@ func classifySectionLine(line string) string {
 }
 
 func (s *Service) pagesCachePath(sessionID, paperID string) string {
-	return filepath.Join(s.config.BaseDir, "sessions", sessionID, "cache", paperID+".pages.json")
+	_ = sessionID
+	return filepath.Join(s.config.BaseDir, "cache", "pages", paperID+".pages.json")
 }
 
 func (s *Service) writePagesCache(sessionID, paperID string, pages []Page) error {

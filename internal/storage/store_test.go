@@ -912,6 +912,71 @@ func TestLoadRecentEventsReturnsNewestValidEvents(t *testing.T) {
 	}
 }
 
+func TestLoadTranscriptSkipsBrokenLines(t *testing.T) {
+	t.Parallel()
+
+	store := New(t.TempDir())
+	if err := store.Ensure(); err != nil {
+		t.Fatalf("Ensure: %v", err)
+	}
+
+	meta := protocol.SessionMeta{
+		SessionID:      "sess_transcript",
+		State:          protocol.SessionStateIdle,
+		PermissionMode: protocol.PermissionModeConfirm,
+		Language:       "zh",
+		Style:          "distill",
+		CreatedAt:      time.Now().UTC(),
+		UpdatedAt:      time.Now().UTC(),
+	}
+	if err := store.CreateSession(meta); err != nil {
+		t.Fatalf("CreateSession: %v", err)
+	}
+	for _, entry := range []protocol.TranscriptEntry{
+		{
+			ID:        "msg_1",
+			SessionID: meta.SessionID,
+			Type:      protocol.TranscriptEntryUser,
+			Body:      "hello",
+			InputMode: protocol.TranscriptInputPrompt,
+			CreatedAt: time.Now().UTC(),
+		},
+		{
+			ID:        "msg_2",
+			SessionID: meta.SessionID,
+			Type:      protocol.TranscriptEntryAssistant,
+			Body:      "world",
+			Markdown:  true,
+			CreatedAt: time.Now().UTC(),
+		},
+	} {
+		if err := store.AppendTranscriptEntry(meta.SessionID, entry); err != nil {
+			t.Fatalf("AppendTranscriptEntry(%s): %v", entry.ID, err)
+		}
+	}
+	f, err := os.OpenFile(store.transcriptPath(meta.SessionID), os.O_APPEND|os.O_WRONLY, 0o644)
+	if err != nil {
+		t.Fatalf("OpenFile(transcript): %v", err)
+	}
+	if _, err := f.WriteString("{broken json}\n"); err != nil {
+		t.Fatalf("WriteString(bad line): %v", err)
+	}
+	if err := f.Close(); err != nil {
+		t.Fatalf("Close(transcript): %v", err)
+	}
+
+	entries, err := store.LoadTranscript(meta.SessionID)
+	if err != nil {
+		t.Fatalf("LoadTranscript: %v", err)
+	}
+	if len(entries) != 2 {
+		t.Fatalf("expected 2 transcript entries, got %+v", entries)
+	}
+	if entries[0].ID != "msg_1" || entries[1].ID != "msg_2" {
+		t.Fatalf("expected valid transcript order, got %+v", entries)
+	}
+}
+
 func workspaceHasResource(workspace protocol.PaperWorkspace, uri string) bool {
 	for _, resource := range workspace.Resources {
 		if resource.URI == uri {

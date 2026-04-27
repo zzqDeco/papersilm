@@ -39,7 +39,7 @@ func TestBuildInputSuggestionsUsesSessionContext(t *testing.T) {
 
 	assertHasInsert("/source remove pa", "/source remove paper_a")
 	assertHasInsert("/task show task_", "/task show task_1")
-	assertHasInsert("/workspace show paper_", "/workspace show paper_a")
+	assertHasInsert("/paper show paper_", "/paper show paper_a")
 	assertHasInsert("/skill show run_", "/skill show run_1")
 }
 
@@ -71,4 +71,40 @@ func TestBuildInputSuggestionsIncludesHistoryAndRecipes(t *testing.T) {
 	if !haveRecipe {
 		t.Fatalf("expected recipe suggestion in %+v", suggestions)
 	}
+}
+
+func TestBuildInputSuggestionsIncludesThemeCommandValues(t *testing.T) {
+	t.Parallel()
+
+	suggestions := buildInputSuggestions("/theme da", protocol.SessionSnapshot{}, nil)
+	for _, suggestion := range suggestions {
+		if suggestion.Insert == "/theme dark" {
+			return
+		}
+	}
+	t.Fatalf("expected /theme dark suggestion, got %+v", suggestions)
+}
+
+func TestBuildInputSuggestionsIncludesTranscriptCommand(t *testing.T) {
+	t.Parallel()
+
+	suggestions := buildInputSuggestions("/trans", protocol.SessionSnapshot{}, nil)
+	for _, suggestion := range suggestions {
+		if suggestion.Insert == "/transcript" {
+			return
+		}
+	}
+	t.Fatalf("expected /transcript suggestion, got %+v", suggestions)
+}
+
+func TestBuildInputSuggestionsIncludesHintsCommand(t *testing.T) {
+	t.Parallel()
+
+	suggestions := buildInputSuggestions("/hint", protocol.SessionSnapshot{}, nil)
+	for _, suggestion := range suggestions {
+		if suggestion.Insert == "/hints" {
+			return
+		}
+	}
+	t.Fatalf("expected /hints suggestion, got %+v", suggestions)
 }

@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/zzqDeco/papersilm/internal/config"
 	"github.com/zzqDeco/papersilm/internal/storage"
 	"github.com/zzqDeco/papersilm/pkg/core"
 	"github.com/zzqDeco/papersilm/pkg/protocol"
@@ -72,7 +73,10 @@ func RunREPL(ctx context.Context, svc *core.Service, store *storage.Store, curre
 
 func handleSlash(ctx context.Context, svc *core.Service, store *storage.Store, session *protocol.SessionSnapshot, out *OutputWriter, line string) error {
 	if strings.HasPrefix(line, "/workspace") {
-		return handleWorkspaceCommand(svc, session, out, line)
+		return handleRootWorkspaceCommand(ctx, svc, store, session, out, line)
+	}
+	if strings.HasPrefix(line, "/paper") {
+		return handlePaperCommand(svc, session, out, strings.TrimSpace(strings.TrimPrefix(line, "/paper")))
 	}
 	if strings.HasPrefix(line, "/skill") {
 		return handleSkillCommand(ctx, svc, store, session, out, strings.Fields(line))
@@ -83,8 +87,31 @@ func handleSlash(ctx context.Context, svc *core.Service, store *storage.Store, s
 	}
 	switch fields[0] {
 	case "/help":
-		_, err := fmt.Fprintln(out.w, "/help, /plan [task], /approve, /run, /tasks, /task show|run|approve|reject, /skill list|run|show, /lang <zh|en|both>, /style <distill|ultra|reviewer(legacy)>, /source add|replace|list|remove, /workspace list|show|note add|annotation add, /session name <name>, /export, /clear, /exit")
+		_, err := fmt.Fprintln(out.w, "/help, /plan [task], /approve, /run, /tasks, /task show|run|approve|reject, /skill list|run|show, /lang <zh|en|both>, /style <distill|ultra|reviewer(legacy)>, /theme <auto|dark|light>, /hints [on|off|toggle], /source add|replace|list|remove, /workspace show|files|search|sessions, /paper list|show|note add|annotation add, /open <path>, /write <path> :: <body>, /shell <command>, /session name <name>, /export, /transcript, /clear, /exit")
 		return err
+	case "/transcript":
+		entries, err := store.LoadTranscript(session.Meta.SessionID)
+		if err != nil {
+			return err
+		}
+		if len(entries) == 0 {
+			_, err := fmt.Fprintln(out.w, "no transcript entries yet")
+			return err
+		}
+		for _, entry := range entries {
+			label := string(entry.Type)
+			if strings.TrimSpace(entry.Title) != "" {
+				label = entry.Title
+			}
+			body := strings.TrimSpace(entry.Body)
+			if body == "" {
+				body = "(empty)"
+			}
+			if _, err := fmt.Fprintf(out.w, "[%s] %s\n", label, body); err != nil {
+				return err
+			}
+		}
+		return nil
 	case "/clear":
 		_, err := fmt.Fprintln(out.w, strings.Repeat("-", 72))
 		return err
@@ -106,6 +133,33 @@ func handleSlash(ctx context.Context, svc *core.Service, store *storage.Store, s
 			return err
 		}
 		return store.InvalidatePlanState(session.Meta.SessionID)
+	case "/theme":
+		if len(fields) < 2 {
+			return fmt.Errorf("usage: /theme <auto|dark|light>")
+		}
+		cfg, err := loadConfig()
+		if err != nil {
+			return err
+		}
+		if err := cfg.SetTheme(config.ThemeSetting(fields[1])); err != nil {
+			return err
+		}
+		if err := config.Save(config.ConfigPath(cfg.BaseDir), cfg); err != nil {
+			return err
+		}
+		_, err = fmt.Fprintf(out.w, "theme set to %s\n", cfg.Theme)
+		return err
+	case "/hints":
+		visible, _, err := parseHintsCommand(line, true)
+		if err != nil {
+			return err
+		}
+		state := "shown"
+		if !visible {
+			state = "hidden"
+		}
+		_, err = fmt.Fprintf(out.w, "footer hints can be toggled in the TUI only; requested state: %s\n", state)
+		return err
 	case "/session":
 		if len(fields) < 3 || fields[1] != "name" {
 			return fmt.Errorf("usage: /session name <name>")
@@ -159,8 +213,71 @@ func handleSlash(ctx context.Context, svc *core.Service, store *storage.Store, s
 			fmt.Fprintf(out.w, "- %s: %s\n", artifact.ArtifactID, artifact.Paths["markdown"])
 		}
 		return nil
+	case "/open":
+		if len(fields) < 2 {
+			return fmt.Errorf("usage: /open <path>")
+		}
+		content, err := store.ReadWorkspaceFile(strings.Join(fields[1:], " "))
+		if err != nil {
+			return err
+		}
+		_, err = fmt.Fprintln(out.w, content)
+		return err
+	case "/write":
+		head, body := splitWorkspaceCommand(line)
+		parts := strings.Fields(head)
+		if len(parts) < 2 || strings.TrimSpace(body) == "" {
+			return fmt.Errorf("usage: /write <path> :: <body>")
+		}
+		if err := store.WriteWorkspaceFile(strings.Join(parts[1:], " "), body); err != nil {
+			return err
+		}
+		_, err := fmt.Fprintf(out.w, "wrote %s\n", strings.Join(parts[1:], " "))
+		return err
+	case "/shell":
+		if len(fields) < 2 {
+			return fmt.Errorf("usage: /shell <command>")
+		}
+		record, err := store.RunWorkspaceCommand(strings.Join(fields[1:], " "))
+		if strings.TrimSpace(record.Stdout) != "" {
+			if _, printErr := fmt.Fprintln(out.w, strings.TrimSpace(record.Stdout)); printErr != nil {
+				return printErr
+			}
+		}
+		if strings.TrimSpace(record.Stderr) != "" {
+			if _, printErr := fmt.Fprintln(out.w, strings.TrimSpace(record.Stderr)); printErr != nil {
+				return printErr
+			}
+		}
+		if _, printErr := fmt.Fprintf(out.w, "exit=%d\n", record.ExitCode); printErr != nil {
+			return printErr
+		}
+		return err
 	default:
 		return fmt.Errorf("unknown command: %s", fields[0])
+	}
+}
+
+func parseHintsCommand(line string, current bool) (bool, bool, error) {
+	fields := strings.Fields(strings.TrimSpace(line))
+	if len(fields) == 0 || fields[0] != "/hints" {
+		return false, false, nil
+	}
+	if len(fields) == 1 {
+		return !current, true, nil
+	}
+	if len(fields) != 2 {
+		return false, true, fmt.Errorf("usage: /hints [on|off|toggle]")
+	}
+	switch fields[1] {
+	case "on":
+		return true, true, nil
+	case "off":
+		return false, true, nil
+	case "toggle":
+		return !current, true, nil
+	default:
+		return false, true, fmt.Errorf("usage: /hints [on|off|toggle]")
 	}
 }
 
@@ -225,11 +342,122 @@ func handleSourceCommand(ctx context.Context, svc *core.Service, store *storage.
 	}
 }
 
-func handleWorkspaceCommand(svc *core.Service, session *protocol.SessionSnapshot, out *OutputWriter, line string) error {
+func handleRootWorkspaceCommand(ctx context.Context, svc *core.Service, store *storage.Store, session *protocol.SessionSnapshot, out *OutputWriter, line string) error {
 	head, body := splitWorkspaceCommand(line)
 	fields := strings.Fields(head)
 	if len(fields) < 2 {
-		return fmt.Errorf("usage: /workspace list|show|note add|annotation add ...")
+		return fmt.Errorf("usage: /workspace show|files|search|sessions")
+	}
+	switch fields[1] {
+	case "show":
+		if len(fields) >= 3 {
+			return handlePaperCommand(svc, session, out, strings.TrimSpace(strings.TrimPrefix(line, "/workspace")))
+		}
+		summary, err := store.LoadWorkspaceSummary()
+		if err != nil {
+			return err
+		}
+		files, err := store.LoadWorkspaceFiles()
+		if err != nil {
+			return err
+		}
+		preview := make([]string, 0, min(8, len(files)))
+		for _, file := range files {
+			preview = append(preview, file.Path)
+			if len(preview) == 8 {
+				break
+			}
+		}
+		if _, err := fmt.Fprintf(out.w, "Workspace: %s\nRoot: %s\nFiles: %d\nText/Code: %d\nPaper candidates: %d\nSessions: %d\n",
+			summary.Name,
+			summary.Root,
+			summary.FileCount,
+			summary.TextFileCount,
+			summary.PaperFileCount,
+			summary.SessionCount,
+		); err != nil {
+			return err
+		}
+		if len(preview) > 0 {
+			_, err = fmt.Fprintf(out.w, "\nTop files:\n- %s\n", strings.Join(preview, "\n- "))
+			return err
+		}
+		return nil
+	case "files":
+		query := ""
+		if len(fields) > 2 {
+			query = strings.ToLower(strings.Join(fields[2:], " "))
+		}
+		files, err := store.LoadWorkspaceFiles()
+		if err != nil {
+			return err
+		}
+		count := 0
+		for _, file := range files {
+			if query != "" && !strings.Contains(strings.ToLower(file.Path), query) {
+				continue
+			}
+			if _, err := fmt.Fprintf(out.w, "- %s [%s] %dB\n", file.Path, file.Kind, file.SizeBytes); err != nil {
+				return err
+			}
+			count++
+			if count == 50 {
+				break
+			}
+		}
+		if count == 0 {
+			_, err := fmt.Fprintln(out.w, "No matching files.")
+			return err
+		}
+		return nil
+	case "search":
+		if len(fields) < 3 {
+			return fmt.Errorf("usage: /workspace search <query>")
+		}
+		hits, err := store.SearchWorkspace(strings.Join(fields[2:], " "), 20)
+		if err != nil {
+			return err
+		}
+		if len(hits) == 0 {
+			_, err := fmt.Fprintln(out.w, "No matches.")
+			return err
+		}
+		for _, hit := range hits {
+			if _, err := fmt.Fprintf(out.w, "- %s:%d %s\n", hit.Path, hit.Line, hit.Snippet); err != nil {
+				return err
+			}
+		}
+		return nil
+	case "sessions":
+		ids, err := store.SessionIDs()
+		if err != nil {
+			return err
+		}
+		if len(ids) == 0 {
+			_, err := fmt.Fprintln(out.w, "No sessions in this workspace.")
+			return err
+		}
+		for _, id := range ids {
+			if _, err := fmt.Fprintf(out.w, "- %s\n", id); err != nil {
+				return err
+			}
+		}
+		return nil
+	case "list", "note", "annotation":
+		return handlePaperCommand(svc, session, out, strings.TrimSpace(strings.TrimPrefix(line, "/workspace")))
+	default:
+		if strings.TrimSpace(body) != "" {
+			_ = ctx
+		}
+		return fmt.Errorf("unknown /workspace action: %s", fields[1])
+	}
+}
+
+func handlePaperCommand(svc *core.Service, session *protocol.SessionSnapshot, out *OutputWriter, line string) error {
+	head, body := splitWorkspaceCommand("/paper " + strings.TrimSpace(line))
+	fields := strings.Fields(head)
+	if len(fields) < 2 {
+		return fmt.Errorf("usage: /paper list|show|note add|annotation add ...")
 	}
 
 	switch fields[1] {
@@ -242,7 +470,7 @@ func handleWorkspaceCommand(svc *core.Service, session *protocol.SessionSnapshot
 		return out.PrintWorkspaceList(workspaces)
 	case "show":
 		if len(fields) < 3 {
-			return fmt.Errorf("usage: /workspace show <paper_id>")
+			return fmt.Errorf("usage: /paper show <paper_id>")
 		}
 		workspaces, err := svc.LoadWorkspaces(session.Meta.SessionID)
 		if err != nil {
@@ -256,10 +484,10 @@ func handleWorkspaceCommand(svc *core.Service, session *protocol.SessionSnapshot
 		return out.PrintWorkspace(*workspace)
 	case "note":
 		if len(fields) < 4 || fields[2] != "add" {
-			return fmt.Errorf("usage: /workspace note add <paper_id> :: <body>")
+			return fmt.Errorf("usage: /paper note add <paper_id> :: <body>")
 		}
 		if strings.TrimSpace(body) == "" {
-			return fmt.Errorf("usage: /workspace note add <paper_id> :: <body>")
+			return fmt.Errorf("usage: /paper note add <paper_id> :: <body>")
 		}
 		snapshot, err := svc.AddWorkspaceNote(session.Meta.SessionID, fields[3], body)
 		if err != nil {
@@ -273,10 +501,10 @@ func handleWorkspaceCommand(svc *core.Service, session *protocol.SessionSnapshot
 		return out.PrintWorkspace(*workspace)
 	case "annotation":
 		if len(fields) < 6 || fields[2] != "add" {
-			return fmt.Errorf("usage: /workspace annotation add <paper_id> page|snippet|section <value> :: <body>")
+			return fmt.Errorf("usage: /paper annotation add <paper_id> page|snippet|section <value> :: <body>")
 		}
 		if strings.TrimSpace(body) == "" {
-			return fmt.Errorf("usage: /workspace annotation add <paper_id> page|snippet|section <value> :: <body>")
+			return fmt.Errorf("usage: /paper annotation add <paper_id> page|snippet|section <value> :: <body>")
 		}
 		anchor, err := parseWorkspaceAnchor(fields[4], fields[5:])
 		if err != nil {
@@ -293,7 +521,7 @@ func handleWorkspaceCommand(svc *core.Service, session *protocol.SessionSnapshot
 		}
 		return out.PrintWorkspace(*workspace)
 	default:
-		return fmt.Errorf("unknown /workspace action: %s", fields[1])
+		return fmt.Errorf("unknown /paper action: %s", fields[1])
 	}
 }
 
@@ -405,7 +633,7 @@ func parseWorkspaceAnchor(kind string, parts []string) (protocol.AnchorRef, erro
 	switch kind {
 	case string(protocol.AnchorKindPage):
 		if len(parts) != 1 {
-			return protocol.AnchorRef{}, fmt.Errorf("usage: /workspace annotation add <paper_id> page <n> :: <body>")
+			return protocol.AnchorRef{}, fmt.Errorf("usage: /paper annotation add <paper_id> page <n> :: <body>")
 		}
 		page, err := strconv.Atoi(parts[0])
 		if err != nil || page <= 0 {

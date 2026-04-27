@@ -35,6 +35,9 @@ provider:
 	if cfg.ActiveProvider != DefaultProviderProfile {
 		t.Fatalf("unexpected active provider: %q", cfg.ActiveProvider)
 	}
+	if cfg.Theme != ThemeAuto {
+		t.Fatalf("expected missing theme to default to auto, got %q", cfg.Theme)
+	}
 	profile, ok := cfg.Providers[DefaultProviderProfile]
 	if !ok {
 		t.Fatalf("expected default profile in %+v", cfg.Providers)
@@ -53,6 +56,7 @@ func TestSaveWritesActiveProviderAndLegacyMirror(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "config.yaml")
 	cfg := Default()
+	cfg.Theme = ThemeLight
 	cfg.ActiveProvider = "local-openai"
 	cfg.Providers = map[string]ProviderConfig{
 		"local-openai": {
@@ -81,6 +85,9 @@ func TestSaveWritesActiveProviderAndLegacyMirror(t *testing.T) {
 	if loaded.ActiveProvider != "local-openai" {
 		t.Fatalf("unexpected active provider: %q", loaded.ActiveProvider)
 	}
+	if loaded.Theme != ThemeLight {
+		t.Fatalf("unexpected theme: %q", loaded.Theme)
+	}
 	if loaded.Provider.Model != "gpt-5.4" {
 		t.Fatalf("expected legacy provider mirror to point at active model, got %+v", loaded.Provider)
 	}
@@ -90,9 +97,24 @@ func TestSaveWritesActiveProviderAndLegacyMirror(t *testing.T) {
 		t.Fatalf("ReadFile(saved): %v", err)
 	}
 	text := string(raw)
-	for _, want := range []string{"active_provider: local-openai", "providers:", "provider:"} {
+	for _, want := range []string{"theme: light", "active_provider: local-openai", "providers:", "provider:"} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("expected %q in saved config:\n%s", want, text)
 		}
+	}
+}
+
+func TestSetThemeValidatesValues(t *testing.T) {
+	t.Parallel()
+
+	cfg := Default()
+	if err := cfg.SetTheme(ThemeDark); err != nil {
+		t.Fatalf("SetTheme(dark): %v", err)
+	}
+	if cfg.Theme != ThemeDark {
+		t.Fatalf("expected theme dark, got %q", cfg.Theme)
+	}
+	if err := cfg.SetTheme("sepia"); err == nil {
+		t.Fatalf("expected invalid theme error")
 	}
 }

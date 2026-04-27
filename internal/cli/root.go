@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"github.com/spf13/cobra"
@@ -9,6 +10,15 @@ import (
 	"github.com/zzqDeco/papersilm/internal/config"
 	"github.com/zzqDeco/papersilm/internal/version"
 	"github.com/zzqDeco/papersilm/pkg/protocol"
+)
+
+var (
+	rootLoadConfig             = loadConfig
+	rootShouldUseTUI           = shouldUseTUI
+	rootRunTUI                 = RunTUI
+	rootBuildRuntime           = buildRuntime
+	rootPrepareSessionSnapshot = prepareSessionSnapshot
+	rootRunREPL                = RunREPL
 )
 
 func NewRootCommand(ctx context.Context) *cobra.Command {
@@ -29,7 +39,7 @@ func NewRootCommand(ctx context.Context) *cobra.Command {
 		Short:   "Paper-focused document agent CLI",
 		Version: version.Version,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			cfg, err := loadConfig()
+			cfg, err := rootLoadConfig()
 			if err != nil {
 				return err
 			}
@@ -52,8 +62,8 @@ func NewRootCommand(ctx context.Context) *cobra.Command {
 				style = cfg.DefaultStyle
 			}
 
-			if shouldUseTUI(protocol.OutputFormat(outputFormat), printTask) {
-				if err := RunTUI(ctx, TUIOptions{
+			if rootShouldUseTUI(protocol.OutputFormat(outputFormat), printTask) {
+				if err := rootRunTUI(ctx, TUIOptions{
 					Config:         cfg,
 					ContinueLatest: continueLatest,
 					ResumeID:       resumeID,
@@ -62,10 +72,14 @@ func NewRootCommand(ctx context.Context) *cobra.Command {
 					Style:          style,
 				}); err == nil {
 					return nil
+				} else if errors.Is(err, ErrTUIStartup) {
+					fmt.Fprintf(cmd.ErrOrStderr(), "tui unavailable, falling back to plain repl: %v\n", err)
+				} else {
+					return err
 				}
 			}
 
-			cfg, store, svc, out, err := buildRuntime(ctx, outputFormat)
+			cfg, store, svc, out, err := rootBuildRuntime(ctx, outputFormat)
 			if err != nil {
 				return err
 			}
@@ -101,11 +115,11 @@ func NewRootCommand(ctx context.Context) *cobra.Command {
 				return out.PrintResult(result)
 			}
 
-			snapshot, err := prepareSessionSnapshot(ctx, svc, store, mode, lang, style, continueLatest, resumeID)
+			snapshot, err := rootPrepareSessionSnapshot(ctx, svc, store, mode, lang, style, continueLatest, resumeID)
 			if err != nil {
 				return err
 			}
-			return RunREPL(ctx, svc, store, snapshot, out)
+			return rootRunREPL(ctx, svc, store, snapshot, out)
 		},
 	}
 

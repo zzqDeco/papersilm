@@ -36,10 +36,20 @@ func New(cfg config.Config, store *storage.Store, ag *agent.Agent, sink EventSin
 
 func (s *Service) NewSession(mode protocol.PermissionMode, lang, style string) (protocol.SessionMeta, error) {
 	now := time.Now().UTC()
+	workspaceRoot := strings.TrimSpace(s.store.WorkspaceRoot())
+	workspaceID := protocol.DefaultWorkspaceID
+	if summary, err := s.store.LoadWorkspaceSummary(); err == nil && summary != nil {
+		workspaceRoot = strings.TrimSpace(summary.Root)
+		if strings.TrimSpace(summary.WorkspaceID) != "" {
+			workspaceID = summary.WorkspaceID
+		}
+	}
 	meta := protocol.SessionMeta{
 		SessionID:       newSessionID(),
 		State:           protocol.SessionStateIdle,
 		PermissionMode:  mode,
+		WorkspaceRoot:   workspaceRoot,
+		WorkspaceID:     workspaceID,
 		ProviderProfile: s.cfg.ActiveProviderName(),
 		Model:           s.cfg.ActiveProviderConfig().Model,
 		Language:        lang,

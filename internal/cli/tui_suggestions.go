@@ -52,12 +52,18 @@ func buildSlashSuggestions(input string, snapshot protocol.SessionSnapshot) []tu
 		return limitSuggestions(buildTaskSlashSuggestions(fields, hasTrailingSpace, snapshot), 8)
 	case "/workspace":
 		return limitSuggestions(buildWorkspaceSlashSuggestions(fields, hasTrailingSpace, snapshot), 8)
+	case "/paper":
+		return limitSuggestions(buildPaperSlashSuggestions(fields, hasTrailingSpace, snapshot), 8)
 	case "/skill":
 		return limitSuggestions(buildSkillSlashSuggestions(fields, hasTrailingSpace, snapshot), 8)
 	case "/lang":
 		return limitSuggestions(buildLiteralSuggestions("/lang ", lastToken(fields, hasTrailingSpace), "Command", []string{"zh", "en", "both"}), 8)
 	case "/style":
 		return limitSuggestions(buildLiteralSuggestions("/style ", lastToken(fields, hasTrailingSpace), "Command", []string{"distill", "ultra", "reviewer"}), 8)
+	case "/theme":
+		return limitSuggestions(buildLiteralSuggestions("/theme ", lastToken(fields, hasTrailingSpace), "Command", []string{"auto", "dark", "light"}), 8)
+	case "/hints":
+		return limitSuggestions(buildLiteralSuggestions("/hints ", lastToken(fields, hasTrailingSpace), "Command", []string{"on", "off", "toggle"}), 8)
 	case "/session":
 		if len(fields) <= 2 {
 			return limitSuggestions(filterSuggestions([]tuiSuggestion{
@@ -72,6 +78,18 @@ func buildSlashSuggestions(input string, snapshot protocol.SessionSnapshot) []tu
 func buildPromptSuggestions(input string, history []string) []tuiSuggestion {
 	query := strings.TrimSpace(strings.ToLower(input))
 	suggestions := []tuiSuggestion{
+		{
+			Label:    "总结当前工作区的结构和关键文件",
+			Insert:   "总结当前工作区的结构、关键文件和下一步建议。",
+			Detail:   "Workspace overview recipe",
+			Category: "Recipe",
+		},
+		{
+			Label:    "搜索并解释某个配置或实现",
+			Insert:   "在当前工作区里搜索相关实现，解释它的作用和依赖关系。",
+			Detail:   "Workspace search recipe",
+			Category: "Recipe",
+		},
 		{
 			Label:    "总结论文核心贡献、方法和实验结果",
 			Insert:   "总结这篇论文的核心贡献、方法和实验结果，并指出局限性。",
@@ -126,8 +144,8 @@ func buildContextSuggestions(snapshot protocol.SessionSnapshot) []tuiSuggestion 
 	for _, source := range snapshot.Sources {
 		suggestions = append(suggestions, tuiSuggestion{
 			Label:    source.PaperID,
-			Insert:   fmt.Sprintf("/workspace show %s", source.PaperID),
-			Detail:   "Open workspace",
+			Insert:   fmt.Sprintf("/paper show %s", source.PaperID),
+			Detail:   "Open paper workspace",
 			Category: "Context",
 		})
 	}
@@ -184,23 +202,41 @@ func buildTaskSlashSuggestions(fields []string, hasTrailingSpace bool, snapshot 
 func buildWorkspaceSlashSuggestions(fields []string, hasTrailingSpace bool, snapshot protocol.SessionSnapshot) []tuiSuggestion {
 	if len(fields) == 1 || (len(fields) == 2 && !hasTrailingSpace) {
 		return filterSuggestions([]tuiSuggestion{
-			{Label: "list", Insert: "/workspace list", Detail: "List hydrated workspaces", Category: "Command"},
-			{Label: "show", Insert: "/workspace show ", Detail: "Open one workspace", Category: "Command"},
-			{Label: "note add", Insert: "/workspace note add ", Detail: "Add a workspace note", Category: "Command"},
-			{Label: "annotation add", Insert: "/workspace annotation add ", Detail: "Add an anchored annotation", Category: "Command"},
+			{Label: "show", Insert: "/workspace show", Detail: "Show the current root workspace", Category: "Command"},
+			{Label: "files", Insert: "/workspace files ", Detail: "List indexed workspace files", Category: "Command"},
+			{Label: "search", Insert: "/workspace search ", Detail: "Search workspace text files", Category: "Command"},
+			{Label: "sessions", Insert: "/workspace sessions", Detail: "List sessions in this workspace", Category: "Command"},
+		}, lastToken(fields, hasTrailingSpace))
+	}
+	switch {
+	case len(fields) >= 2 && fields[1] == "files":
+		return nil
+	case len(fields) >= 2 && fields[1] == "search":
+		return nil
+	}
+	return nil
+}
+
+func buildPaperSlashSuggestions(fields []string, hasTrailingSpace bool, snapshot protocol.SessionSnapshot) []tuiSuggestion {
+	if len(fields) == 1 || (len(fields) == 2 && !hasTrailingSpace) {
+		return filterSuggestions([]tuiSuggestion{
+			{Label: "list", Insert: "/paper list", Detail: "List attached paper workspaces", Category: "Command"},
+			{Label: "show", Insert: "/paper show ", Detail: "Open one paper workspace", Category: "Command"},
+			{Label: "note add", Insert: "/paper note add ", Detail: "Add a paper note", Category: "Command"},
+			{Label: "annotation add", Insert: "/paper annotation add ", Detail: "Add an anchored annotation", Category: "Command"},
 		}, lastToken(fields, hasTrailingSpace))
 	}
 	switch {
 	case len(fields) >= 2 && fields[1] == "show":
-		return buildPaperIDSuggestions("/workspace show ", snapshot.Sources, lastToken(fields, hasTrailingSpace))
+		return buildPaperIDSuggestions("/paper show ", snapshot.Sources, lastToken(fields, hasTrailingSpace))
 	case len(fields) >= 3 && fields[1] == "note" && fields[2] == "add":
-		return buildPaperIDSuggestions("/workspace note add ", snapshot.Sources, lastToken(fields, hasTrailingSpace), " :: ")
+		return buildPaperIDSuggestions("/paper note add ", snapshot.Sources, lastToken(fields, hasTrailingSpace), " :: ")
 	case len(fields) >= 3 && fields[1] == "annotation" && fields[2] == "add":
 		if len(fields) <= 3 || (len(fields) == 4 && !hasTrailingSpace) {
-			return buildPaperIDSuggestions("/workspace annotation add ", snapshot.Sources, lastToken(fields, hasTrailingSpace))
+			return buildPaperIDSuggestions("/paper annotation add ", snapshot.Sources, lastToken(fields, hasTrailingSpace))
 		}
 		if len(fields) == 4 || (len(fields) == 5 && !hasTrailingSpace) {
-			prefix := fmt.Sprintf("/workspace annotation add %s ", fields[3])
+			prefix := fmt.Sprintf("/paper annotation add %s ", fields[3])
 			return filterSuggestions([]tuiSuggestion{
 				{Label: "page", Insert: prefix + "page ", Detail: "Anchor to a page number", Category: "Command"},
 				{Label: "snippet", Insert: prefix + "snippet ", Detail: "Anchor to a text snippet", Category: "Command"},
@@ -275,6 +311,7 @@ func commandCatalogSuggestions() []tuiSuggestion {
 	return []tuiSuggestion{
 		{Label: "/help", Insert: "/help", Detail: "Show slash commands", Category: "Command"},
 		{Label: "/commands", Insert: "/commands", Detail: "Open the command palette", Category: "Command"},
+		{Label: "/transcript", Insert: "/transcript", Detail: "Open transcript view", Category: "Command"},
 		{Label: "/model", Insert: "/model", Detail: "Open provider/model picker", Category: "Command"},
 		{Label: "/source add", Insert: "/source add ", Detail: "Attach a source", Category: "Command"},
 		{Label: "/source replace", Insert: "/source replace ", Detail: "Replace current sources", Category: "Command"},
@@ -291,12 +328,21 @@ func commandCatalogSuggestions() []tuiSuggestion {
 		{Label: "/skill list", Insert: "/skill list", Detail: "Open skill list pane", Category: "Command"},
 		{Label: "/skill run", Insert: "/skill run ", Detail: "Run a skill", Category: "Command"},
 		{Label: "/skill show", Insert: "/skill show ", Detail: "Inspect a skill run", Category: "Command"},
-		{Label: "/workspace list", Insert: "/workspace list", Detail: "Open workspace list pane", Category: "Command"},
-		{Label: "/workspace show", Insert: "/workspace show ", Detail: "Open a workspace pane", Category: "Command"},
-		{Label: "/workspace note add", Insert: "/workspace note add ", Detail: "Add a workspace note", Category: "Command"},
-		{Label: "/workspace annotation add", Insert: "/workspace annotation add ", Detail: "Add a workspace annotation", Category: "Command"},
+		{Label: "/workspace show", Insert: "/workspace show", Detail: "Open root workspace pane", Category: "Command"},
+		{Label: "/workspace files", Insert: "/workspace files ", Detail: "List indexed workspace files", Category: "Command"},
+		{Label: "/workspace search", Insert: "/workspace search ", Detail: "Search workspace text files", Category: "Command"},
+		{Label: "/workspace sessions", Insert: "/workspace sessions", Detail: "List workspace sessions", Category: "Command"},
+		{Label: "/paper list", Insert: "/paper list", Detail: "Open paper workspace list", Category: "Command"},
+		{Label: "/paper show", Insert: "/paper show ", Detail: "Open a paper workspace", Category: "Command"},
+		{Label: "/paper note add", Insert: "/paper note add ", Detail: "Add a paper note", Category: "Command"},
+		{Label: "/paper annotation add", Insert: "/paper annotation add ", Detail: "Add a paper annotation", Category: "Command"},
+		{Label: "/open", Insert: "/open ", Detail: "Read a workspace file", Category: "Command"},
+		{Label: "/write", Insert: "/write ", Detail: "Write a workspace file", Category: "Command"},
+		{Label: "/shell", Insert: "/shell ", Detail: "Run a workspace shell command", Category: "Command"},
 		{Label: "/lang", Insert: "/lang ", Detail: "Switch output language", Category: "Command"},
 		{Label: "/style", Insert: "/style ", Detail: "Switch output style", Category: "Command"},
+		{Label: "/theme", Insert: "/theme ", Detail: "Switch TUI theme", Category: "Command"},
+		{Label: "/hints", Insert: "/hints", Detail: "Toggle footer shortcut hints", Category: "Command"},
 		{Label: "/session name", Insert: "/session name ", Detail: "Rename this session", Category: "Command"},
 		{Label: "/export", Insert: "/export", Detail: "Open artifact export pane", Category: "Command"},
 		{Label: "/clear", Insert: "/clear", Detail: "Add a visual separator", Category: "Command"},

@@ -120,6 +120,40 @@ func TestConfirmModeInterruptAndApproveResumes(t *testing.T) {
 	}
 }
 
+func TestWorkspaceTaskRunsWithoutAttachedSources(t *testing.T) {
+	t.Parallel()
+
+	svc, _ := newTestService(t)
+	ctx := context.Background()
+
+	readmePath := filepath.Join(svc.store.WorkspaceRoot(), "README.md")
+	if err := os.WriteFile(readmePath, []byte("# papersilm\n\nworkspace first agent\n"), 0o644); err != nil {
+		t.Fatalf("WriteFile(%s): %v", readmePath, err)
+	}
+	if err := svc.store.RefreshWorkspaceState(); err != nil {
+		t.Fatalf("RefreshWorkspaceState: %v", err)
+	}
+
+	result, err := svc.Execute(ctx, protocol.ClientRequest{
+		Task:           "总结当前工作区的结构和关键文件",
+		PermissionMode: protocol.PermissionModeAuto,
+		Language:       "zh",
+		Style:          "distill",
+	})
+	if err != nil {
+		t.Fatalf("Execute(workspace): %v", err)
+	}
+	if strings.TrimSpace(result.Response) == "" {
+		t.Fatalf("expected workspace response, got %+v", result)
+	}
+	if len(result.Session.Sources) != 0 {
+		t.Fatalf("expected no attached sources, got %+v", result.Session.Sources)
+	}
+	if result.Session.Workspace == nil || result.Session.Workspace.FileCount == 0 {
+		t.Fatalf("expected hydrated workspace summary, got %+v", result.Session.Workspace)
+	}
+}
+
 func TestRunPlannedExecutesSavedPlan(t *testing.T) {
 	t.Parallel()
 
