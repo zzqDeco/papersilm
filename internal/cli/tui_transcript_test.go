@@ -360,7 +360,7 @@ func TestApprovalRequiredRendersDecisionOptions(t *testing.T) {
 	}
 }
 
-func TestApprovalContextOwnsFocusEvenWithDraft(t *testing.T) {
+func TestApprovalContextDoesNotSwallowDraftTyping(t *testing.T) {
 	t.Parallel()
 
 	model := newTestTUIModel()
@@ -369,10 +369,21 @@ func TestApprovalContextOwnsFocusEvenWithDraft(t *testing.T) {
 	if !hasKeyContext(model.keyContexts(), tuiui.ContextApproval) {
 		t.Fatalf("expected approval context for empty input")
 	}
+	gotModel, _ := model.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("h")})
+	updated := gotModel.(*tuiModel)
+	if updated.input.Value() != "h" {
+		t.Fatalf("expected first typed character to remain visible while approval is pending, got %q", updated.input.Value())
+	}
+	model = updated
 
 	model.input.SetValue("keep typing")
-	if !hasKeyContext(model.keyContexts(), tuiui.ContextApproval) {
-		t.Fatalf("expected approval context to keep focus while a draft is present")
+	if hasKeyContext(model.keyContexts(), tuiui.ContextApproval) {
+		t.Fatalf("did not expect approval context to swallow draft input")
+	}
+	gotModel, _ = model.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("!")})
+	updated = gotModel.(*tuiModel)
+	if updated.input.Value() != "keep typing!" {
+		t.Fatalf("expected normal typing to remain visible while approval is pending, got %q", updated.input.Value())
 	}
 }
 
