@@ -290,7 +290,7 @@ func newTUIModel(ctx context.Context, runtime *tuiRuntimeManager, snapshot proto
 	input := textarea.New()
 	input.Placeholder = ""
 	input.ShowLineNumbers = false
-	input.SetHeight(3)
+	input.SetHeight(1)
 	input.CharLimit = 0
 	input.KeyMap.InsertNewline.SetKeys("ctrl+j")
 
@@ -1122,7 +1122,7 @@ func (m *tuiModel) reflow() {
 	bottomGap := max(0, m.timeline.TotalLineCount()-(m.timeline.YOffset+m.timeline.Height))
 
 	m.input.SetWidth(max(20, width-4))
-	lines := clamp(m.input.LineCount()+1, 3, 7)
+	lines := clamp(m.input.LineCount(), 1, 7)
 	m.input.SetHeight(lines)
 	m.modalIn.Width = clamp(width-16, 18, 72)
 	m.searchIn.Width = clamp(width-16, 18, 72)

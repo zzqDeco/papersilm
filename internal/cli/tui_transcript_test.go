@@ -913,6 +913,22 @@ func TestEmptyPromptPlaceholderStaysSingleLine(t *testing.T) {
 	}
 }
 
+func TestShortPromptInputStaysSingleLine(t *testing.T) {
+	t.Parallel()
+
+	model := newTestTUIModel()
+	model.input.SetValue("/")
+	model.reflow()
+
+	rendered := model.renderInput()
+	if strings.Count(rendered, "›") != 1 {
+		t.Fatalf("expected one prompt marker for short input, got %q", rendered)
+	}
+	if strings.Count(rendered, "\n") != 1 {
+		t.Fatalf("expected divider plus one input row, got %q", rendered)
+	}
+}
+
 func TestPaneDoesNotReduceTimelineHeight(t *testing.T) {
 	t.Parallel()
 
