@@ -9,8 +9,14 @@ type MessageViewport struct {
 }
 
 type ViewportAnchor struct {
-	Key   string
-	Delta int
+	Key        string
+	Occurrence int
+	Delta      int
+}
+
+type viewportKeyOccurrence struct {
+	key        string
+	occurrence int
 }
 
 func (v *MessageViewport) Reset() {
@@ -44,20 +50,26 @@ func (v *MessageViewport) ContentByKey(width int, keys []string, render func(ind
 	if v.width == width && sameStrings(v.keys, keys) && len(v.rendered) == len(keys) {
 		return strings.Join(v.rendered, "\n\n")
 	}
-	previous := make(map[string]string, len(v.keys))
+	previous := make(map[viewportKeyOccurrence]string, len(v.keys))
 	if v.width == width {
+		seen := make(map[string]int, len(v.keys))
 		for i, key := range v.keys {
 			if key == "" || i >= len(v.rendered) {
 				continue
 			}
-			previous[key] = v.rendered[i]
+			occurrence := seen[key]
+			seen[key]++
+			previous[viewportKeyOccurrence{key: key, occurrence: occurrence}] = v.rendered[i]
 		}
 	}
 	v.width = width
 	v.keys = append(v.keys[:0], keys...)
 	v.rendered = make([]string, 0, len(keys))
+	seen := make(map[string]int, len(keys))
 	for i, key := range keys {
-		if cached, ok := previous[key]; ok {
+		occurrence := seen[key]
+		seen[key]++
+		if cached, ok := previous[viewportKeyOccurrence{key: key, occurrence: occurrence}]; ok {
 			v.rendered = append(v.rendered, cached)
 			continue
 		}
@@ -114,7 +126,7 @@ func (v *MessageViewport) AnchorAt(offset int) (ViewportAnchor, bool) {
 		}
 		idx = i
 	}
-	return ViewportAnchor{Key: v.keys[idx], Delta: offset - starts[idx]}, true
+	return ViewportAnchor{Key: v.keys[idx], Occurrence: keyOccurrenceAt(v.keys, idx), Delta: offset - starts[idx]}, true
 }
 
 func (v *MessageViewport) OffsetForAnchor(anchor ViewportAnchor) (int, bool) {
@@ -122,8 +134,14 @@ func (v *MessageViewport) OffsetForAnchor(anchor ViewportAnchor) (int, bool) {
 		return 0, false
 	}
 	starts := v.lineStarts()
+	seen := make(map[string]int, len(v.keys))
 	for i, key := range v.keys {
+		occurrence := seen[key]
+		seen[key]++
 		if key != anchor.Key {
+			continue
+		}
+		if occurrence != anchor.Occurrence {
 			continue
 		}
 		height := lineCount(v.rendered[i])
@@ -144,6 +162,19 @@ func (v *MessageViewport) lineStarts() []int {
 		}
 	}
 	return starts
+}
+
+func keyOccurrenceAt(keys []string, index int) int {
+	if index < 0 || index >= len(keys) {
+		return 0
+	}
+	occurrence := 0
+	for i := 0; i < index; i++ {
+		if keys[i] == keys[index] {
+			occurrence++
+		}
+	}
+	return occurrence
 }
 
 func lineCount(value string) int {

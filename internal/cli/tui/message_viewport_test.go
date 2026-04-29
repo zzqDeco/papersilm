@@ -63,6 +63,28 @@ func TestMessageViewportCachesByStableKey(t *testing.T) {
 	}
 }
 
+func TestMessageViewportCachesDuplicateKeysByOccurrence(t *testing.T) {
+	t.Parallel()
+
+	var viewport MessageViewport
+	calls := 0
+	content := viewport.ContentByKey(80, []string{"activity.grouped", "answer", "activity.grouped"}, func(index int, width int) string {
+		calls++
+		return []string{"first activity", "answer", "second activity"}[index]
+	})
+	if content != "first activity\n\nanswer\n\nsecond activity" || calls != 3 {
+		t.Fatalf("unexpected first render content=%q calls=%d", content, calls)
+	}
+
+	again := viewport.ContentByKey(80, []string{"activity.grouped", "answer", "activity.grouped"}, func(index int, width int) string {
+		calls++
+		return "rerendered"
+	})
+	if again != content || calls != 3 {
+		t.Fatalf("expected duplicate-key cache to preserve each occurrence, content=%q calls=%d", again, calls)
+	}
+}
+
 func TestMessageViewportAnchorSurvivesReflow(t *testing.T) {
 	t.Parallel()
 
@@ -81,5 +103,26 @@ func TestMessageViewportAnchorSurvivesReflow(t *testing.T) {
 	offset, ok := viewport.OffsetForAnchor(anchor)
 	if !ok || offset != 3 {
 		t.Fatalf("expected anchor to resolve after reflow, offset=%d ok=%v", offset, ok)
+	}
+}
+
+func TestMessageViewportAnchorDistinguishesDuplicateKeys(t *testing.T) {
+	t.Parallel()
+
+	var viewport MessageViewport
+	viewport.ContentByKey(20, []string{"activity.grouped", "answer", "activity.grouped"}, func(index int, width int) string {
+		return []string{"first\nactivity", "answer", "second\nactivity"}[index]
+	})
+	anchor, ok := viewport.AnchorAt(5)
+	if !ok || anchor.Key != "activity.grouped" || anchor.Occurrence != 1 || anchor.Delta != 0 {
+		t.Fatalf("unexpected duplicate-key anchor: %+v ok=%v", anchor, ok)
+	}
+
+	viewport.ContentByKey(10, []string{"activity.grouped", "answer", "activity.grouped"}, func(index int, width int) string {
+		return []string{"first\nactivity\nwrap", "answer", "second\nactivity\nwrap"}[index]
+	})
+	offset, ok := viewport.OffsetForAnchor(anchor)
+	if !ok || offset != 6 {
+		t.Fatalf("expected duplicate-key anchor to resolve to second activity, offset=%d ok=%v", offset, ok)
 	}
 }
