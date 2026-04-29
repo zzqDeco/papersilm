@@ -39,21 +39,6 @@ func TestTranscriptHistoryEntriesRespectsMode(t *testing.T) {
 	}
 }
 
-func TestTranscriptSearchMatches(t *testing.T) {
-	t.Parallel()
-
-	entries := []protocol.TranscriptEntry{
-		{ID: "1", Type: protocol.TranscriptEntrySystem, Title: "Session", Body: "session created"},
-		{ID: "2", Type: protocol.TranscriptEntryAssistant, Title: "Assistant", Body: "Summarize the transformer paper"},
-		{ID: "3", Type: protocol.TranscriptEntryCommand, Title: "Command", Body: "/tasks"},
-	}
-
-	matches := transcriptSearchMatches(entries, "transformer")
-	if len(matches) != 1 || matches[0] != 1 {
-		t.Fatalf("expected only assistant transformer match, got %+v", matches)
-	}
-}
-
 func TestTranscriptEntryFromApprovalEventUsesDecisionSubtype(t *testing.T) {
 	t.Parallel()
 
@@ -189,6 +174,13 @@ func TestWorkspaceActivitySummarizesToolsInsteadOfUpdates(t *testing.T) {
 	}
 	if containsString(body, "tool=") || containsString(body, "node=") {
 		t.Fatalf("did not expect low-level tool details in grouped activity, got %q", body)
+	}
+	rendered := model.renderTimelineItem(model.items[0], 80)
+	if !containsString(rendered, "• Inspecting workspace") {
+		t.Fatalf("expected compact activity row, got %q", rendered)
+	}
+	if containsString(rendered, "Progress") || containsString(rendered, "activity.grouped") {
+		t.Fatalf("did not expect activity to render as log header, got %q", rendered)
 	}
 }
 
@@ -361,14 +353,14 @@ func TestApprovalRequiredRendersDecisionOptions(t *testing.T) {
 	model.reflow()
 
 	view := model.renderMainScreen()
-	for _, want := range []string{"Approval Required", "+ Approve", "Inspect tasks", "Keep planning", "Enter select"} {
+	for _, want := range []string{"Approval required", "❯ Approve", "Inspect tasks", "Keep planning", "Y/Enter approve"} {
 		if !strings.Contains(view, want) {
 			t.Fatalf("expected approval decision option %q in view:\n%s", want, view)
 		}
 	}
 }
 
-func TestApprovalContextOnlyWhenInputIsEmpty(t *testing.T) {
+func TestApprovalContextDoesNotSwallowDraftTyping(t *testing.T) {
 	t.Parallel()
 
 	model := newTestTUIModel()
@@ -377,10 +369,25 @@ func TestApprovalContextOnlyWhenInputIsEmpty(t *testing.T) {
 	if !hasKeyContext(model.keyContexts(), tuiui.ContextApproval) {
 		t.Fatalf("expected approval context for empty input")
 	}
+	gotModel, _ := model.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("h")})
+	updated := gotModel.(*tuiModel)
+	if updated.input.Value() != "h" {
+		t.Fatalf("expected first typed character to remain visible while approval is pending, got %q", updated.input.Value())
+	}
+	model = updated
 
 	model.input.SetValue("keep typing")
 	if hasKeyContext(model.keyContexts(), tuiui.ContextApproval) {
-		t.Fatalf("did not expect approval context to steal normal typing")
+		t.Fatalf("did not expect approval context to swallow draft input")
+	}
+	gotModel, _ = model.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("!")})
+	updated = gotModel.(*tuiModel)
+	if updated.input.Value() != "keep typing!" {
+		t.Fatalf("expected normal typing to remain visible while approval is pending, got %q", updated.input.Value())
+	}
+	view := updated.renderMainScreen()
+	if !strings.Contains(view, "Draft active") {
+		t.Fatalf("expected approval panel to explain draft mode, got:\n%s", view)
 	}
 }
 
@@ -502,8 +509,8 @@ func TestTranscriptSearchDoesNotOverwriteMainStatus(t *testing.T) {
 	if model.mainStatus != "Running task..." {
 		t.Fatalf("expected main status to remain unchanged, got %q", model.mainStatus)
 	}
-	if model.searchStatus != "1 matches" {
-		t.Fatalf("expected transcript search status, got %q", model.searchStatus)
+	if model.transcriptScreen.Status() != "1 matches" {
+		t.Fatalf("expected transcript search status, got %q", model.transcriptScreen.Status())
 	}
 
 	model.closeTranscriptScreen()
@@ -696,8 +703,8 @@ func TestTranscriptSearchCommitKeepsHighlightForNextNavigation(t *testing.T) {
 	if updated.focus != tuiFocusTranscript {
 		t.Fatalf("expected transcript focus after committing search, got %q", updated.focus)
 	}
-	if len(updated.searchMatches) != 1 {
-		t.Fatalf("expected search match to remain after commit, got %+v", updated.searchMatches)
+	if updated.transcriptScreen.MatchCount() != 1 {
+		t.Fatalf("expected search match to remain after commit, got %d", updated.transcriptScreen.MatchCount())
 	}
 	if got := updated.renderTranscriptContent(80); !containsString(got, "› ") {
 		t.Fatalf("expected committed transcript search to keep highlight, got %q", got)
@@ -889,6 +896,39 @@ func TestIdleInputDoesNotShowRecipeSuggestions(t *testing.T) {
 	}
 }
 
+func TestEmptyPromptPlaceholderStaysSingleLine(t *testing.T) {
+	t.Parallel()
+
+	model := newTestTUIModel()
+	model.width = 42
+	model.input.SetValue("")
+	model.reflow()
+
+	rendered := model.renderInput()
+	if !containsString(rendered, "Ask about current") {
+		t.Fatalf("expected compact placeholder, got %q", rendered)
+	}
+	if strings.Count(rendered, "›") != 1 {
+		t.Fatalf("expected one prompt marker in placeholder, got %q", rendered)
+	}
+}
+
+func TestShortPromptInputStaysSingleLine(t *testing.T) {
+	t.Parallel()
+
+	model := newTestTUIModel()
+	model.input.SetValue("/")
+	model.reflow()
+
+	rendered := model.renderInput()
+	if strings.Count(rendered, "›") != 1 {
+		t.Fatalf("expected one prompt marker for short input, got %q", rendered)
+	}
+	if strings.Count(rendered, "\n") != 1 {
+		t.Fatalf("expected divider plus one input row, got %q", rendered)
+	}
+}
+
 func TestPaneDoesNotReduceTimelineHeight(t *testing.T) {
 	t.Parallel()
 
@@ -1064,6 +1104,20 @@ func TestHeaderStaysSingleLine(t *testing.T) {
 	}
 }
 
+func TestHeaderDropsWorkspaceOnNarrowWidth(t *testing.T) {
+	t.Parallel()
+
+	model := newTestTUIModel()
+	model.width = 58
+	model.workspaceName = "papersilm"
+	model.reflow()
+
+	header := model.renderHeader()
+	if strings.Contains(header, "papersilm · papersilm") {
+		t.Fatalf("expected narrow header to avoid duplicated app/workspace label, got %q", header)
+	}
+}
+
 func TestFooterMetaStaysSingleLineWithLongWorkspace(t *testing.T) {
 	t.Parallel()
 
@@ -1087,6 +1141,24 @@ func TestFooterMetaStaysSingleLineWithLongWorkspace(t *testing.T) {
 	}
 }
 
+func TestFooterDropsLowPriorityMetadataOnNarrowWidth(t *testing.T) {
+	t.Parallel()
+
+	model := newTestTUIModel()
+	model.width = 58
+	model.snapshot.Sources = []protocol.PaperRef{{PaperID: "source_1"}}
+	model.workspaceName = "papersilm-workspace"
+	model.reflow()
+
+	meta := strings.Split(model.renderFooter(), "\n")[0]
+	if containsString(meta, "sources") || containsString(meta, "papersilm-workspace") || containsString(meta, "dark") {
+		t.Fatalf("expected narrow footer to drop low-priority metadata, got %q", meta)
+	}
+	if !containsString(meta, "confirm") {
+		t.Fatalf("expected narrow footer to keep mode, got %q", meta)
+	}
+}
+
 func TestHintsCanBeHiddenWithoutRemovingFooterMeta(t *testing.T) {
 	t.Parallel()
 
@@ -1103,6 +1175,21 @@ func TestHintsCanBeHiddenWithoutRemovingFooterMeta(t *testing.T) {
 	}
 	if !containsString(hidden, "confirm") {
 		t.Fatalf("expected footer meta line to remain, got %q", hidden)
+	}
+}
+
+func TestFooterHintsSuppressWhileTyping(t *testing.T) {
+	t.Parallel()
+
+	model := newTestTUIModel()
+	model.input.SetValue("draft prompt")
+
+	footer := model.renderFooter()
+	if containsString(footer, "Ctrl+/ hints") {
+		t.Fatalf("expected shortcuts to be suppressed while typing, got %q", footer)
+	}
+	if !containsString(footer, "confirm") {
+		t.Fatalf("expected footer meta line to remain while typing, got %q", footer)
 	}
 }
 

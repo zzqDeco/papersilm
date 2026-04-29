@@ -43,6 +43,25 @@ func TestOverlayBottomKeepsBaseHeight(t *testing.T) {
 	}
 }
 
+func TestOverlayBottomWithPeekKeepsTranscriptPeek(t *testing.T) {
+	t.Parallel()
+
+	base := strings.Join([]string{"peek1", "peek2", "old", "input"}, "\n")
+	block := strings.Join([]string{"drawer", "row1", "row2", "row3"}, "\n")
+
+	overlaid := OverlayBottomWithPeek(base, block, 16, 2)
+	lines := strings.Split(overlaid, "\n")
+	if len(lines) != 4 {
+		t.Fatalf("expected overlay to keep base height, got %d: %q", len(lines), overlaid)
+	}
+	if !strings.Contains(lines[0], "peek1") || !strings.Contains(lines[1], "peek2") {
+		t.Fatalf("expected first two transcript rows to remain visible, got %q", overlaid)
+	}
+	if !strings.Contains(overlaid, "drawer") || strings.Contains(overlaid, "row3") {
+		t.Fatalf("expected clipped bottom drawer, got %q", overlaid)
+	}
+}
+
 func TestRenderFullscreenLayoutSlots(t *testing.T) {
 	t.Parallel()
 

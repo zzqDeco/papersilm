@@ -21,13 +21,15 @@ type Drawer struct {
 }
 
 type ListRow struct {
-	Label       string
-	Detail      string
-	Selected    bool
-	Disabled    bool
-	MarkerStyle lipgloss.Style
-	LabelStyle  lipgloss.Style
-	DetailStyle lipgloss.Style
+	Label          string
+	Detail         string
+	Selected       bool
+	Disabled       bool
+	SelectedPrefix string
+	IdlePrefix     string
+	MarkerStyle    lipgloss.Style
+	LabelStyle     lipgloss.Style
+	DetailStyle    lipgloss.Style
 }
 
 type FullscreenLayout struct {
@@ -112,9 +114,9 @@ func RenderListRows(rows []ListRow, width int) []string {
 	detailWidth := max(0, width-labelWidth-6)
 	lines := make([]string, 0, len(rows))
 	for _, row := range rows {
-		prefix := "  "
+		prefix := firstText(row.IdlePrefix, "  ")
 		if row.Selected {
-			prefix = "+ "
+			prefix = firstText(row.SelectedPrefix, "+ ")
 		}
 		label := padRight(truncateRight(row.Label, labelWidth), labelWidth)
 		detail := truncateRight(row.Detail, detailWidth)
@@ -127,8 +129,36 @@ func RenderListRows(rows []ListRow, width int) []string {
 	return lines
 }
 
+func firstText(values ...string) string {
+	for _, value := range values {
+		if value != "" {
+			return value
+		}
+	}
+	return ""
+}
+
 func OverlayBottom(base, block string, width int) string {
 	return OverlayAt(base, block, max(0, len(strings.Split(base, "\n"))-lipgloss.Height(block)), lipgloss.Left, width)
+}
+
+func OverlayBottomWithPeek(base, block string, width int, peek int) string {
+	baseHeight := len(strings.Split(base, "\n"))
+	peek = clamp(peek, 0, max(0, baseHeight-1))
+	maxOverlayHeight := max(1, baseHeight-peek)
+	block = ClipBlockHeight(block, maxOverlayHeight)
+	return OverlayAt(base, block, max(peek, baseHeight-lipgloss.Height(block)), lipgloss.Left, width)
+}
+
+func ClipBlockHeight(block string, maxHeight int) string {
+	if maxHeight <= 0 {
+		return ""
+	}
+	lines := strings.Split(block, "\n")
+	if len(lines) <= maxHeight {
+		return block
+	}
+	return strings.Join(lines[:maxHeight], "\n")
 }
 
 func OverlayAt(base, block string, top int, align lipgloss.Position, width int) string {

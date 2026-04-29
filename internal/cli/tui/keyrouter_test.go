@@ -46,4 +46,30 @@ func TestRouteKeyGlobalQuitAlwaysAvailable(t *testing.T) {
 	if action != ActionQuit {
 		t.Fatalf("expected global quit, got %q", action)
 	}
+
+	action = RouteKey([]KeyContext{ContextChat, ContextGlobal}, "ctrl+d")
+	if action != ActionQuit {
+		t.Fatalf("expected ctrl+d exit, got %q", action)
+	}
+
+	action = RouteKey([]KeyContext{ContextChat, ContextGlobal}, "ctrl+l")
+	if action != ActionRedraw {
+		t.Fatalf("expected ctrl+l redraw, got %q", action)
+	}
+
+	action = RouteKey([]KeyContext{ContextTranscript, ContextGlobal}, "ctrl+c")
+	if action != ActionQuit {
+		t.Fatalf("expected ctrl+c to quit from transcript, got %q", action)
+	}
+}
+
+func TestRouteKeyConfirmationRejectsLikeClaudeCode(t *testing.T) {
+	t.Parallel()
+
+	for _, key := range []string{"n", "esc"} {
+		action := RouteKey([]KeyContext{ContextApproval, ContextChat, ContextGlobal}, key)
+		if action != ActionApprovalReject {
+			t.Fatalf("expected %s to reject approval, got %q", key, action)
+		}
+	}
 }
