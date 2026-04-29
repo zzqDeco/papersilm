@@ -1,5 +1,7 @@
 package tui
 
+import "strings"
+
 type OverlayKind string
 
 const (
@@ -59,4 +61,19 @@ func (m *OverlayManager) ClearDrawer() {
 func (m *OverlayManager) ClearAll() {
 	m.ClearPrompt()
 	m.ClearDrawer()
+}
+
+func RenderPromptOverlay(overlay PromptOverlay, width int) string {
+	if overlay.Kind == OverlayNone || len(overlay.Rows) == 0 {
+		return ""
+	}
+	return strings.Join(RenderListRows(overlay.Rows, width), "\n")
+}
+
+func RenderDrawerOverlay(overlay DrawerOverlay, drawer Drawer) string {
+	drawer.Title = overlay.Title
+	drawer.Message = overlay.Message
+	drawer.Filter = overlay.Filter
+	drawer.Rows = overlay.Rows
+	return RenderBottomDrawer(drawer)
 }

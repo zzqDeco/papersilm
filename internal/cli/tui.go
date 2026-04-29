@@ -1755,7 +1755,11 @@ func (m *tuiModel) renderSuggestions() string {
 			DetailStyle: detailStyle,
 		})
 	}
-	return strings.Join(tuiui.RenderListRows(rows, width), "\n")
+	return tuiui.RenderPromptOverlay(tuiui.PromptOverlay{
+		Kind:      tuiui.OverlaySuggestions,
+		Rows:      rows,
+		Selection: m.sel,
+	}, width)
 }
 
 func (m *tuiModel) renderFooter() string {
@@ -1914,17 +1918,30 @@ func (m *tuiModel) renderModalBox() string {
 			DetailStyle: detailStyle,
 		})
 	}
-	return tuiui.RenderBottomDrawer(tuiui.Drawer{
+	return tuiui.RenderDrawerOverlay(tuiui.DrawerOverlay{
+		Kind:    modalOverlayKind(m.modal.Kind),
+		Title:   m.modal.Title,
+		Message: truncateRight(message, bodyWidth),
+		Filter:  filter,
+		Rows:    rows,
+	}, tuiui.Drawer{
 		Width:        width,
-		Title:        m.modal.Title,
-		Message:      truncateRight(message, bodyWidth),
-		Filter:       filter,
-		Rows:         rows,
 		DividerStyle: m.styles.approvalLabel,
 		TitleStyle:   m.styles.modalTitle,
 		MutedStyle:   m.styles.modalMessage,
 		BodyStyle:    m.styles.body,
 	})
+}
+
+func modalOverlayKind(kind tuiModalKind) tuiui.OverlayKind {
+	switch kind {
+	case tuiModalCommands:
+		return tuiui.OverlayPalette
+	case tuiModalProviders, tuiModalModels:
+		return tuiui.OverlayModelPicker
+	default:
+		return tuiui.OverlayNone
+	}
 }
 
 func (m *tuiModel) renderTranscriptScreen() string {

@@ -1,6 +1,9 @@
 package tui
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func TestOverlayManagerSeparatesPromptAndDrawer(t *testing.T) {
 	t.Parallel()
@@ -23,4 +26,27 @@ func TestOverlayManagerSeparatesPromptAndDrawer(t *testing.T) {
 	if _, ok := manager.Drawer(); !ok {
 		t.Fatalf("expected drawer overlay to remain after clearing prompt")
 	}
+}
+
+func TestRenderPromptOverlay(t *testing.T) {
+	t.Parallel()
+
+	rendered := RenderPromptOverlay(PromptOverlay{
+		Kind: OverlaySuggestions,
+		Rows: []ListRow{
+			{Label: "/model", Detail: "Pick model", Selected: true},
+		},
+	}, 40)
+	if rendered == "" || !containsAll(rendered, "+ /model", "Pick model") {
+		t.Fatalf("unexpected prompt overlay: %q", rendered)
+	}
+}
+
+func containsAll(value string, wants ...string) bool {
+	for _, want := range wants {
+		if !strings.Contains(value, want) {
+			return false
+		}
+	}
+	return true
 }
