@@ -513,6 +513,61 @@ func (o *OutputWriter) printPlan(plan protocol.PlanResult) error {
 }
 
 func (o *OutputWriter) printApproval(approval protocol.ApprovalRequest) error {
+	if len(approval.Requests) > 0 {
+		request := approval.Requests[0]
+		if approval.ActiveRequestID != "" {
+			for _, candidate := range approval.Requests {
+				if candidate.RequestID == approval.ActiveRequestID {
+					request = candidate
+					break
+				}
+			}
+		}
+		if _, err := fmt.Fprintf(o.w, "Permission required\n%s\n", firstNonEmpty(request.Title, "Permission request")); err != nil {
+			return err
+		}
+		if request.Subtitle != "" {
+			if _, err := fmt.Fprintf(o.w, "%s\n", request.Subtitle); err != nil {
+				return err
+			}
+		}
+		if request.Question != "" {
+			if _, err := fmt.Fprintf(o.w, "\n%s\n", request.Question); err != nil {
+				return err
+			}
+		}
+		if request.Summary != "" {
+			if _, err := fmt.Fprintf(o.w, "Summary: %s\n", request.Summary); err != nil {
+				return err
+			}
+		}
+		if request.TargetPath != "" {
+			if _, err := fmt.Fprintf(o.w, "Target: %s\n", request.TargetPath); err != nil {
+				return err
+			}
+		}
+		if request.Command != "" {
+			if _, err := fmt.Fprintf(o.w, "Command: %s\n", request.Command); err != nil {
+				return err
+			}
+		}
+		preview := firstNonEmpty(request.Preview.Diff, request.Preview.NewContent, request.Preview.Summary)
+		if strings.TrimSpace(preview) != "" {
+			if _, err := fmt.Fprintf(o.w, "\nPreview:\n%s\n", strings.TrimSpace(preview)); err != nil {
+				return err
+			}
+		}
+		if _, err := fmt.Fprintln(o.w, "\nOptions:"); err != nil {
+			return err
+		}
+		for _, option := range request.Options {
+			if _, err := fmt.Fprintf(o.w, "- %s (%s, scope=%s)\n", option.Label, option.Value, option.Scope); err != nil {
+				return err
+			}
+		}
+		_, err := fmt.Fprintln(o.w, "\nUse /approve or /reject for compatibility, or continue in the TUI for scoped decisions.")
+		return err
+	}
 	_, err := fmt.Fprintf(o.w, "Approval required\nPlan: %s\nCheckpoint: %s\nInterrupt: %s\nPending nodes: %s\nSummary: %s\n\n", approval.PlanID, approval.CheckpointID, approval.InterruptID, strings.Join(approval.PendingNodeIDs, ", "), approval.Summary)
 	return err
 }

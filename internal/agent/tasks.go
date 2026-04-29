@@ -84,7 +84,7 @@ func (a *Agent) ApproveTask(ctx context.Context, store *storage.Store, sink Even
 		return protocol.RunResult{}, fmt.Errorf("session has no pending execution state")
 	}
 	if !approved {
-		return a.rejectTask(store, sessionID, meta, planResult, execState, taskID, comment)
+		return a.rejectTask(ctx, store, sessionID, meta, planResult, execState, taskID, comment)
 	}
 	if meta.State != protocol.SessionStateAwaitingApproval || len(execState.PendingNodeIDs) == 0 {
 		return protocol.RunResult{}, fmt.Errorf("session has no pending approval tasks")
@@ -169,7 +169,7 @@ func (a *Agent) ApproveTask(ctx context.Context, store *storage.Store, sink Even
 	if err := store.SaveExecutionState(sessionID, *execState); err != nil {
 		return protocol.RunResult{}, err
 	}
-	return a.finishTaskApproval(store, sessionID, meta, planResult, execState)
+	return a.finishTaskApproval(ctx, store, sessionID, meta, planResult, execState)
 }
 
 func (a *Agent) RejectTask(ctx context.Context, store *storage.Store, sink EventSink, sessionID, taskID, comment string) (protocol.RunResult, error) {
@@ -319,7 +319,7 @@ func (a *Agent) runScopedExecution(
 	}, nil
 }
 
-func (a *Agent) finishTaskApproval(store *storage.Store, sessionID string, meta protocol.SessionMeta, planResult *protocol.PlanResult, execState *protocol.ExecutionState) (protocol.RunResult, error) {
+func (a *Agent) finishTaskApproval(ctx context.Context, store *storage.Store, sessionID string, meta protocol.SessionMeta, planResult *protocol.PlanResult, execState *protocol.ExecutionState) (protocol.RunResult, error) {
 	if len(execState.PendingNodeIDs) > 0 {
 		meta.State = protocol.SessionStateAwaitingApproval
 		meta.ApprovalPending = true
@@ -333,22 +333,21 @@ func (a *Agent) finishTaskApproval(store *storage.Store, sessionID string, meta 
 		if err := store.SaveExecutionState(sessionID, *execState); err != nil {
 			return protocol.RunResult{}, err
 		}
+		approval, err := a.buildApprovalRequest(ctx, store, sessionID, meta, *planResult, execState, execState.PendingNodeIDs, meta.ActiveCheckpointID, meta.PendingInterruptID)
+		if err != nil {
+			return protocol.RunResult{}, err
+		}
+		if err := store.SavePendingApproval(sessionID, approval); err != nil {
+			return protocol.RunResult{}, err
+		}
 		snapshot, err := store.Snapshot(sessionID)
 		if err != nil {
 			return protocol.RunResult{}, err
 		}
 		return protocol.RunResult{
-			Session: snapshot,
-			Plan:    snapshot.Plan,
-			Approval: &protocol.ApprovalRequest{
-				PlanID:         planResult.PlanID,
-				CheckpointID:   meta.ActiveCheckpointID,
-				InterruptID:    meta.PendingInterruptID,
-				PendingNodeIDs: append([]string(nil), execState.PendingNodeIDs...),
-				Summary:        approvalSummary(*planResult, execState.PendingNodeIDs),
-				RequiresInput:  true,
-				CreatedAt:      time.Now().UTC(),
-			},
+			Session:  snapshot,
+			Plan:     snapshot.Plan,
+			Approval: snapshot.Approval,
 		}, nil
 	}
 
@@ -366,6 +365,9 @@ func (a *Agent) finishTaskApproval(store *storage.Store, sessionID string, meta 
 			return protocol.RunResult{}, err
 		}
 		if err := store.SaveExecutionState(sessionID, *execState); err != nil {
+			return protocol.RunResult{}, err
+		}
+		if err := store.DeletePendingApproval(sessionID); err != nil {
 			return protocol.RunResult{}, err
 		}
 		snapshot, err := store.Snapshot(sessionID)
@@ -397,6 +399,9 @@ func (a *Agent) finishTaskApproval(store *storage.Store, sessionID string, meta 
 		if err := store.SaveExecutionState(sessionID, *execState); err != nil {
 			return protocol.RunResult{}, err
 		}
+		if err := store.DeletePendingApproval(sessionID); err != nil {
+			return protocol.RunResult{}, err
+		}
 		snapshot, err := store.Snapshot(sessionID)
 		if err != nil {
 			return protocol.RunResult{}, err
@@ -423,26 +428,25 @@ func (a *Agent) finishTaskApproval(store *storage.Store, sessionID string, meta 
 	if err := store.SaveExecutionState(sessionID, *execState); err != nil {
 		return protocol.RunResult{}, err
 	}
+	approval, err := a.buildApprovalRequest(ctx, store, sessionID, meta, *planResult, execState, nextBatch, checkpointID, interruptID)
+	if err != nil {
+		return protocol.RunResult{}, err
+	}
+	if err := store.SavePendingApproval(sessionID, approval); err != nil {
+		return protocol.RunResult{}, err
+	}
 	snapshot, err := store.Snapshot(sessionID)
 	if err != nil {
 		return protocol.RunResult{}, err
 	}
 	return protocol.RunResult{
-		Session: snapshot,
-		Plan:    snapshot.Plan,
-		Approval: &protocol.ApprovalRequest{
-			PlanID:         planResult.PlanID,
-			CheckpointID:   checkpointID,
-			InterruptID:    interruptID,
-			PendingNodeIDs: append([]string(nil), nextBatch...),
-			Summary:        approvalSummary(*planResult, nextBatch),
-			RequiresInput:  true,
-			CreatedAt:      time.Now().UTC(),
-		},
+		Session:  snapshot,
+		Plan:     snapshot.Plan,
+		Approval: snapshot.Approval,
 	}, nil
 }
 
-func (a *Agent) rejectTask(store *storage.Store, sessionID string, meta protocol.SessionMeta, planResult *protocol.PlanResult, execState *protocol.ExecutionState, taskID, comment string) (protocol.RunResult, error) {
+func (a *Agent) rejectTask(ctx context.Context, store *storage.Store, sessionID string, meta protocol.SessionMeta, planResult *protocol.PlanResult, execState *protocol.ExecutionState, taskID, comment string) (protocol.RunResult, error) {
 	if meta.State != protocol.SessionStateAwaitingApproval || len(execState.PendingNodeIDs) == 0 {
 		return protocol.RunResult{}, fmt.Errorf("session has no pending approval tasks")
 	}
@@ -463,7 +467,7 @@ func (a *Agent) rejectTask(store *storage.Store, sessionID string, meta protocol
 	updateExecutionNode(execState, taskID, status, reason, nil)
 	execState.PendingNodeIDs = removeString(execState.PendingNodeIDs, taskID)
 	refreshReadyNodes(&planResult.DAG)
-	return a.finishTaskApproval(store, sessionID, meta, planResult, execState)
+	return a.finishTaskApproval(ctx, store, sessionID, meta, planResult, execState)
 }
 
 func dependencyClosure(dag protocol.PlanDAG, execState *protocol.ExecutionState, targetID string) map[string]struct{} {

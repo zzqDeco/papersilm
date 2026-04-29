@@ -194,6 +194,8 @@ type tuiModel struct {
 	activityStarted      time.Time
 	activityStats        map[string]int
 	approvalSelection    int
+	approvalFeedbackMode string
+	approvalFeedback     string
 
 	paneVisible bool
 	paneTitle   string
@@ -1106,6 +1108,9 @@ func (m *tuiModel) setMainStatus(status string) {
 }
 
 func statusForSnapshot(snapshot protocol.SessionSnapshot) string {
+	if snapshot.Approval != nil && len(snapshot.Approval.Requests) > 0 {
+		return "Permission required"
+	}
 	if snapshot.Meta.ApprovalPending || snapshot.Meta.State == protocol.SessionStateAwaitingApproval {
 		return "Awaiting approval"
 	}
@@ -1276,18 +1281,14 @@ func (m *tuiModel) renderApprovalStickyPanel() string {
 	if !m.approvalPanelActive() {
 		return ""
 	}
+	request, _ := m.activePermissionRequest()
 	options := m.approvalOptions()
 	if len(options) == 0 {
 		return ""
 	}
 	width := max(20, m.width-2)
-	bodyWidth := max(12, width-4)
 	m.approvalSelection = clamp(m.approvalSelection, 0, len(options)-1)
 
-	summary := strings.TrimSpace(summarizePendingApproval(m.snapshot))
-	if summary == "" {
-		summary = "Plan is waiting for approval."
-	}
 	rows := make([]tuiui.ListRow, 0, len(options))
 	for i, option := range options {
 		selected := i == m.approvalSelection
@@ -1297,15 +1298,10 @@ func (m *tuiModel) renderApprovalStickyPanel() string {
 			labelStyle = m.styles.suggestionActiveLabel
 			detailStyle = m.styles.suggestionActiveDetail
 		}
-		if option.Disabled {
-			labelStyle = m.styles.modalDisabled
-			detailStyle = m.styles.modalDisabled
-		}
 		rows = append(rows, tuiui.ListRow{
 			Label:          option.Label,
-			Detail:         option.Detail,
+			Detail:         option.Description,
 			Selected:       selected,
-			Disabled:       option.Disabled,
 			SelectedPrefix: "❯ ",
 			IdlePrefix:     "  ",
 			MarkerStyle:    m.styles.suggestionMarker,
@@ -1314,19 +1310,25 @@ func (m *tuiModel) renderApprovalStickyPanel() string {
 		})
 	}
 
-	hint := "Y/Enter approve · N/Esc keep planning · I inspect · ↑↓ move"
-	if !m.approvalKeyboardActive() {
-		hint = "Draft active · Enter sends prompt · clear prompt for approval shortcuts"
+	hint := "Y/Enter yes · N/Esc no · Tab add feedback · Shift+Tab scope · Ctrl+E details"
+	if m.approvalFeedbackMode != "" {
+		hint = "Enter submit with feedback · Ctrl+J newline · Esc rejects"
 	}
-	return tuiui.RenderDecisionPanel(tuiui.DecisionPanel{
+	return tuiui.RenderPermissionDialog(tuiui.PermissionDialog{
 		Width:        width,
-		Title:        "Do you want to proceed?",
-		Summary:      truncateRight("Approval required · "+summary, bodyWidth),
-		Hint:         hint,
+		Title:        firstNonEmpty(request.Title, "Permission request"),
+		Subtitle:     request.Subtitle,
+		Question:     firstNonEmpty(request.Question, "Do you want papersilm to proceed?"),
+		Summary:      request.Summary,
+		Preview:      permissionPreviewText(request),
 		Rows:         rows,
+		Feedback:     m.approvalFeedback,
+		FeedbackMode: m.approvalFeedbackMode,
+		Hint:         hint,
 		DividerStyle: m.styles.paneDivider,
 		TitleStyle:   m.styles.approvalLabel,
 		MutedStyle:   m.styles.footerMuted,
+		BodyStyle:    m.styles.body,
 	})
 }
 
@@ -1693,15 +1695,10 @@ func (m *tuiModel) renderApprovalOptions(item tuiTimelineItem, width int) string
 			labelStyle = m.styles.suggestionActiveLabel
 			detailStyle = m.styles.suggestionActiveDetail
 		}
-		if option.Disabled {
-			labelStyle = m.styles.modalDisabled
-			detailStyle = m.styles.modalDisabled
-		}
 		rows = append(rows, tuiui.ListRow{
 			Label:          option.Label,
-			Detail:         option.Detail,
+			Detail:         option.Description,
 			Selected:       selected,
-			Disabled:       option.Disabled,
 			SelectedPrefix: "❯ ",
 			IdlePrefix:     "  ",
 			MarkerStyle:    m.styles.suggestionMarker,
@@ -1710,7 +1707,7 @@ func (m *tuiModel) renderApprovalOptions(item tuiTimelineItem, width int) string
 		})
 	}
 	lines := tuiui.RenderListRows(rows, width)
-	hint := m.styles.footerMuted.Render("  Enter select · Tab/↑↓ move · A approve · R keep planning · I inspect")
+	hint := m.styles.footerMuted.Render("  Enter select · Tab feedback · Y yes · N no · Ctrl+E details")
 	lines = append(lines, hint)
 	return strings.Join(lines, "\n")
 }
@@ -2165,11 +2162,49 @@ func executionToTranscriptEntries(input string, before, after protocol.SessionSn
 }
 
 func approvalDecisionTranscriptEntry(input string, before, after protocol.SessionSnapshot) (protocol.TranscriptEntry, bool) {
-	fields := strings.Fields(strings.TrimSpace(input))
+	inputText := strings.TrimSpace(input)
+	feedback := ""
+	if head, tail, ok := strings.Cut(inputText, " -- "); ok {
+		inputText = strings.TrimSpace(head)
+		feedback = strings.TrimSpace(tail)
+	}
+	fields := strings.Fields(inputText)
 	if len(fields) == 0 {
 		return protocol.TranscriptEntry{}, false
 	}
 	switch fields[0] {
+	case "/permission":
+		if len(fields) < 2 {
+			return protocol.TranscriptEntry{}, false
+		}
+		request := protocol.PermissionRequest{}
+		if before.Approval != nil {
+			activeID := strings.TrimSpace(before.Approval.ActiveRequestID)
+			for _, candidate := range before.Approval.Requests {
+				if activeID == "" || candidate.RequestID == activeID {
+					request = candidate
+					break
+				}
+			}
+		}
+		title := "✓ Approved"
+		subtype := transcriptSubtypeApprovalApproved
+		body := permissionDecisionBody(request, fields[1], fields[2:], feedback)
+		if fields[1] == tuiPermissionReject {
+			title = "Tool use rejected"
+			subtype = transcriptSubtypeApprovalRejected
+		}
+		entry := newTranscriptEntry(
+			after.Meta.SessionID,
+			protocol.TranscriptEntryApproval,
+			title,
+			body,
+			withTranscriptSubtype(subtype),
+		)
+		if fields[1] == tuiPermissionReject && !strings.Contains(strings.TrimSpace(body), "\n") {
+			entry.RenderState = protocol.TranscriptRenderCollapsed
+		}
+		return entry, true
 	case "/approve":
 		title, body := summarizeSessionApproval(before, after)
 		if title == "" {
@@ -2236,6 +2271,36 @@ func approvalDecisionTranscriptEntry(input string, before, after protocol.Sessio
 	return protocol.TranscriptEntry{}, false
 }
 
+func permissionDecisionBody(request protocol.PermissionRequest, value string, fields []string, feedback string) string {
+	parts := make([]string, 0, 4)
+	if request.Title != "" {
+		parts = append(parts, request.Title)
+	}
+	switch {
+	case request.TargetPath != "":
+		parts = append(parts, request.TargetPath)
+	case request.Command != "":
+		parts = append(parts, request.Command)
+	case request.Summary != "":
+		parts = append(parts, request.Summary)
+	}
+	if len(fields) > 0 && strings.TrimSpace(fields[0]) != "" {
+		parts = append(parts, "scope "+fields[0])
+	}
+	if strings.TrimSpace(feedback) != "" {
+		parts = append(parts, "feedback: "+strings.TrimSpace(feedback))
+	}
+	if len(parts) == 0 {
+		switch value {
+		case tuiPermissionReject:
+			return "Tool use rejected."
+		default:
+			return "Permission granted."
+		}
+	}
+	return strings.Join(parts, "\n")
+}
+
 func pendingApprovalTranscriptEntry(after protocol.SessionSnapshot) (protocol.TranscriptEntry, bool) {
 	if !after.Meta.ApprovalPending && after.Meta.State != protocol.SessionStateAwaitingApproval {
 		return protocol.TranscriptEntry{}, false
@@ -2254,6 +2319,33 @@ func pendingApprovalTranscriptEntry(after protocol.SessionSnapshot) (protocol.Tr
 }
 
 func summarizePendingApproval(after protocol.SessionSnapshot) string {
+	if after.Approval != nil && len(after.Approval.Requests) > 0 {
+		activeID := strings.TrimSpace(after.Approval.ActiveRequestID)
+		for _, request := range after.Approval.Requests {
+			if activeID != "" && request.RequestID != activeID {
+				continue
+			}
+			parts := make([]string, 0, 4)
+			if request.Title != "" {
+				parts = append(parts, request.Title)
+			}
+			if request.Subtitle != "" {
+				parts = append(parts, request.Subtitle)
+			}
+			if request.Summary != "" {
+				parts = append(parts, request.Summary)
+			}
+			if request.TargetPath != "" {
+				parts = append(parts, request.TargetPath)
+			}
+			if request.Command != "" {
+				parts = append(parts, request.Command)
+			}
+			if len(parts) > 0 {
+				return strings.Join(parts, " · ")
+			}
+		}
+	}
 	planID := firstNonEmpty(after.Meta.ActivePlanID, taskBoardPlanID(after.TaskBoard), planResultID(after.Plan))
 	tasks := awaitingApprovalTasks(after.TaskBoard)
 	parts := make([]string, 0, 4)
@@ -2512,10 +2604,10 @@ func runSlashCmdWithHistory(ctx context.Context, runtime *tuiRuntimeManager, sna
 	}
 }
 
-func runApprovalRejectCmd(ctx context.Context, runtime *tuiRuntimeManager, snapshot protocol.SessionSnapshot) tea.Cmd {
+func runApprovalRejectCmd(ctx context.Context, runtime *tuiRuntimeManager, snapshot protocol.SessionSnapshot, feedback string) tea.Cmd {
 	return func() tea.Msg {
 		before := snapshot
-		result, err := runtime.svc.Approve(ctx, snapshot.Meta.SessionID, false, "")
+		result, err := runtime.svc.Approve(ctx, snapshot.Meta.SessionID, false, feedback)
 		after := snapshot
 		if err == nil {
 			after = result.Session
@@ -2685,8 +2777,44 @@ func newestSkillArtifactMarkdown(before, after protocol.SessionSnapshot) string 
 func approvalSummary(payload interface{}) string {
 	switch v := payload.(type) {
 	case protocol.ApprovalRequest:
+		if len(v.Requests) > 0 {
+			request := v.Requests[0]
+			if v.ActiveRequestID != "" {
+				for _, candidate := range v.Requests {
+					if candidate.RequestID == v.ActiveRequestID {
+						request = candidate
+						break
+					}
+				}
+			}
+			parts := []string{firstNonEmpty(request.Title, "Permission request")}
+			if request.TargetPath != "" {
+				parts = append(parts, request.TargetPath)
+			} else if request.Command != "" {
+				parts = append(parts, request.Command)
+			}
+			if request.Summary != "" {
+				parts = append(parts, request.Summary)
+			}
+			return strings.Join(parts, " · ")
+		}
 		return fmt.Sprintf("Plan %s · pending nodes %s · %s", v.PlanID, strings.Join(v.PendingNodeIDs, ", "), v.Summary)
 	case map[string]interface{}:
+		if requests, ok := v["requests"].([]interface{}); ok && len(requests) > 0 {
+			if request, ok := requests[0].(map[string]interface{}); ok {
+				title := firstNonEmpty(anyString(request["title"]), "Permission request")
+				target := firstNonEmpty(anyString(request["target_path"]), anyString(request["command"]))
+				summary := anyString(request["summary"])
+				parts := []string{title}
+				if target != "" {
+					parts = append(parts, target)
+				}
+				if summary != "" {
+					parts = append(parts, summary)
+				}
+				return strings.Join(parts, " · ")
+			}
+		}
 		planID := anyString(v["plan_id"])
 		summary := anyString(v["summary"])
 		nodes := anyStrings(v["pending_node_ids"])

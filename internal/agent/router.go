@@ -119,7 +119,7 @@ func (a *Agent) Execute(ctx context.Context, store *storage.Store, sink EventSin
 		}
 		return protocol.RunResult{Session: snapshot, Plan: snapshot.Plan}, nil
 	case protocol.PermissionModeConfirm:
-		return a.startConfirmExecution(store, req.SessionID, meta, planResult, execState)
+		return a.startConfirmExecution(ctx, store, req.SessionID, meta, planResult, execState)
 	default:
 		meta.State = protocol.SessionStateRunning
 		meta.ApprovalPending = false
@@ -202,6 +202,9 @@ func (a *Agent) Approve(ctx context.Context, store *storage.Store, sink EventSin
 		if err := store.SaveExecutionState(sessionID, *execState); err != nil {
 			return protocol.RunResult{}, err
 		}
+		if err := store.DeletePendingApproval(sessionID); err != nil {
+			return protocol.RunResult{}, err
+		}
 		if err := store.SaveMeta(meta); err != nil {
 			return protocol.RunResult{}, err
 		}
@@ -218,6 +221,9 @@ func (a *Agent) Approve(ctx context.Context, store *storage.Store, sink EventSin
 	meta.PendingInterruptID = ""
 	meta.UpdatedAt = time.Now().UTC()
 	if err := store.SaveMeta(meta); err != nil {
+		return protocol.RunResult{}, err
+	}
+	if err := store.DeletePendingApproval(sessionID); err != nil {
 		return protocol.RunResult{}, err
 	}
 	return a.runDAGExecution(ctx, store, sink, sessionID, meta, *planResult, execState, meta.LastTask, meta.Language, meta.Style)
@@ -377,7 +383,7 @@ func (a *Agent) planSession(ctx context.Context, store *storage.Store, sink Even
 	return planResult, &state, nil
 }
 
-func (a *Agent) startConfirmExecution(store *storage.Store, sessionID string, meta protocol.SessionMeta, planResult protocol.PlanResult, execState *protocol.ExecutionState) (protocol.RunResult, error) {
+func (a *Agent) startConfirmExecution(ctx context.Context, store *storage.Store, sessionID string, meta protocol.SessionMeta, planResult protocol.PlanResult, execState *protocol.ExecutionState) (protocol.RunResult, error) {
 	batch := selectBatch(planResult.DAG)
 	checkpointID := fmt.Sprintf("%s_confirm_%d", sessionID, time.Now().UnixNano())
 	interruptID := fmt.Sprintf("approval_%d", time.Now().UnixNano())
@@ -395,22 +401,21 @@ func (a *Agent) startConfirmExecution(store *storage.Store, sessionID string, me
 	if err := store.SaveMeta(meta); err != nil {
 		return protocol.RunResult{}, err
 	}
+	approval, err := a.buildApprovalRequest(ctx, store, sessionID, meta, planResult, execState, batch, checkpointID, interruptID)
+	if err != nil {
+		return protocol.RunResult{}, err
+	}
+	if err := store.SavePendingApproval(sessionID, approval); err != nil {
+		return protocol.RunResult{}, err
+	}
 	snapshot, err := store.Snapshot(sessionID)
 	if err != nil {
 		return protocol.RunResult{}, err
 	}
 	return protocol.RunResult{
-		Session: snapshot,
-		Plan:    snapshot.Plan,
-		Approval: &protocol.ApprovalRequest{
-			PlanID:         planResult.PlanID,
-			CheckpointID:   checkpointID,
-			InterruptID:    interruptID,
-			PendingNodeIDs: append([]string(nil), batch...),
-			Summary:        approvalSummary(planResult, batch),
-			RequiresInput:  true,
-			CreatedAt:      time.Now().UTC(),
-		},
+		Session:  snapshot,
+		Plan:     snapshot.Plan,
+		Approval: snapshot.Approval,
 	}, nil
 }
 
@@ -544,6 +549,9 @@ func (a *Agent) runDAGExecution(ctx context.Context, store *storage.Store, sink 
 		return protocol.RunResult{}, err
 	}
 	if err := store.SaveExecutionState(sessionID, *execState); err != nil {
+		return protocol.RunResult{}, err
+	}
+	if err := store.DeletePendingApproval(sessionID); err != nil {
 		return protocol.RunResult{}, err
 	}
 	snapshot, err := store.Snapshot(sessionID)
