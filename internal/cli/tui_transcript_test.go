@@ -1139,14 +1139,14 @@ func TestFooterMetaStaysSingleLineWithLongWorkspace(t *testing.T) {
 
 	footer := model.renderFooter()
 	lines := strings.Split(footer, "\n")
-	if len(lines) != 2 {
-		t.Fatalf("expected footer to render meta + hints only, got %d lines: %q", len(lines), footer)
+	if len(lines) != 1 {
+		t.Fatalf("expected footer to render compact single-line meta, got %d lines: %q", len(lines), footer)
 	}
 	if got := lipgloss.Width(lines[0]); got > model.width-2 {
 		t.Fatalf("expected footer meta width <= %d, got %d: %q", model.width-2, got, lines[0])
 	}
-	if containsString(lines[0], "/private/var/folders") {
-		t.Fatalf("expected footer to use compact workspace name, got %q", lines[0])
+	if containsString(lines[0], "/private/var/folders") || containsString(lines[0], "gpt-5.4-long-model-name") {
+		t.Fatalf("expected footer to drop low-priority metadata, got %q", lines[0])
 	}
 }
 
@@ -1163,8 +1163,8 @@ func TestFooterDropsLowPriorityMetadataOnNarrowWidth(t *testing.T) {
 	if containsString(meta, "sources") || containsString(meta, "papersilm-workspace") || containsString(meta, "dark") {
 		t.Fatalf("expected narrow footer to drop low-priority metadata, got %q", meta)
 	}
-	if !containsString(meta, "confirm") {
-		t.Fatalf("expected narrow footer to keep mode, got %q", meta)
+	if containsString(meta, "confirm") {
+		t.Fatalf("did not expect default confirm mode to add footer noise, got %q", meta)
 	}
 }
 
@@ -1185,8 +1185,8 @@ func TestHintsCanBeHiddenWithoutRemovingFooterMeta(t *testing.T) {
 	if containsString(hidden, "? for shortcuts") {
 		t.Fatalf("expected hints line to disappear, got %q", hidden)
 	}
-	if !containsString(hidden, "confirm") {
-		t.Fatalf("expected footer meta line to remain, got %q", hidden)
+	if containsString(hidden, "confirm") {
+		t.Fatalf("did not expect default confirm mode to add footer noise, got %q", hidden)
 	}
 }
 
@@ -1200,8 +1200,8 @@ func TestFooterHintsSuppressWhileTyping(t *testing.T) {
 	if containsString(footer, "? for shortcuts") {
 		t.Fatalf("expected shortcuts to be suppressed while typing, got %q", footer)
 	}
-	if !containsString(footer, "confirm") {
-		t.Fatalf("expected footer meta line to remain while typing, got %q", footer)
+	if strings.TrimSpace(footer) != "" {
+		t.Fatalf("expected default footer to stay quiet while typing, got %q", footer)
 	}
 }
 

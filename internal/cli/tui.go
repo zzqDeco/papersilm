@@ -682,9 +682,8 @@ func (m *tuiModel) openCommandPalette() tea.Cmd {
 	m.input.Blur()
 	m.focus = tuiFocusModal
 	m.modal = tuiModalState{
-		Kind:    tuiModalCommands,
-		Title:   "Command Palette",
-		Message: "Commands and recipes.",
+		Kind:  tuiModalCommands,
+		Title: "Command Palette",
 	}
 	m.modalIn.SetValue("")
 	m.modalIn.Placeholder = "Filter commands"
@@ -711,10 +710,9 @@ func (m *tuiModel) openProviderModal() tea.Cmd {
 		})
 	}
 	m.modal = tuiModalState{
-		Kind:    tuiModalProviders,
-		Title:   "Provider Profiles",
-		Message: "Pick a configured profile.",
-		All:     choices,
+		Kind:  tuiModalProviders,
+		Title: "Provider Profiles",
+		All:   choices,
 	}
 	m.modalIn.SetValue("")
 	m.modalIn.Placeholder = "Filter provider profiles"
@@ -1388,7 +1386,10 @@ func (m *tuiModel) renderFooter() string {
 			approvals = 1
 		}
 	}
-	leftParts := []string{footerModeLabel(m.snapshot.Meta.PermissionMode)}
+	leftParts := []string{}
+	if mode := footerModeLabel(m.snapshot.Meta.PermissionMode); mode != "" {
+		leftParts = append(leftParts, mode)
+	}
 	if m.screen == tuiScreenMain {
 		if m.busy {
 			leftParts = append(leftParts, "working")
@@ -1410,13 +1411,13 @@ func (m *tuiModel) renderFooter() string {
 	}
 	left := strings.Join(leftParts, " · ")
 	rightParts := []string{}
-	if (profile != "" || model != "") && width >= 44 {
+	if (profile != "" || model != "") && width >= 110 {
 		rightParts = append(rightParts, strings.Trim(strings.Join([]string{profile, model}, "/"), "/"))
 	}
-	if workspace := compactWorkspaceName(m.workspaceDisplayPath, m.workspaceName); workspace != "" && width >= 72 {
+	if workspace := compactWorkspaceName(m.workspaceDisplayPath, m.workspaceName); workspace != "" && width >= 132 {
 		rightParts = append(rightParts, workspace)
 	}
-	if width >= 96 {
+	if width >= 150 {
 		rightParts = append(rightParts, string(m.styles.theme))
 	}
 	right := strings.Join(rightParts, " · ")
@@ -1450,10 +1451,10 @@ func footerModeLabel(mode protocol.PermissionMode) string {
 	case protocol.PermissionModeAuto:
 		return "⏵⏵ auto"
 	case protocol.PermissionModeConfirm:
-		return "confirm"
+		return ""
 	default:
 		if strings.TrimSpace(string(mode)) == "" {
-			return "confirm"
+			return ""
 		}
 		return string(mode)
 	}

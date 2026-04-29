@@ -21,14 +21,20 @@ type FooterChrome struct {
 
 func RenderFooterChrome(footer FooterChrome) string {
 	width := max(20, footer.Width)
-	metaLine := RenderSplitLine(width, footer.MetaLeft, footer.MetaRight, footer.LeftStyle, footer.RightStyle)
+	left := strings.TrimSpace(footer.MetaLeft)
+	if strings.TrimSpace(footer.SearchLine) == "" && footer.ShowHints && strings.TrimSpace(footer.Hints) != "" {
+		hint := footer.HintStyle.Render(strings.TrimSpace(footer.Hints))
+		if left == "" {
+			left = hint
+		} else {
+			left = footer.LeftStyle.Render(left) + footer.LeftStyle.Render(" · ") + hint
+		}
+	}
+	metaLine := RenderSplitLine(width, left, footer.MetaRight, footer.LeftStyle, footer.RightStyle)
 	lines := []string{footer.FooterStyle.Width(width).Render(metaLine)}
 	if strings.TrimSpace(footer.SearchLine) != "" {
 		lines = append(lines, footer.FooterStyle.Width(width).Render(truncateRight(footer.SearchLine, width)))
 		return strings.Join(lines, "\n")
-	}
-	if footer.ShowHints && strings.TrimSpace(footer.Hints) != "" {
-		lines = append(lines, footer.FooterStyle.Width(width).Render(footer.HintStyle.Render(truncateRight(footer.Hints, width))))
 	}
 	return strings.Join(lines, "\n")
 }

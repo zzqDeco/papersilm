@@ -11,9 +11,9 @@ func TestRenderFooterChromeKeepsMetaSingleLine(t *testing.T) {
 	t.Parallel()
 
 	rendered := RenderFooterChrome(FooterChrome{
-		Width:       48,
-		MetaLeft:    "confirm · running · long status that should truncate",
-		MetaRight:   "provider/model · workspace · dark",
+		Width:       72,
+		MetaLeft:    "confirm · running",
+		MetaRight:   "provider/model",
 		Hints:       "Enter send · Ctrl+K commands",
 		ShowHints:   true,
 		FooterStyle: lipgloss.NewStyle(),
@@ -22,11 +22,14 @@ func TestRenderFooterChromeKeepsMetaSingleLine(t *testing.T) {
 		HintStyle:   lipgloss.NewStyle(),
 	})
 	lines := strings.Split(rendered, "\n")
-	if len(lines) != 2 {
-		t.Fatalf("expected meta + hints, got %d lines: %q", len(lines), rendered)
+	if len(lines) != 1 {
+		t.Fatalf("expected footer meta and hint to share one line, got %d lines: %q", len(lines), rendered)
 	}
-	if got := lipgloss.Width(lines[0]); got > 48 {
+	if got := lipgloss.Width(lines[0]); got > 72 {
 		t.Fatalf("expected meta width <= 48, got %d: %q", got, lines[0])
+	}
+	if !strings.Contains(rendered, "Enter send") {
+		t.Fatalf("expected inline hint, got %q", rendered)
 	}
 }
 
