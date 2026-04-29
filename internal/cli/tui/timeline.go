@@ -100,9 +100,9 @@ func renderTimelineActivity(item TimelineItem, width int, styles TimelineStyles)
 	if body == "" {
 		return ""
 	}
-	prefix := "· "
+	prefix := "⏺ "
 	if item.Subtype == "activity.grouped" {
-		prefix = "· "
+		prefix = "⏺ "
 	}
 	return styles.ProgressLine.Width(width).Render(truncateRight(prefix+body, width))
 }
@@ -110,14 +110,9 @@ func renderTimelineActivity(item TimelineItem, width int, styles TimelineStyles)
 func renderTimelineWelcome(item TimelineItem, width int, styles TimelineStyles) string {
 	hint := strings.TrimSpace(item.Body)
 	if hint == "" {
-		hint = "Ask about this workspace or type /commands"
+		hint = "Ask about the current workspace or papers."
 	}
-	prefix := "Workspace ready"
-	if workspace := strings.TrimSpace(item.Workspace); workspace != "" {
-		prefix = "Workspace " + truncateRight(workspace, max(8, width-20))
-	}
-	line := prefix + " · " + hint
-	return styles.FooterMuted.Render(truncateRight(line, width))
+	return styles.FooterMuted.Render(truncateRight("  "+hint, width))
 }
 
 func wrapTimelineText(text string, width int) string {

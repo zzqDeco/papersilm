@@ -1,10 +1,6 @@
 package tui
 
-import (
-	"strings"
-
-	"github.com/charmbracelet/lipgloss"
-)
+import "github.com/charmbracelet/lipgloss"
 
 type PromptChrome struct {
 	Width        int
@@ -16,11 +12,5 @@ type PromptChrome struct {
 }
 
 func RenderPromptChrome(prompt PromptChrome) string {
-	width := max(20, prompt.Width)
-	body := prompt.BodyStyle.Width(width).Render(prompt.Body)
-	label := strings.TrimSpace(prompt.Label)
-	if strings.Contains(strings.ToLower(label), "approval") {
-		return lipgloss.JoinVertical(lipgloss.Left, prompt.LabelStyle.Render(label), body)
-	}
-	return body
+	return prompt.BodyStyle.Render(prompt.Body)
 }

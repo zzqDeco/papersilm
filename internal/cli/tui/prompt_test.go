@@ -18,14 +18,14 @@ func TestRenderPromptChromeKeepsInputVisible(t *testing.T) {
 		DividerStyle: lipgloss.NewStyle(),
 		BodyStyle:    lipgloss.NewStyle(),
 	})
-	if !strings.Contains(rendered, "approval pending") || !strings.Contains(rendered, "draft text") {
-		t.Fatalf("expected approval state and body, got %q", rendered)
+	if strings.Contains(rendered, "approval pending") || !strings.Contains(rendered, "draft text") {
+		t.Fatalf("expected approval prompt chrome to keep only the editable body, got %q", rendered)
 	}
 	lines := strings.Split(rendered, "\n")
-	if len(lines) != 2 {
-		t.Fatalf("expected approval state + body, got %d lines: %q", len(lines), rendered)
+	if len(lines) != 1 {
+		t.Fatalf("expected single prompt row, got %d lines: %q", len(lines), rendered)
 	}
-	if strings.Contains(lines[0], "──") {
+	if strings.Contains(rendered, "──") {
 		t.Fatalf("did not expect prompt to render a form divider, got %q", rendered)
 	}
 	if got := lipgloss.Width(rendered); got > 80 {

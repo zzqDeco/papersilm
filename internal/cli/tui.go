@@ -67,7 +67,7 @@ const (
 	tuiApprovalReject  tuiApprovalAction = "reject"
 )
 
-const tuiPromptPlaceholder = "Ask about current workspace or /commands"
+const tuiPromptPlaceholder = "Ask about workspace or papers"
 
 type tuiApprovalOption struct {
 	Label    string
@@ -684,10 +684,10 @@ func (m *tuiModel) openCommandPalette() tea.Cmd {
 	m.modal = tuiModalState{
 		Kind:    tuiModalCommands,
 		Title:   "Command Palette",
-		Message: "Filter commands, recipes, and current session context.",
+		Message: "Commands and recipes.",
 	}
 	m.modalIn.SetValue("")
-	m.modalIn.Placeholder = "Type to filter commands or recipes"
+	m.modalIn.Placeholder = "Filter commands"
 	m.refreshModalChoices()
 	return m.modalIn.Focus()
 }
@@ -713,7 +713,7 @@ func (m *tuiModel) openProviderModal() tea.Cmd {
 	m.modal = tuiModalState{
 		Kind:    tuiModalProviders,
 		Title:   "Provider Profiles",
-		Message: "Pick a configured provider profile.",
+		Message: "Pick a configured profile.",
 		All:     choices,
 	}
 	m.modalIn.SetValue("")
@@ -729,7 +729,7 @@ func (m *tuiModel) openModelModal(profile string) tea.Cmd {
 		Kind:     tuiModalModels,
 		Title:    "Model Picker",
 		Provider: profile,
-		Message:  fmt.Sprintf("Profile: %s (%s). Enter a model name or pick a discovered one.", profile, provider.Provider),
+		Message:  fmt.Sprintf("%s · %s", profile, provider.Provider),
 		Loading:  true,
 		All:      nil,
 	}
@@ -1045,7 +1045,7 @@ func (m *tuiModel) ensureWelcomeItem() {
 		Kind:      tuiItemSystem,
 		Subtype:   "welcome",
 		Title:     "Welcome",
-		Body:      "Ask about this workspace. Attach papers only when useful.",
+		Body:      "Ask about the current workspace or papers.",
 		CreatedAt: time.Now(),
 	})
 }
@@ -1179,6 +1179,9 @@ func (m *tuiModel) renderHeader() string {
 	workspaceName := m.workspaceName
 	if m.snapshot.Workspace != nil && strings.TrimSpace(m.snapshot.Workspace.Name) != "" {
 		workspaceName = m.snapshot.Workspace.Name
+	}
+	if strings.EqualFold(strings.TrimSpace(workspaceName), "papersilm") {
+		workspaceName = ""
 	}
 	if m.screen == tuiScreenTranscript {
 		if workspaceName == "" {
@@ -1385,10 +1388,10 @@ func (m *tuiModel) renderFooter() string {
 			approvals = 1
 		}
 	}
-	leftParts := []string{string(m.snapshot.Meta.PermissionMode)}
+	leftParts := []string{footerModeLabel(m.snapshot.Meta.PermissionMode)}
 	if m.screen == tuiScreenMain {
 		if m.busy {
-			leftParts = append(leftParts, "running")
+			leftParts = append(leftParts, "working")
 		}
 		if strings.TrimSpace(m.mainStatus) != "" {
 			leftParts = append(leftParts, strings.TrimSpace(m.mainStatus))
@@ -1417,9 +1420,9 @@ func (m *tuiModel) renderFooter() string {
 		rightParts = append(rightParts, string(m.styles.theme))
 	}
 	right := strings.Join(rightParts, " · ")
-	shortcuts := "? shortcuts · Enter send · Tab complete · Ctrl+K commands · Ctrl+O transcript"
+	shortcuts := "? for shortcuts"
 	if m.screen == tuiScreenTranscript {
-		shortcuts = "? transcript · / search · n/N next · q/Esc back"
+		shortcuts = "? transcript shortcuts"
 	}
 	searchLine := ""
 	if m.screen == tuiScreenMain && m.focus == tuiFocusHistorySearch {
@@ -1438,6 +1441,22 @@ func (m *tuiModel) renderFooter() string {
 		RightStyle:  m.styles.footerMuted,
 		HintStyle:   m.styles.footerMuted,
 	})
+}
+
+func footerModeLabel(mode protocol.PermissionMode) string {
+	switch mode {
+	case protocol.PermissionModePlan:
+		return "⏸ plan"
+	case protocol.PermissionModeAuto:
+		return "⏵⏵ auto"
+	case protocol.PermissionModeConfirm:
+		return "confirm"
+	default:
+		if strings.TrimSpace(string(mode)) == "" {
+			return "confirm"
+		}
+		return string(mode)
+	}
 }
 
 func (m *tuiModel) renderHistorySearchFooterLine(width int) string {
@@ -1491,7 +1510,7 @@ func (m *tuiModel) renderModalBox() string {
 		}
 		message += "Press Enter to use the typed value."
 	}
-	choiceLimit := clamp(m.height/3, 5, 10)
+	choiceLimit := clamp(m.height/4, 5, 7)
 	visible, start := windowChoices(m.modal.Visible, m.modal.Selection, choiceLimit)
 	rows := make([]tuiui.ListRow, 0, len(visible))
 	for i, choice := range visible {

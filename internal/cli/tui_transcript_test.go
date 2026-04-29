@@ -176,7 +176,7 @@ func TestWorkspaceActivitySummarizesToolsInsteadOfUpdates(t *testing.T) {
 		t.Fatalf("did not expect low-level tool details in grouped activity, got %q", body)
 	}
 	rendered := model.renderTimelineItem(model.items[0], 80)
-	if !containsString(rendered, "· Inspecting workspace") {
+	if !containsString(rendered, "⏺ Inspecting workspace") {
 		t.Fatalf("expected compact activity row, got %q", rendered)
 	}
 	if containsString(rendered, "Progress") || containsString(rendered, "activity.grouped") {
@@ -778,8 +778,11 @@ func TestWelcomeIsLowNoiseSingleLine(t *testing.T) {
 	if containsString(rendered, "papersilm ·") {
 		t.Fatalf("did not expect welcome to duplicate header wordmark, got %q", rendered)
 	}
-	if !containsString(rendered, "Workspace") {
-		t.Fatalf("expected workspace-ready welcome, got %q", rendered)
+	if containsString(rendered, "Workspace") {
+		t.Fatalf("did not expect welcome to repeat workspace metadata, got %q", rendered)
+	}
+	if !containsString(rendered, "Ask about the current workspace") {
+		t.Fatalf("expected low-noise workspace hint, got %q", rendered)
 	}
 }
 
@@ -908,7 +911,7 @@ func TestEmptyPromptPlaceholderStaysSingleLine(t *testing.T) {
 	model.reflow()
 
 	rendered := model.renderInput()
-	if !containsString(rendered, "Ask about current") {
+	if !containsString(rendered, "Ask about workspace") {
 		t.Fatalf("expected compact placeholder, got %q", rendered)
 	}
 	if strings.Count(rendered, "›") != 1 {
@@ -1019,6 +1022,9 @@ func TestSuggestionsUsePromptOverlayRows(t *testing.T) {
 	rendered := model.renderSuggestions()
 	if !containsString(rendered, "+ /help") {
 		t.Fatalf("expected selected suggestion marker, got %q", rendered)
+	}
+	if !containsString(rendered, "+ /help – Show slash commands") {
+		t.Fatalf("expected compact Claude-style suggestion row, got %q", rendered)
 	}
 	if containsString(rendered, "┌") || containsString(rendered, "└") {
 		t.Fatalf("did not expect boxed suggestion overlay, got %q", rendered)
@@ -1167,13 +1173,16 @@ func TestHintsCanBeHiddenWithoutRemovingFooterMeta(t *testing.T) {
 
 	model := newTestTUIModel()
 	visible := model.renderFooter()
-	if !containsString(visible, "? shortcuts") {
+	if !containsString(visible, "? for shortcuts") {
 		t.Fatalf("expected compact footer shortcut hint, got %q", visible)
+	}
+	if containsString(visible, "Enter send") || containsString(visible, "Ctrl+K") {
+		t.Fatalf("expected default footer hint to stay collapsed, got %q", visible)
 	}
 
 	model.setHintsVisible(false)
 	hidden := model.renderFooter()
-	if containsString(hidden, "? shortcuts") {
+	if containsString(hidden, "? for shortcuts") {
 		t.Fatalf("expected hints line to disappear, got %q", hidden)
 	}
 	if !containsString(hidden, "confirm") {
@@ -1188,7 +1197,7 @@ func TestFooterHintsSuppressWhileTyping(t *testing.T) {
 	model.input.SetValue("draft prompt")
 
 	footer := model.renderFooter()
-	if containsString(footer, "? shortcuts") {
+	if containsString(footer, "? for shortcuts") {
 		t.Fatalf("expected shortcuts to be suppressed while typing, got %q", footer)
 	}
 	if !containsString(footer, "confirm") {

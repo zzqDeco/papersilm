@@ -25,11 +25,10 @@ func RenderDecisionPanel(panel DecisionPanel) string {
 	}
 	title := strings.TrimSpace(panel.Title)
 	if title != "" {
-		line := "  " + panel.TitleStyle.Render(title)
-		if summary := strings.TrimSpace(panel.Summary); summary != "" {
-			line += panel.MutedStyle.Render(" · " + truncateRight(summary, bodyWidth))
-		}
-		lines = append(lines, line)
+		lines = append(lines, "  "+panel.TitleStyle.Render(title))
+	}
+	if summary := strings.TrimSpace(panel.Summary); summary != "" {
+		lines = append(lines, "  "+panel.MutedStyle.Render(truncateRight(summary, bodyWidth)))
 	}
 	if len(panel.Rows) > 0 {
 		lines = append(lines, RenderListRows(panel.Rows, bodyWidth)...)

@@ -62,7 +62,7 @@ func RenderFullscreenLayout(layout FullscreenLayout) string {
 	}
 
 	if strings.TrimSpace(layout.Pane) != "" {
-		top := overlayTop(base, bottomHeight+promptOverlayHeight+scrollPillHeight, lipgloss.Height(layout.Pane))
+		top := overlayTop(base, bottomHeight+scrollPillHeight, lipgloss.Height(layout.Pane))
 		base = OverlayAt(base, layout.Pane, top, lipgloss.Left, width)
 	}
 	if strings.TrimSpace(layout.ScrollPill) != "" {
@@ -80,7 +80,7 @@ func RenderBottomDrawer(drawer Drawer) string {
 	width := max(20, drawer.Width)
 	bodyWidth := max(16, width-4)
 	lines := []string{
-		drawer.DividerStyle.Render(strings.Repeat("─", width)),
+		"  " + drawer.DividerStyle.Render(strings.Repeat("─", max(1, width-4))),
 	}
 	if strings.TrimSpace(drawer.Title) != "" {
 		lines = append(lines, "  "+drawer.TitleStyle.Render(truncateRight(drawer.Title, bodyWidth)))
@@ -122,6 +122,33 @@ func RenderListRows(rows []ListRow, width int) []string {
 		line := "  " + row.MarkerStyle.Render(prefix) + row.LabelStyle.Render(label)
 		if detail != "" {
 			line += row.DetailStyle.Render(" – " + detail)
+		}
+		lines = append(lines, line)
+	}
+	return lines
+}
+
+func RenderCompactListRows(rows []ListRow, width int) []string {
+	if len(rows) == 0 {
+		return nil
+	}
+	width = max(8, width)
+	lines := make([]string, 0, len(rows))
+	for _, row := range rows {
+		prefix := firstText(row.IdlePrefix, "  ")
+		if row.Selected {
+			prefix = firstText(row.SelectedPrefix, "+ ")
+		}
+		label := strings.TrimSpace(row.Label)
+		detail := strings.TrimSpace(row.Detail)
+		line := "  " + row.MarkerStyle.Render(prefix)
+		if detail == "" {
+			line += row.LabelStyle.Render(truncateRight(label, max(0, width-4)))
+		} else {
+			labelBudget := clamp(lipgloss.Width(label), 8, max(8, width/2))
+			detailBudget := max(0, width-labelBudget-7)
+			line += row.LabelStyle.Render(truncateRight(label, labelBudget))
+			line += row.DetailStyle.Render(" – " + truncateRight(detail, detailBudget))
 		}
 		lines = append(lines, line)
 	}

@@ -67,7 +67,7 @@ func RenderPromptOverlay(overlay PromptOverlay, width int) string {
 	if overlay.Kind == OverlayNone || len(overlay.Rows) == 0 {
 		return ""
 	}
-	return strings.Join(RenderListRows(overlay.Rows, width), "\n")
+	return strings.Join(RenderCompactListRows(overlay.Rows, width), "\n")
 }
 
 func RenderDrawerOverlay(overlay DrawerOverlay, drawer Drawer) string {

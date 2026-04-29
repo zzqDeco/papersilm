@@ -17,7 +17,7 @@ func TestRenderBottomDrawerUsesSingleDivider(t *testing.T) {
 		},
 	})
 
-	if !strings.Contains(rendered, strings.Repeat("─", 32)) {
+	if !strings.Contains(rendered, strings.Repeat("─", 28)) {
 		t.Fatalf("expected single divider, got %q", rendered)
 	}
 	if strings.ContainsAny(rendered, "┌┐└┘") {

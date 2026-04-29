@@ -59,8 +59,11 @@ func TestTUIThemePalettesTrackClaudeCodeTokens(t *testing.T) {
 	if dark.suggestion != lipgloss.Color("#B1B9F9") {
 		t.Fatalf("unexpected dark suggestion color: %q", dark.suggestion)
 	}
-	if dark.success != lipgloss.Color("#7CCF89") {
+	if dark.success != lipgloss.Color("#4EBA65") {
 		t.Fatalf("unexpected dark success color: %q", dark.success)
+	}
+	if dark.permission != lipgloss.Color("#B1B9F9") {
+		t.Fatalf("unexpected dark permission color: %q", dark.permission)
 	}
 	if dark.userBg != lipgloss.Color("#373737") {
 		t.Fatalf("unexpected dark user background: %q", dark.userBg)
