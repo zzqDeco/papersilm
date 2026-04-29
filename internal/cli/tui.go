@@ -66,6 +66,8 @@ const (
 	tuiApprovalReject  tuiApprovalAction = "reject"
 )
 
+const tuiPromptPlaceholder = "Ask about current workspace or /commands"
+
 type tuiApprovalOption struct {
 	Label    string
 	Detail   string
@@ -286,7 +288,7 @@ func loadTUIModel(ctx context.Context, manager *tuiRuntimeManager, snapshot prot
 
 func newTUIModel(ctx context.Context, runtime *tuiRuntimeManager, snapshot protocol.SessionSnapshot) *tuiModel {
 	input := textarea.New()
-	input.Placeholder = "Ask about the current workspace, papers, or type /commands"
+	input.Placeholder = ""
 	input.ShowLineNumbers = false
 	input.SetHeight(3)
 	input.CharLimit = 0
@@ -1274,10 +1276,15 @@ func (m *tuiModel) renderInput() string {
 	if m.approvalPanelActive() {
 		label = "prompt · approval pending"
 	}
+	body := m.input.View()
+	if strings.TrimSpace(m.input.Value()) == "" {
+		placeholder := truncateRight(tuiPromptPlaceholder, max(8, width-4))
+		body = m.styles.footerMuted.Render("› " + placeholder)
+	}
 	return tuiui.RenderPromptChrome(tuiui.PromptChrome{
 		Width:        width,
 		Label:        label,
-		Body:         m.input.View(),
+		Body:         body,
 		LabelStyle:   m.styles.footerMuted,
 		DividerStyle: m.styles.paneDivider,
 		BodyStyle:    m.styles.inputShell,
@@ -1436,13 +1443,14 @@ func (m *tuiModel) renderFooter() string {
 	if m.screen == tuiScreenMain && m.focus == tuiFocusHistorySearch {
 		searchLine = m.renderHistorySearchFooterLine(width)
 	}
+	showHints := m.hintsVisible && m.height >= 18 && strings.TrimSpace(m.input.Value()) == "" && m.focus != tuiFocusHistorySearch
 	return tuiui.RenderFooterChrome(tuiui.FooterChrome{
 		Width:       width,
 		MetaLeft:    left,
 		MetaRight:   right,
 		SearchLine:  searchLine,
 		Hints:       shortcuts,
-		ShowHints:   m.hintsVisible && m.height >= 18,
+		ShowHints:   showHints,
 		FooterStyle: m.styles.footer,
 		LeftStyle:   m.styles.footerMuted,
 		RightStyle:  m.styles.footerMuted,

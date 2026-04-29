@@ -896,6 +896,23 @@ func TestIdleInputDoesNotShowRecipeSuggestions(t *testing.T) {
 	}
 }
 
+func TestEmptyPromptPlaceholderStaysSingleLine(t *testing.T) {
+	t.Parallel()
+
+	model := newTestTUIModel()
+	model.width = 42
+	model.input.SetValue("")
+	model.reflow()
+
+	rendered := model.renderInput()
+	if !containsString(rendered, "Ask about current") {
+		t.Fatalf("expected compact placeholder, got %q", rendered)
+	}
+	if strings.Count(rendered, "›") != 1 {
+		t.Fatalf("expected one prompt marker in placeholder, got %q", rendered)
+	}
+}
+
 func TestPaneDoesNotReduceTimelineHeight(t *testing.T) {
 	t.Parallel()
 
@@ -1128,6 +1145,21 @@ func TestHintsCanBeHiddenWithoutRemovingFooterMeta(t *testing.T) {
 	}
 	if !containsString(hidden, "confirm") {
 		t.Fatalf("expected footer meta line to remain, got %q", hidden)
+	}
+}
+
+func TestFooterHintsSuppressWhileTyping(t *testing.T) {
+	t.Parallel()
+
+	model := newTestTUIModel()
+	model.input.SetValue("draft prompt")
+
+	footer := model.renderFooter()
+	if containsString(footer, "Ctrl+/ hints") {
+		t.Fatalf("expected shortcuts to be suppressed while typing, got %q", footer)
+	}
+	if !containsString(footer, "confirm") {
+		t.Fatalf("expected footer meta line to remain while typing, got %q", footer)
 	}
 }
 

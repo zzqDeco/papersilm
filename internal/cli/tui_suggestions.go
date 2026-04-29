@@ -20,7 +20,7 @@ func buildInputSuggestions(input string, snapshot protocol.SessionSnapshot, hist
 	if strings.HasPrefix(strings.TrimSpace(input), "/") {
 		return buildSlashSuggestions(input, snapshot)
 	}
-	return buildPromptSuggestions(input, history)
+	return nil
 }
 
 func buildPaletteSuggestions(query string, snapshot protocol.SessionSnapshot, history []string) []tuiSuggestion {

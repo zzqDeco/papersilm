@@ -43,14 +43,14 @@ func TestBuildInputSuggestionsUsesSessionContext(t *testing.T) {
 	assertHasInsert("/skill show run_", "/skill show run_1")
 }
 
-func TestBuildInputSuggestionsIncludesHistoryAndRecipes(t *testing.T) {
+func TestBuildPaletteSuggestionsIncludesHistoryAndRecipes(t *testing.T) {
 	t.Parallel()
 
 	history := []string{
 		"总结这篇论文的局限性",
 		"比较这些论文的实验设置",
 	}
-	suggestions := buildInputSuggestions("比较", protocol.SessionSnapshot{}, history)
+	suggestions := buildPaletteSuggestions("比较", protocol.SessionSnapshot{}, history)
 	if len(suggestions) == 0 {
 		t.Fatalf("expected prompt suggestions")
 	}
@@ -70,6 +70,15 @@ func TestBuildInputSuggestionsIncludesHistoryAndRecipes(t *testing.T) {
 	}
 	if !haveRecipe {
 		t.Fatalf("expected recipe suggestion in %+v", suggestions)
+	}
+}
+
+func TestBuildInputSuggestionsDoesNotInterruptPlainPromptTyping(t *testing.T) {
+	t.Parallel()
+
+	suggestions := buildInputSuggestions("比较", protocol.SessionSnapshot{}, []string{"比较这些论文的实验设置"})
+	if len(suggestions) != 0 {
+		t.Fatalf("expected plain prompt typing to avoid dropdown noise, got %+v", suggestions)
 	}
 }
 
