@@ -353,7 +353,7 @@ func TestApprovalRequiredRendersDecisionOptions(t *testing.T) {
 	model.reflow()
 
 	view := model.renderMainScreen()
-	for _, want := range []string{"Approval required", "+ Approve", "Inspect tasks", "Keep planning", "Y/Enter approve"} {
+	for _, want := range []string{"Approval required", "❯ Approve", "Inspect tasks", "Keep planning", "Y/Enter approve"} {
 		if !strings.Contains(view, want) {
 			t.Fatalf("expected approval decision option %q in view:\n%s", want, view)
 		}

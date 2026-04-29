@@ -1330,13 +1330,15 @@ func (m *tuiModel) renderApprovalStickyPanel() string {
 			detailStyle = m.styles.modalDisabled
 		}
 		rows = append(rows, tuiui.ListRow{
-			Label:       option.Label,
-			Detail:      option.Detail,
-			Selected:    selected,
-			Disabled:    option.Disabled,
-			MarkerStyle: m.styles.suggestionMarker,
-			LabelStyle:  labelStyle,
-			DetailStyle: detailStyle,
+			Label:          option.Label,
+			Detail:         option.Detail,
+			Selected:       selected,
+			Disabled:       option.Disabled,
+			SelectedPrefix: "❯ ",
+			IdlePrefix:     "  ",
+			MarkerStyle:    m.styles.suggestionMarker,
+			LabelStyle:     labelStyle,
+			DetailStyle:    detailStyle,
 		})
 	}
 
@@ -1536,13 +1538,15 @@ func (m *tuiModel) renderModalBox() string {
 			}
 		}
 		rows = append(rows, tuiui.ListRow{
-			Label:       choice.Label,
-			Detail:      choice.Detail,
-			Selected:    selected,
-			Disabled:    choice.Disabled,
-			MarkerStyle: m.styles.suggestionMarker,
-			LabelStyle:  labelStyle,
-			DetailStyle: detailStyle,
+			Label:          choice.Label,
+			Detail:         choice.Detail,
+			Selected:       selected,
+			Disabled:       choice.Disabled,
+			SelectedPrefix: "❯ ",
+			IdlePrefix:     "  ",
+			MarkerStyle:    m.styles.suggestionMarker,
+			LabelStyle:     labelStyle,
+			DetailStyle:    detailStyle,
 		})
 	}
 	return tuiui.RenderDrawerOverlay(tuiui.DrawerOverlay{
@@ -1703,13 +1707,15 @@ func (m *tuiModel) renderApprovalOptions(item tuiTimelineItem, width int) string
 			detailStyle = m.styles.modalDisabled
 		}
 		rows = append(rows, tuiui.ListRow{
-			Label:       option.Label,
-			Detail:      option.Detail,
-			Selected:    selected,
-			Disabled:    option.Disabled,
-			MarkerStyle: m.styles.suggestionMarker,
-			LabelStyle:  labelStyle,
-			DetailStyle: detailStyle,
+			Label:          option.Label,
+			Detail:         option.Detail,
+			Selected:       selected,
+			Disabled:       option.Disabled,
+			SelectedPrefix: "❯ ",
+			IdlePrefix:     "  ",
+			MarkerStyle:    m.styles.suggestionMarker,
+			LabelStyle:     labelStyle,
+			DetailStyle:    detailStyle,
 		})
 	}
 	lines := tuiui.RenderListRows(rows, width)

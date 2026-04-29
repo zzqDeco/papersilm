@@ -21,13 +21,15 @@ type Drawer struct {
 }
 
 type ListRow struct {
-	Label       string
-	Detail      string
-	Selected    bool
-	Disabled    bool
-	MarkerStyle lipgloss.Style
-	LabelStyle  lipgloss.Style
-	DetailStyle lipgloss.Style
+	Label          string
+	Detail         string
+	Selected       bool
+	Disabled       bool
+	SelectedPrefix string
+	IdlePrefix     string
+	MarkerStyle    lipgloss.Style
+	LabelStyle     lipgloss.Style
+	DetailStyle    lipgloss.Style
 }
 
 type FullscreenLayout struct {
@@ -112,9 +114,9 @@ func RenderListRows(rows []ListRow, width int) []string {
 	detailWidth := max(0, width-labelWidth-6)
 	lines := make([]string, 0, len(rows))
 	for _, row := range rows {
-		prefix := "  "
+		prefix := firstText(row.IdlePrefix, "  ")
 		if row.Selected {
-			prefix = "+ "
+			prefix = firstText(row.SelectedPrefix, "+ ")
 		}
 		label := padRight(truncateRight(row.Label, labelWidth), labelWidth)
 		detail := truncateRight(row.Detail, detailWidth)
@@ -125,6 +127,15 @@ func RenderListRows(rows []ListRow, width int) []string {
 		lines = append(lines, line)
 	}
 	return lines
+}
+
+func firstText(values ...string) string {
+	for _, value := range values {
+		if value != "" {
+			return value
+		}
+	}
+	return ""
 }
 
 func OverlayBottom(base, block string, width int) string {
