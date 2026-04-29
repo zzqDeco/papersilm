@@ -172,6 +172,8 @@ type tuiModel struct {
 	items                []tuiTimelineItem
 	messageViewport      tuiui.MessageViewport
 	messageStore         tuiui.MessageStore
+	messagePipeline      tuiui.MessagePipeline
+	promptController     tuiui.PromptController
 	transcriptFrozen     bool
 	transcriptFrozenLen  int
 	history              []string
@@ -327,6 +329,8 @@ func newTUIModel(ctx context.Context, runtime *tuiRuntimeManager, snapshot proto
 		modalIn:              modalIn,
 		searchIn:             searchIn,
 		historyIn:            historyIn,
+		messagePipeline:      tuiui.NewMessagePipeline(),
+		promptController:     tuiui.NewPromptController(),
 		screen:               tuiScreenMain,
 		focus:                tuiFocusInput,
 		autoScroll:           true,
@@ -903,7 +907,9 @@ func (m *tuiModel) handleTextInput(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if m.historyState.active {
 		m.historyState.active = false
 		m.historyState.index = 0
+		m.promptController.CancelHistory()
 	}
+	m.promptController.SetValue(m.input.Value())
 	m.refreshSuggestions()
 	m.reflow()
 	return m, cmd
@@ -1305,20 +1311,25 @@ func (m *tuiModel) appendEvent(event protocol.StreamEvent) {
 }
 
 func (m *tuiModel) appendTranscriptProjection(entry protocol.TranscriptEntry) (bool, bool) {
-	visibility, presentation := transcriptDisplayForEntry(entry)
+	message, ok := m.messagePipeline.Project(entry)
+	if !ok {
+		return false, false
+	}
+	visibility := message.Visibility
+	presentation := message.Presentation
 	switch {
 	case presentation == protocol.TranscriptPresentationHidden:
 		return false, false
 	case visibility == protocol.TranscriptVisibilityAmbient || visibility == protocol.TranscriptVisibilityDebug:
 		return false, false
-	case visibility == protocol.TranscriptVisibilityActivity || presentation == protocol.TranscriptPresentationGrouped:
+	case message.Type == tuiui.UIMessageActivity || visibility == protocol.TranscriptVisibilityActivity || presentation == protocol.TranscriptPresentationGrouped:
 		m.upsertActivityItem(entry)
 		return true, false
 	default:
 		m.activityCount = 0
 		m.activityStarted = time.Time{}
 		m.activityStats = make(map[string]int)
-		m.appendItem(timelineItemFromTranscriptEntry(entry))
+		m.appendItem(timelineItemFromUIMessage(message))
 		return true, true
 	}
 }
@@ -1389,6 +1400,7 @@ func (m *tuiModel) hydrateTranscript(entries []protocol.TranscriptEntry) {
 	m.messageStore.Reset(entries)
 	m.items = m.items[:0]
 	m.messageViewport.Reset()
+	m.messagePipeline = tuiui.NewMessagePipeline()
 	m.activityCount = 0
 	m.activityStarted = time.Time{}
 	m.history = nil
@@ -1422,6 +1434,8 @@ func (m *tuiModel) consumeSubmittedInput() string {
 	line := strings.TrimSpace(m.input.Value())
 	m.input.SetValue("")
 	m.historyState = tuiHistoryState{}
+	m.promptController.SetValue("")
+	m.promptController.CancelHistory()
 	m.focus = tuiFocusInput
 	m.suggestions = nil
 	m.sel = 0
@@ -1705,13 +1719,16 @@ func (m *tuiModel) renderApprovalStickyPanel() string {
 		})
 	}
 
-	lines := []string{
-		m.styles.paneDivider.Render(strings.Repeat("▔", width)),
-		"  " + m.styles.approvalLabel.Render("Approval required") + m.styles.footerMuted.Render(" · "+truncateRight(summary, bodyWidth)),
-	}
-	lines = append(lines, tuiui.RenderListRows(rows, bodyWidth)...)
-	lines = append(lines, "  "+m.styles.footerMuted.Render("Y/Enter approve · N/Esc keep planning · I inspect · ↑↓ move"))
-	return strings.Join(lines, "\n")
+	return tuiui.RenderDecisionPanel(tuiui.DecisionPanel{
+		Width:        width,
+		Title:        "Approval required",
+		Summary:      truncateRight(summary, bodyWidth),
+		Hint:         "Y/Enter approve · N/Esc keep planning · I inspect · ↑↓ move",
+		Rows:         rows,
+		DividerStyle: m.styles.paneDivider,
+		TitleStyle:   m.styles.approvalLabel,
+		MutedStyle:   m.styles.footerMuted,
+	})
 }
 
 func (m *tuiModel) renderSuggestions() string {
@@ -2012,8 +2029,7 @@ func (m *tuiModel) renderTimelineItem(item tuiTimelineItem, width int) string {
 		header := renderMutedTimestamp(m.styles.errorLabel, m.styles.footerMuted, item.Title, timestamp)
 		return m.styles.errorShell.Width(width).Render(header + "\n" + body)
 	case tuiItemProgress:
-		line := "  " + strings.TrimSpace(item.Body)
-		return m.styles.progressLine.Width(width).Render(truncateRight(line, width))
+		return m.renderActivityItem(item, width)
 	default:
 		if item.Subtype == "welcome" {
 			return m.renderWelcomeItem(item, width)
@@ -2021,6 +2037,21 @@ func (m *tuiModel) renderTimelineItem(item tuiTimelineItem, width int) string {
 		line := fmt.Sprintf("%s  %s", timestamp, item.Body)
 		return m.styles.systemLine.Width(width).Render(truncateRight(line, width))
 	}
+}
+
+func (m *tuiModel) renderActivityItem(item tuiTimelineItem, width int) string {
+	body := strings.TrimSpace(strings.ReplaceAll(item.Body, "\n", " "))
+	if body == "" {
+		body = strings.TrimSpace(item.Title)
+	}
+	if body == "" {
+		return ""
+	}
+	prefix := "  · "
+	if item.Subtype == "activity.grouped" {
+		prefix = "  • "
+	}
+	return m.styles.progressLine.Width(width).Render(truncateRight(prefix+body, width))
 }
 
 func (m *tuiModel) renderWelcomeItem(item tuiTimelineItem, width int) string {
@@ -2291,18 +2322,21 @@ func (m *tuiModel) historyUp() {
 		return
 	}
 	if !m.historyState.active || m.historyState.mode != mode {
+		m.promptController.SetValue(m.input.Value())
+		m.promptController.SetHistory(promptHistoryEntries(entries))
 		m.historyState = tuiHistoryState{
 			active: true,
 			draft:  m.input.Value(),
 			mode:   mode,
 		}
 	}
-	if m.historyState.index >= len(entries) {
+	if !m.promptController.HistoryPrev() {
 		return
 	}
-	entry := entries[m.historyState.index]
-	m.historyState.index++
-	m.input.SetValue(entry.Body)
+	if m.historyState.index < len(entries) {
+		m.historyState.index++
+	}
+	m.input.SetValue(m.promptController.Value())
 	m.input.CursorEnd()
 }
 
@@ -2314,18 +2348,32 @@ func (m *tuiModel) historyDown() {
 	entries := m.messageStore.History(mode)
 	if len(entries) == 0 {
 		m.historyState = tuiHistoryState{}
+		m.promptController.CancelHistory()
+		return
+	}
+	if !m.promptController.HistoryNext() {
 		return
 	}
 	if m.historyState.index > 1 {
 		m.historyState.index--
-		entry := entries[m.historyState.index-1]
-		m.input.SetValue(entry.Body)
+		m.input.SetValue(m.promptController.Value())
 		m.input.CursorEnd()
 		return
 	}
-	m.input.SetValue(m.historyState.draft)
+	m.input.SetValue(m.promptController.Value())
 	m.input.CursorEnd()
 	m.historyState = tuiHistoryState{}
+}
+
+func promptHistoryEntries(entries []protocol.TranscriptEntry) []tuiui.PromptHistoryEntry {
+	out := make([]tuiui.PromptHistoryEntry, 0, len(entries))
+	for _, entry := range entries {
+		out = append(out, tuiui.PromptHistoryEntry{
+			Value: entry.Body,
+			Mode:  tuiui.PromptModeFromTranscript(entry.InputMode),
+		})
+	}
+	return out
 }
 
 func timelineItemFromTranscriptEntry(entry protocol.TranscriptEntry) tuiTimelineItem {
@@ -2355,6 +2403,33 @@ func timelineItemFromTranscriptEntry(entry protocol.TranscriptEntry) tuiTimeline
 	if entry.Type == protocol.TranscriptEntryDivider {
 		item.Kind = tuiItemSystem
 		item.Body = strings.Repeat("─", 48)
+	}
+	return item
+}
+
+func timelineItemFromUIMessage(message tuiui.UIMessage) tuiTimelineItem {
+	item := tuiTimelineItem{
+		ID:        message.ID,
+		Subtype:   message.Subtype,
+		Title:     firstNonEmpty(message.Title, string(message.Type)),
+		Body:      message.Body,
+		Markdown:  message.Markdown,
+		CreatedAt: message.CreatedAt,
+	}
+	switch message.Type {
+	case tuiui.UIMessageUser:
+		item.Kind = tuiItemUser
+	case tuiui.UIMessageAssistant:
+		item.Kind = tuiItemAssistant
+	case tuiui.UIMessageDecision:
+		item.Kind = tuiItemApproval
+		item.Compact = message.Subtype == transcriptSubtypeApprovalRejected && !strings.Contains(strings.TrimSpace(message.Body), "\n")
+	case tuiui.UIMessageError:
+		item.Kind = tuiItemError
+	case tuiui.UIMessageActivity:
+		item.Kind = tuiItemProgress
+	default:
+		item.Kind = tuiItemSystem
 	}
 	return item
 }

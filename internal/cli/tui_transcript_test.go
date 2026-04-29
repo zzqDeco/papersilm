@@ -190,6 +190,13 @@ func TestWorkspaceActivitySummarizesToolsInsteadOfUpdates(t *testing.T) {
 	if containsString(body, "tool=") || containsString(body, "node=") {
 		t.Fatalf("did not expect low-level tool details in grouped activity, got %q", body)
 	}
+	rendered := model.renderTimelineItem(model.items[0], 80)
+	if !containsString(rendered, "• Inspecting workspace") {
+		t.Fatalf("expected compact activity row, got %q", rendered)
+	}
+	if containsString(rendered, "Progress") || containsString(rendered, "activity.grouped") {
+		t.Fatalf("did not expect activity to render as log header, got %q", rendered)
+	}
 }
 
 func TestPlainAssistantMessageRendersWithoutLogHeader(t *testing.T) {
