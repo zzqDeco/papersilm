@@ -509,8 +509,8 @@ func TestTranscriptSearchDoesNotOverwriteMainStatus(t *testing.T) {
 	if model.mainStatus != "Running task..." {
 		t.Fatalf("expected main status to remain unchanged, got %q", model.mainStatus)
 	}
-	if model.searchStatus != "1 matches" {
-		t.Fatalf("expected transcript search status, got %q", model.searchStatus)
+	if model.transcriptScreen.Status() != "1 matches" {
+		t.Fatalf("expected transcript search status, got %q", model.transcriptScreen.Status())
 	}
 
 	model.closeTranscriptScreen()
@@ -703,8 +703,8 @@ func TestTranscriptSearchCommitKeepsHighlightForNextNavigation(t *testing.T) {
 	if updated.focus != tuiFocusTranscript {
 		t.Fatalf("expected transcript focus after committing search, got %q", updated.focus)
 	}
-	if len(updated.searchMatches) != 1 {
-		t.Fatalf("expected search match to remain after commit, got %+v", updated.searchMatches)
+	if updated.transcriptScreen.MatchCount() != 1 {
+		t.Fatalf("expected search match to remain after commit, got %d", updated.transcriptScreen.MatchCount())
 	}
 	if got := updated.renderTranscriptContent(80); !containsString(got, "› ") {
 		t.Fatalf("expected committed transcript search to keep highlight, got %q", got)

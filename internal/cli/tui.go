@@ -174,8 +174,7 @@ type tuiModel struct {
 	messageStore         tuiui.MessageStore
 	messagePipeline      tuiui.MessagePipeline
 	promptController     tuiui.PromptController
-	transcriptFrozen     bool
-	transcriptFrozenLen  int
+	transcriptScreen     tuiui.TranscriptScreen
 	history              []string
 	suggestions          []tuiSuggestion
 	sel                  int
@@ -186,9 +185,6 @@ type tuiModel struct {
 	historySelection     int
 	historyStatus        string
 	historyDraft         string
-	searchMatches        []int
-	searchSelection      int
-	searchStatus         string
 	workspaceName        string
 	workspaceDisplayPath string
 	activityCount        int
@@ -1206,10 +1202,7 @@ func (m *tuiModel) openPane(title, body string) {
 }
 
 func (m *tuiModel) openTranscriptScreen(withSearch bool) tea.Cmd {
-	if m.screen != tuiScreenTranscript {
-		m.transcriptFrozen = true
-		m.transcriptFrozenLen = m.messageStore.Len()
-	}
+	m.transcriptScreen.Open(m.messageStore.Len())
 	m.screen = tuiScreenTranscript
 	m.input.Blur()
 	if withSearch {
@@ -1225,9 +1218,9 @@ func (m *tuiModel) openTranscriptScreen(withSearch bool) tea.Cmd {
 func (m *tuiModel) closeTranscriptScreen() {
 	m.screen = tuiScreenMain
 	m.focus = tuiFocusInput
-	m.transcriptFrozen = false
-	m.transcriptFrozenLen = 0
-	m.clearTranscriptSearch()
+	m.transcriptScreen.Close()
+	m.searchIn.SetValue("")
+	m.searchIn.Blur()
 	m.input.Focus()
 }
 
@@ -1456,9 +1449,7 @@ func (m *tuiModel) setHintsVisible(visible bool) {
 }
 
 func (m *tuiModel) clearTranscriptSearch() {
-	m.searchStatus = ""
-	m.searchMatches = nil
-	m.searchSelection = 0
+	m.transcriptScreen.ClearSearch()
 	m.searchIn.SetValue("")
 	m.searchIn.Blur()
 }
@@ -1466,34 +1457,23 @@ func (m *tuiModel) clearTranscriptSearch() {
 func (m *tuiModel) openTranscriptSearch() {
 	m.focus = tuiFocusTranscriptSearch
 	m.searchIn.SetValue("")
-	m.searchStatus = ""
-	m.searchMatches = nil
-	m.searchSelection = 0
+	m.transcriptScreen.OpenSearch()
 	m.searchIn.Focus()
 }
 
 func (m *tuiModel) closeTranscriptSearch(clear bool) {
 	m.focus = tuiFocusTranscript
 	m.searchIn.Blur()
+	m.transcriptScreen.CloseSearch(clear)
 	if clear {
-		m.clearTranscriptSearch()
+		m.searchIn.SetValue("")
 	}
 }
 
 func (m *tuiModel) moveTranscriptSearchSelection(delta int) {
-	if len(m.searchMatches) == 0 {
-		return
+	if m.transcriptScreen.MoveSearch(delta) {
+		m.jumpToSearchSelection()
 	}
-	next := m.searchSelection + delta
-	if next < 0 {
-		next = len(m.searchMatches) - 1
-	}
-	if next >= len(m.searchMatches) {
-		next = 0
-	}
-	m.searchSelection = next
-	m.jumpToSearchSelection()
-	m.searchStatus = fmt.Sprintf("%d matches", len(m.searchMatches))
 }
 
 func (m *tuiModel) setMainStatus(status string) {
@@ -1959,12 +1939,12 @@ func (m *tuiModel) renderTranscriptScreen() string {
 
 func (m *tuiModel) renderTranscriptSearchBar(width int) string {
 	header := m.styles.footerMuted.Render("/ search transcript")
-	if len(m.searchMatches) > 0 {
+	if current, count := m.transcriptScreen.MatchPosition(); count > 0 {
 		header = header + m.styles.footerMuted.Render(" · ") + m.styles.footerAccent.Render(
-			fmt.Sprintf("%d/%d", m.searchSelection+1, len(m.searchMatches)),
+			fmt.Sprintf("%d/%d", current, count),
 		)
-	} else if strings.TrimSpace(m.searchStatus) != "" {
-		header = header + m.styles.footerMuted.Render(" · ") + m.styles.footerAccent.Render(m.searchStatus)
+	} else if status := strings.TrimSpace(m.transcriptScreen.Status()); status != "" {
+		header = header + m.styles.footerMuted.Render(" · ") + m.styles.footerAccent.Render(status)
 	}
 	search := lipgloss.JoinVertical(lipgloss.Left, header, m.searchIn.View())
 	return m.styles.inputShell.Width(width).Render(search)
@@ -1991,17 +1971,14 @@ func (m *tuiModel) renderTranscriptContent(width int) string {
 	}
 	rendered := make([]string, 0, len(entries))
 	for idx, entry := range entries {
-		selected := len(m.searchMatches) > 0 && m.searchMatches[m.searchSelection] == idx
+		selected := m.transcriptScreen.IsSelected(idx)
 		rendered = append(rendered, m.renderTranscriptEntry(entry, width, selected))
 	}
 	return strings.Join(rendered, "\n\n")
 }
 
 func (m *tuiModel) transcriptEntries() []protocol.TranscriptEntry {
-	if !m.transcriptFrozen {
-		return m.messageStore.Entries()
-	}
-	return m.messageStore.Frozen(m.transcriptFrozenLen)
+	return m.transcriptScreen.Entries(m.messageStore.Entries())
 }
 
 func (m *tuiModel) renderPaneBody(width int) string {
@@ -2201,19 +2178,10 @@ func shouldRenderAssistantHeader(title string) bool {
 }
 
 func (m *tuiModel) refreshTranscriptSearch() {
-	m.searchMatches = transcriptSearchMatches(m.transcriptEntries(), m.searchIn.Value())
-	if len(m.searchMatches) == 0 {
-		m.searchSelection = 0
-		if strings.TrimSpace(m.searchIn.Value()) == "" {
-			m.searchStatus = ""
-		} else {
-			m.searchStatus = "No matches"
-		}
-		return
+	m.transcriptScreen.RefreshSearch(m.transcriptEntries(), m.searchIn.Value())
+	if m.transcriptScreen.MatchCount() > 0 {
+		m.jumpToSearchSelection()
 	}
-	m.searchSelection = clamp(m.searchSelection, 0, len(m.searchMatches)-1)
-	m.jumpToSearchSelection()
-	m.searchStatus = fmt.Sprintf("%d matches", len(m.searchMatches))
 }
 
 func (m *tuiModel) refreshHistorySearch() {
@@ -2292,10 +2260,10 @@ func (m *tuiModel) acceptHistorySearch(execute bool) tea.Cmd {
 }
 
 func (m *tuiModel) jumpToSearchSelection() {
-	if len(m.searchMatches) == 0 {
+	index, ok := m.transcriptScreen.SelectedEntryIndex()
+	if !ok {
 		return
 	}
-	index := m.searchMatches[m.searchSelection]
 	offset := transcriptOffsetForIndex(m.transcriptEntries(), index, m.transcript.Width)
 	target := max(0, offset-max(0, m.transcript.Height/3))
 	m.transcript.SetYOffset(target)
