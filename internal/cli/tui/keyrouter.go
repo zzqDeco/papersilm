@@ -119,7 +119,7 @@ func routeContextKey(context KeyContext, key string) (KeyAction, bool) {
 		}
 	case ContextTranscript:
 		switch key {
-		case "ctrl+o", "ctrl+c", "q", "esc":
+		case "ctrl+o", "q", "esc":
 			return ActionTranscriptExit, true
 		case "/":
 			return ActionTranscriptSearchOpen, true

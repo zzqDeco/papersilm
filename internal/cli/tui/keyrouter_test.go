@@ -56,6 +56,11 @@ func TestRouteKeyGlobalQuitAlwaysAvailable(t *testing.T) {
 	if action != ActionRedraw {
 		t.Fatalf("expected ctrl+l redraw, got %q", action)
 	}
+
+	action = RouteKey([]KeyContext{ContextTranscript, ContextGlobal}, "ctrl+c")
+	if action != ActionQuit {
+		t.Fatalf("expected ctrl+c to quit from transcript, got %q", action)
+	}
 }
 
 func TestRouteKeyConfirmationRejectsLikeClaudeCode(t *testing.T) {
