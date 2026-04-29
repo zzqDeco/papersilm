@@ -176,7 +176,7 @@ func TestWorkspaceActivitySummarizesToolsInsteadOfUpdates(t *testing.T) {
 		t.Fatalf("did not expect low-level tool details in grouped activity, got %q", body)
 	}
 	rendered := model.renderTimelineItem(model.items[0], 80)
-	if !containsString(rendered, "• Inspecting workspace") {
+	if !containsString(rendered, "· Inspecting workspace") {
 		t.Fatalf("expected compact activity row, got %q", rendered)
 	}
 	if containsString(rendered, "Progress") || containsString(rendered, "activity.grouped") {
@@ -207,8 +207,11 @@ func TestPlainAssistantMessageRendersWithoutLogHeader(t *testing.T) {
 		Body:      "Plan ready.",
 		CreatedAt: time.Now().UTC(),
 	}, 80)
-	if !containsString(commandResult, "plan ·") {
-		t.Fatalf("expected command result title to remain, got %q", commandResult)
+	if containsString(commandResult, "plan ·") {
+		t.Fatalf("did not expect command result to render as log header, got %q", commandResult)
+	}
+	if !containsString(commandResult, "Plan ready.") {
+		t.Fatalf("expected command result body, got %q", commandResult)
 	}
 }
 
@@ -924,8 +927,8 @@ func TestShortPromptInputStaysSingleLine(t *testing.T) {
 	if strings.Count(rendered, "›") != 1 {
 		t.Fatalf("expected one prompt marker for short input, got %q", rendered)
 	}
-	if strings.Count(rendered, "\n") != 1 {
-		t.Fatalf("expected divider plus one input row, got %q", rendered)
+	if strings.Count(rendered, "\n") != 0 {
+		t.Fatalf("expected single prompt row without form divider, got %q", rendered)
 	}
 }
 
@@ -987,7 +990,7 @@ func TestModalRendersAsBottomDrawer(t *testing.T) {
 	lines := strings.Split(view, "\n")
 	drawerLine := -1
 	for i, line := range lines {
-		if containsString(line, "▔▔▔") {
+		if containsString(line, "───") {
 			drawerLine = i
 			break
 		}
@@ -1164,13 +1167,13 @@ func TestHintsCanBeHiddenWithoutRemovingFooterMeta(t *testing.T) {
 
 	model := newTestTUIModel()
 	visible := model.renderFooter()
-	if !containsString(visible, "Ctrl+/ hints") {
-		t.Fatalf("expected visible footer shortcuts, got %q", visible)
+	if !containsString(visible, "? shortcuts") {
+		t.Fatalf("expected compact footer shortcut hint, got %q", visible)
 	}
 
 	model.setHintsVisible(false)
 	hidden := model.renderFooter()
-	if containsString(hidden, "Ctrl+/ hints") {
+	if containsString(hidden, "? shortcuts") {
 		t.Fatalf("expected hints line to disappear, got %q", hidden)
 	}
 	if !containsString(hidden, "confirm") {
@@ -1185,7 +1188,7 @@ func TestFooterHintsSuppressWhileTyping(t *testing.T) {
 	model.input.SetValue("draft prompt")
 
 	footer := model.renderFooter()
-	if containsString(footer, "Ctrl+/ hints") {
+	if containsString(footer, "? shortcuts") {
 		t.Fatalf("expected shortcuts to be suppressed while typing, got %q", footer)
 	}
 	if !containsString(footer, "confirm") {

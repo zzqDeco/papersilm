@@ -7,6 +7,7 @@ import (
 
 	"github.com/charmbracelet/bubbles/textarea"
 	"github.com/charmbracelet/bubbles/textinput"
+	"github.com/charmbracelet/glamour/ansi"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/muesli/termenv"
 
@@ -27,6 +28,7 @@ type tuiPalette struct {
 	promptBorder lipgloss.Color
 	surface      lipgloss.Color
 	userBg       lipgloss.Color
+	codeBg       lipgloss.Color
 	selectionBg  lipgloss.Color
 }
 
@@ -66,7 +68,7 @@ func newTUIStyles(setting config.ThemeSetting) tuiStyles {
 
 	return tuiStyles{
 		theme:                  resolved,
-		markdownStyle:          string(resolved),
+		markdownConfig:         tuiMarkdownStyle(palette),
 		background:             background,
 		body:                   body,
 		header:                 lipgloss.NewStyle().Foreground(palette.inactive),
@@ -122,6 +124,7 @@ func tuiDarkPalette() tuiPalette {
 		promptBorder: lipgloss.Color("#888888"),
 		surface:      lipgloss.Color("#FFFFFF"),
 		userBg:       lipgloss.Color("#373737"),
+		codeBg:       lipgloss.Color("#252525"),
 		selectionBg:  lipgloss.Color("#264F78"),
 	}
 }
@@ -141,8 +144,119 @@ func tuiLightPalette() tuiPalette {
 		promptBorder: lipgloss.Color("#999999"),
 		surface:      lipgloss.Color("#FFFFFF"),
 		userBg:       lipgloss.Color("#F0F0F0"),
+		codeBg:       lipgloss.Color("#F7F7F7"),
 		selectionBg:  lipgloss.Color("#B4D5FF"),
 	}
+}
+
+func tuiMarkdownStyle(palette tuiPalette) ansi.StyleConfig {
+	return ansi.StyleConfig{
+		Document: ansi.StyleBlock{
+			Margin: tuiUintPtr(0),
+		},
+		Paragraph: ansi.StyleBlock{},
+		Heading: ansi.StyleBlock{
+			StylePrimitive: ansi.StylePrimitive{
+				Color:       tuiColorPtr(palette.text),
+				Bold:        tuiBoolPtr(true),
+				BlockSuffix: "\n",
+			},
+		},
+		H1: ansi.StyleBlock{
+			StylePrimitive: ansi.StylePrimitive{Prefix: "# "},
+		},
+		H2: ansi.StyleBlock{
+			StylePrimitive: ansi.StylePrimitive{Prefix: "## "},
+		},
+		H3: ansi.StyleBlock{
+			StylePrimitive: ansi.StylePrimitive{Prefix: "### "},
+		},
+		BlockQuote: ansi.StyleBlock{
+			StylePrimitive: ansi.StylePrimitive{
+				Color: tuiColorPtr(palette.inactive),
+			},
+			Indent:      tuiUintPtr(1),
+			IndentToken: tuiStringPtr("│ "),
+		},
+		List: ansi.StyleList{
+			StyleBlock:  ansi.StyleBlock{},
+			LevelIndent: 2,
+		},
+		Item: ansi.StylePrimitive{
+			Color: tuiColorPtr(palette.inactive),
+		},
+		Enumeration: ansi.StylePrimitive{
+			Color: tuiColorPtr(palette.inactive),
+		},
+		Text: ansi.StylePrimitive{
+			Color: tuiColorPtr(palette.text),
+		},
+		Emph: ansi.StylePrimitive{
+			Color:  tuiColorPtr(palette.text),
+			Italic: tuiBoolPtr(true),
+		},
+		Strong: ansi.StylePrimitive{
+			Color: tuiColorPtr(palette.text),
+			Bold:  tuiBoolPtr(true),
+		},
+		HorizontalRule: ansi.StylePrimitive{
+			Color: tuiColorPtr(palette.divider),
+		},
+		Link: ansi.StylePrimitive{
+			Color:     tuiColorPtr(palette.suggestion),
+			Underline: tuiBoolPtr(true),
+		},
+		LinkText: ansi.StylePrimitive{
+			Color: tuiColorPtr(palette.text),
+		},
+		Code: ansi.StyleBlock{
+			StylePrimitive: ansi.StylePrimitive{
+				Color:           tuiColorPtr(palette.text),
+				BackgroundColor: tuiColorPtr(palette.codeBg),
+			},
+		},
+		CodeBlock: ansi.StyleCodeBlock{
+			StyleBlock: ansi.StyleBlock{
+				StylePrimitive: ansi.StylePrimitive{
+					Color:           tuiColorPtr(palette.text),
+					BackgroundColor: tuiColorPtr(palette.codeBg),
+				},
+				Margin: tuiUintPtr(0),
+			},
+			Chroma: &ansi.Chroma{
+				Text:         ansi.StylePrimitive{Color: tuiColorPtr(palette.text)},
+				Comment:      ansi.StylePrimitive{Color: tuiColorPtr(palette.inactive)},
+				Keyword:      ansi.StylePrimitive{Color: tuiColorPtr(palette.suggestion)},
+				NameFunction: ansi.StylePrimitive{Color: tuiColorPtr(palette.text)},
+				LiteralString: ansi.StylePrimitive{
+					Color: tuiColorPtr(palette.success),
+				},
+				LiteralNumber: ansi.StylePrimitive{Color: tuiColorPtr(palette.permission)},
+				Operator:      ansi.StylePrimitive{Color: tuiColorPtr(palette.inactive)},
+				Punctuation:   ansi.StylePrimitive{Color: tuiColorPtr(palette.inactive)},
+			},
+		},
+		Table: ansi.StyleTable{
+			StyleBlock: ansi.StyleBlock{},
+		},
+	}
+}
+
+func tuiColorPtr(color lipgloss.Color) *string {
+	value := string(color)
+	return &value
+}
+
+func tuiStringPtr(value string) *string {
+	return &value
+}
+
+func tuiBoolPtr(value bool) *bool {
+	return &value
+}
+
+func tuiUintPtr(value uint) *uint {
+	return &value
 }
 
 func resolveTUITheme(setting config.ThemeSetting) config.ThemeSetting {

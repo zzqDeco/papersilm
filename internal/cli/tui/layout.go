@@ -80,7 +80,7 @@ func RenderBottomDrawer(drawer Drawer) string {
 	width := max(20, drawer.Width)
 	bodyWidth := max(16, width-4)
 	lines := []string{
-		drawer.DividerStyle.Render(strings.Repeat("▔", width)),
+		drawer.DividerStyle.Render(strings.Repeat("─", width)),
 	}
 	if strings.TrimSpace(drawer.Title) != "" {
 		lines = append(lines, "  "+drawer.TitleStyle.Render(truncateRight(drawer.Title, bodyWidth)))
@@ -92,7 +92,6 @@ func RenderBottomDrawer(drawer Drawer) string {
 		lines = append(lines, "  "+drawer.BodyStyle.Render(truncateRight(drawer.Filter, bodyWidth)))
 	}
 	if len(drawer.Rows) > 0 {
-		lines = append(lines, "")
 		lines = append(lines, RenderListRows(drawer.Rows, bodyWidth)...)
 	}
 	return strings.Join(lines, "\n")
@@ -122,7 +121,7 @@ func RenderListRows(rows []ListRow, width int) []string {
 		detail := truncateRight(row.Detail, detailWidth)
 		line := "  " + row.MarkerStyle.Render(prefix) + row.LabelStyle.Render(label)
 		if detail != "" {
-			line += row.DetailStyle.Render("  " + detail)
+			line += row.DetailStyle.Render(" – " + detail)
 		}
 		lines = append(lines, line)
 	}

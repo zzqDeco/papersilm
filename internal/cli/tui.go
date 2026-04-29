@@ -13,6 +13,7 @@ import (
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/glamour"
+	"github.com/charmbracelet/glamour/ansi"
 	"github.com/charmbracelet/lipgloss"
 
 	tuiui "github.com/zzqDeco/papersilm/internal/cli/tui"
@@ -117,7 +118,7 @@ type tuiSwitchProviderMsg struct {
 
 type tuiStyles struct {
 	theme                  config.ThemeSetting
-	markdownStyle          string
+	markdownConfig         ansi.StyleConfig
 	background             lipgloss.Style
 	body                   lipgloss.Style
 	header                 lipgloss.Style
@@ -1044,7 +1045,7 @@ func (m *tuiModel) ensureWelcomeItem() {
 		Kind:      tuiItemSystem,
 		Subtype:   "welcome",
 		Title:     "Welcome",
-		Body:      "Ask about this workspace, edit files, or attach papers when needed.",
+		Body:      "Ask about this workspace. Attach papers only when useful.",
 		CreatedAt: time.Now(),
 	})
 }
@@ -1179,57 +1180,27 @@ func (m *tuiModel) renderHeader() string {
 	if m.snapshot.Workspace != nil && strings.TrimSpace(m.snapshot.Workspace.Name) != "" {
 		workspaceName = m.snapshot.Workspace.Name
 	}
-	state := string(m.snapshot.Meta.State)
-	if state == "" {
-		state = "idle"
-	}
-	profile := firstNonEmpty(m.snapshot.Meta.ProviderProfile, m.runtime.cfg.ActiveProviderName())
-	model := firstNonEmpty(m.snapshot.Meta.Model, m.runtime.cfg.ActiveProviderConfig().Model)
-	rightParts := []string{
-		sessionLabel(m.snapshot.Meta),
-		state,
-	}
-	if profile != "" || model != "" {
-		rightParts = append(rightParts, strings.Trim(strings.Join([]string{profile, model}, "/"), "/"))
-	}
-	if m.busy {
-		rightParts = append(rightParts, "running")
-	}
 	if m.screen == tuiScreenTranscript {
-		rightParts = append(rightParts, "transcript")
-	}
-	right := strings.Join(rightParts, " · ")
-
-	rightWidth := 0
-	if width >= 48 {
-		rightWidth = clamp(width/2, 18, 48)
-	} else if width >= 36 {
-		rightWidth = clamp(width/3, 10, 18)
+		if workspaceName == "" {
+			workspaceName = "transcript"
+		} else {
+			workspaceName += " · transcript"
+		}
 	}
 	leftWidth := width
-	if rightWidth > 0 {
-		leftWidth = max(12, width-rightWidth-1)
-	}
 	if width < 64 {
 		workspaceName = ""
 	}
-	leftRaw := "papersilm"
 	if workspaceName != "" {
 		workspaceBudget := max(0, leftWidth-lipgloss.Width("papersilm · "))
 		workspaceName = truncateRight(workspaceName, workspaceBudget)
-		leftRaw = "papersilm · " + workspaceName
 	}
-	right = truncateRight(right, rightWidth)
 
 	line := m.styles.headerAccent.Render("papersilm")
 	if workspaceName != "" {
 		line += m.styles.headerMuted.Render(" · " + workspaceName)
 	}
-	if right != "" {
-		gap := max(1, width-lipgloss.Width(leftRaw)-lipgloss.Width(right))
-		line += strings.Repeat(" ", gap) + m.styles.headerStatus.Render(right)
-	}
-	return line
+	return m.styles.header.Width(width).Render(line)
 }
 
 func (m *tuiModel) renderStickyPromptHeader() string {
@@ -1348,8 +1319,8 @@ func (m *tuiModel) renderApprovalStickyPanel() string {
 	}
 	return tuiui.RenderDecisionPanel(tuiui.DecisionPanel{
 		Width:        width,
-		Title:        "Approval required",
-		Summary:      truncateRight(summary, bodyWidth),
+		Title:        "Do you want to proceed?",
+		Summary:      truncateRight("Approval required · "+summary, bodyWidth),
 		Hint:         hint,
 		Rows:         rows,
 		DividerStyle: m.styles.paneDivider,
@@ -1446,9 +1417,9 @@ func (m *tuiModel) renderFooter() string {
 		rightParts = append(rightParts, string(m.styles.theme))
 	}
 	right := strings.Join(rightParts, " · ")
-	shortcuts := "Enter send · Tab complete · Ctrl+K commands · Ctrl+O transcript · Ctrl+R history · Ctrl+/ hints · Esc close"
+	shortcuts := "? shortcuts · Enter send · Tab complete · Ctrl+K commands · Ctrl+O transcript"
 	if m.screen == tuiScreenTranscript {
-		shortcuts = "/ search · n/N next · q/Esc back · Ctrl+/ hints"
+		shortcuts = "? transcript · / search · n/N next · q/Esc back"
 	}
 	searchLine := ""
 	if m.screen == tuiScreenMain && m.focus == tuiFocusHistorySearch {
@@ -1557,7 +1528,7 @@ func (m *tuiModel) renderModalBox() string {
 		Rows:    rows,
 	}, tuiui.Drawer{
 		Width:        width,
-		DividerStyle: m.styles.approvalLabel,
+		DividerStyle: m.styles.paneDivider,
 		TitleStyle:   m.styles.modalTitle,
 		MutedStyle:   m.styles.modalMessage,
 		BodyStyle:    m.styles.body,
@@ -2460,7 +2431,7 @@ func renderTimelinePreview(item tuiTimelineItem, width int) string {
 
 func (m *tuiModel) renderMarkdown(markdown string, width int) string {
 	renderer, err := glamour.NewTermRenderer(
-		glamour.WithStandardStyle(m.styles.markdownStyle),
+		glamour.WithStyles(m.styles.markdownConfig),
 		glamour.WithWordWrap(max(20, width)),
 	)
 	if err != nil {

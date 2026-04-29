@@ -21,7 +21,7 @@ func RenderDecisionPanel(panel DecisionPanel) string {
 	width := max(20, panel.Width)
 	bodyWidth := max(12, width-4)
 	lines := []string{
-		panel.DividerStyle.Render(strings.Repeat("▔", width)),
+		panel.DividerStyle.Render(strings.Repeat("─", width)),
 	}
 	title := strings.TrimSpace(panel.Title)
 	if title != "" {

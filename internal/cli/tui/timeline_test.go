@@ -53,8 +53,25 @@ func TestRenderTimelineActivityIsCompact(t *testing.T) {
 		Subtype: "activity.grouped",
 		Body:    "Inspecting workspace · 1 read",
 	}, 80, plainTimelineRenderer())
-	if !strings.Contains(rendered, "• Inspecting workspace") {
+	if !strings.Contains(rendered, "· Inspecting workspace") {
 		t.Fatalf("expected compact activity row, got %q", rendered)
+	}
+}
+
+func TestRenderTimelineUserAvoidsFullWidthBackground(t *testing.T) {
+	t.Parallel()
+
+	rendered := RenderTimelineItem(TimelineItem{
+		Kind:      TimelineItemUser,
+		Title:     "You",
+		Body:      "short prompt",
+		CreatedAt: time.Now(),
+	}, 80, plainTimelineRenderer())
+	if strings.Contains(rendered, "you ·") || strings.Contains(rendered, ":") {
+		t.Fatalf("expected user prompt without log timestamp/header, got %q", rendered)
+	}
+	if lipgloss.Width(rendered) >= 80 {
+		t.Fatalf("expected user prompt content not to fill full width, got width %d: %q", lipgloss.Width(rendered), rendered)
 	}
 }
 

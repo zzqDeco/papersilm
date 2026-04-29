@@ -17,7 +17,7 @@ func TestRenderBottomDrawerUsesSingleDivider(t *testing.T) {
 		},
 	})
 
-	if !strings.Contains(rendered, strings.Repeat("▔", 32)) {
+	if !strings.Contains(rendered, strings.Repeat("─", 32)) {
 		t.Fatalf("expected single divider, got %q", rendered)
 	}
 	if strings.ContainsAny(rendered, "┌┐└┘") {
@@ -25,6 +25,9 @@ func TestRenderBottomDrawerUsesSingleDivider(t *testing.T) {
 	}
 	if !strings.Contains(rendered, "+ /help") {
 		t.Fatalf("expected selected row marker, got %q", rendered)
+	}
+	if !strings.Contains(rendered, " – Show") {
+		t.Fatalf("expected Claude-style row separator, got %q", rendered)
 	}
 }
 

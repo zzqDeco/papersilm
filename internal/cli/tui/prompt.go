@@ -17,16 +17,10 @@ type PromptChrome struct {
 
 func RenderPromptChrome(prompt PromptChrome) string {
 	width := max(20, prompt.Width)
+	body := prompt.BodyStyle.Width(width).Render(prompt.Body)
 	label := strings.TrimSpace(prompt.Label)
-	if label == "" {
-		label = "prompt"
+	if strings.Contains(strings.ToLower(label), "approval") {
+		return lipgloss.JoinVertical(lipgloss.Left, prompt.LabelStyle.Render(label), body)
 	}
-	label = " " + label + " "
-	dividerWidth := max(1, width-lipgloss.Width(label))
-	divider := prompt.LabelStyle.Render(label) + prompt.DividerStyle.Render(strings.Repeat("─", dividerWidth))
-	return lipgloss.JoinVertical(
-		lipgloss.Left,
-		divider,
-		prompt.BodyStyle.Width(width).Render(prompt.Body),
-	)
+	return body
 }
