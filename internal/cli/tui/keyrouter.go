@@ -44,10 +44,13 @@ const (
 	ActionSuggestionAccept KeyAction = "suggestion_accept"
 	ActionSuggestionClose  KeyAction = "suggestion_close"
 
-	ActionApprovalPrev   KeyAction = "approval_prev"
-	ActionApprovalNext   KeyAction = "approval_next"
-	ActionApprovalCommit KeyAction = "approval_commit"
-	ActionApprovalReject KeyAction = "approval_reject"
+	ActionApprovalPrev     KeyAction = "approval_prev"
+	ActionApprovalNext     KeyAction = "approval_next"
+	ActionApprovalCommit   KeyAction = "approval_commit"
+	ActionApprovalReject   KeyAction = "approval_reject"
+	ActionApprovalFeedback KeyAction = "approval_feedback"
+	ActionApprovalScope    KeyAction = "approval_scope"
+	ActionApprovalExplain  KeyAction = "approval_explain"
 
 	ActionModalClose  KeyAction = "modal_close"
 	ActionModalPrev   KeyAction = "modal_prev"
@@ -156,14 +159,20 @@ func routeContextKey(context KeyContext, key string) (KeyAction, bool) {
 		}
 	case ContextApproval:
 		switch key {
-		case "up", "left", "shift+tab":
+		case "up", "left":
 			return ActionApprovalPrev, true
-		case "down", "right", "tab":
+		case "down", "right":
 			return ActionApprovalNext, true
-		case "enter", "a", "y", "r", "i":
+		case "enter", "a", "y", "r":
 			return ActionApprovalCommit, true
 		case "n", "esc":
 			return ActionApprovalReject, true
+		case "tab":
+			return ActionApprovalFeedback, true
+		case "shift+tab":
+			return ActionApprovalScope, true
+		case "ctrl+e", "i":
+			return ActionApprovalExplain, true
 		}
 	case ContextConfirmation:
 		switch key {
@@ -171,10 +180,16 @@ func routeContextKey(context KeyContext, key string) (KeyAction, bool) {
 			return ActionApprovalCommit, true
 		case "n", "esc":
 			return ActionApprovalReject, true
-		case "up", "left", "shift+tab":
+		case "up", "left":
 			return ActionApprovalPrev, true
-		case "down", "right", "tab", "space":
+		case "down", "right", "space":
 			return ActionApprovalNext, true
+		case "tab":
+			return ActionApprovalFeedback, true
+		case "shift+tab":
+			return ActionApprovalScope, true
+		case "ctrl+e", "i":
+			return ActionApprovalExplain, true
 		}
 	case ContextPane:
 		switch key {

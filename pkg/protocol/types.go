@@ -503,13 +503,71 @@ type PlanResult struct {
 }
 
 type ApprovalRequest struct {
-	PlanID         string    `json:"plan_id"`
-	CheckpointID   string    `json:"checkpoint_id"`
-	InterruptID    string    `json:"interrupt_id"`
-	PendingNodeIDs []string  `json:"pending_node_ids,omitempty"`
-	Summary        string    `json:"summary"`
-	RequiresInput  bool      `json:"requires_input"`
-	CreatedAt      time.Time `json:"created_at"`
+	PlanID          string              `json:"plan_id"`
+	CheckpointID    string              `json:"checkpoint_id"`
+	InterruptID     string              `json:"interrupt_id"`
+	PendingNodeIDs  []string            `json:"pending_node_ids,omitempty"`
+	Summary         string              `json:"summary"`
+	RequiresInput   bool                `json:"requires_input"`
+	CreatedAt       time.Time           `json:"created_at"`
+	Mode            string              `json:"mode,omitempty"`
+	ActiveRequestID string              `json:"active_request_id,omitempty"`
+	Requests        []PermissionRequest `json:"requests,omitempty"`
+}
+
+type PermissionPreview struct {
+	Kind            string `json:"kind,omitempty"`
+	Summary         string `json:"summary,omitempty"`
+	Diff            string `json:"diff,omitempty"`
+	OldContentHash  string `json:"old_content_hash,omitempty"`
+	NewContent      string `json:"new_content,omitempty"`
+	CommandPrefix   string `json:"command_prefix,omitempty"`
+	ConflictMessage string `json:"conflict_message,omitempty"`
+}
+
+type PermissionOption struct {
+	Value       string `json:"value"`
+	Label       string `json:"label"`
+	Description string `json:"description,omitempty"`
+	Scope       string `json:"scope,omitempty"`
+	Feedback    string `json:"feedback,omitempty"`
+}
+
+type PermissionRequest struct {
+	RequestID  string             `json:"request_id"`
+	SessionID  string             `json:"session_id,omitempty"`
+	PlanID     string             `json:"plan_id,omitempty"`
+	NodeID     string             `json:"node_id,omitempty"`
+	Tool       string             `json:"tool"`
+	Operation  string             `json:"operation,omitempty"`
+	Title      string             `json:"title"`
+	Subtitle   string             `json:"subtitle,omitempty"`
+	Question   string             `json:"question"`
+	Summary    string             `json:"summary,omitempty"`
+	TargetPath string             `json:"target_path,omitempty"`
+	Command    string             `json:"command,omitempty"`
+	Preview    PermissionPreview  `json:"preview,omitempty"`
+	Options    []PermissionOption `json:"options"`
+	CreatedAt  time.Time          `json:"created_at"`
+}
+
+type PermissionDecision struct {
+	RequestID string `json:"request_id"`
+	Value     string `json:"value"`
+	Feedback  string `json:"feedback,omitempty"`
+	Scope     string `json:"scope,omitempty"`
+}
+
+type PermissionRule struct {
+	RuleID        string    `json:"rule_id"`
+	Tool          string    `json:"tool"`
+	Operation     string    `json:"operation,omitempty"`
+	Scope         string    `json:"scope"`
+	TargetPath    string    `json:"target_path,omitempty"`
+	Directory     string    `json:"directory,omitempty"`
+	CommandPrefix string    `json:"command_prefix,omitempty"`
+	NodeKind      string    `json:"node_kind,omitempty"`
+	CreatedAt     time.Time `json:"created_at"`
 }
 
 type PlanProgressStatus string
@@ -583,6 +641,7 @@ type SessionSnapshot struct {
 	Workspace      *WorkspaceSummary  `json:"workspace,omitempty"`
 	Sources        []PaperRef         `json:"sources"`
 	Plan           *PlanResult        `json:"plan,omitempty"`
+	Approval       *ApprovalRequest   `json:"approval,omitempty"`
 	TaskBoard      *TaskBoard         `json:"task_board,omitempty"`
 	Execution      *ExecutionState    `json:"execution,omitempty"`
 	Digests        []PaperDigest      `json:"digests,omitempty"`
