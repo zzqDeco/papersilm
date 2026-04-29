@@ -1094,6 +1094,24 @@ func TestFooterMetaStaysSingleLineWithLongWorkspace(t *testing.T) {
 	}
 }
 
+func TestFooterDropsLowPriorityMetadataOnNarrowWidth(t *testing.T) {
+	t.Parallel()
+
+	model := newTestTUIModel()
+	model.width = 58
+	model.snapshot.Sources = []protocol.PaperRef{{PaperID: "source_1"}}
+	model.workspaceName = "papersilm-workspace"
+	model.reflow()
+
+	meta := strings.Split(model.renderFooter(), "\n")[0]
+	if containsString(meta, "sources") || containsString(meta, "papersilm-workspace") || containsString(meta, "dark") {
+		t.Fatalf("expected narrow footer to drop low-priority metadata, got %q", meta)
+	}
+	if !containsString(meta, "confirm") {
+		t.Fatalf("expected narrow footer to keep mode, got %q", meta)
+	}
+}
+
 func TestHintsCanBeHiddenWithoutRemovingFooterMeta(t *testing.T) {
 	t.Parallel()
 

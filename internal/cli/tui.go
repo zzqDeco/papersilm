@@ -1804,18 +1804,20 @@ func (m *tuiModel) renderFooter() string {
 	if approvals > 0 {
 		leftParts = append(leftParts, fmt.Sprintf("%d approvals", approvals))
 	}
-	if len(m.snapshot.Sources) > 0 {
+	if len(m.snapshot.Sources) > 0 && width >= 90 {
 		leftParts = append(leftParts, fmt.Sprintf("%d sources", len(m.snapshot.Sources)))
 	}
 	left := strings.Join(leftParts, " · ")
 	rightParts := []string{}
-	if profile != "" || model != "" {
+	if (profile != "" || model != "") && width >= 44 {
 		rightParts = append(rightParts, strings.Trim(strings.Join([]string{profile, model}, "/"), "/"))
 	}
-	if workspace := compactWorkspaceName(m.workspaceDisplayPath, m.workspaceName); workspace != "" {
+	if workspace := compactWorkspaceName(m.workspaceDisplayPath, m.workspaceName); workspace != "" && width >= 72 {
 		rightParts = append(rightParts, workspace)
 	}
-	rightParts = append(rightParts, string(m.styles.theme))
+	if width >= 96 {
+		rightParts = append(rightParts, string(m.styles.theme))
+	}
 	right := strings.Join(rightParts, " · ")
 	metaLine := renderSplitLine(
 		width,
