@@ -1646,17 +1646,18 @@ func (m *tuiModel) renderPane() string {
 
 func (m *tuiModel) renderInput() string {
 	width := max(20, m.width-2)
-	label := " prompt "
+	label := "prompt"
 	if m.approvalPanelActive() {
-		label = " prompt · approval pending "
+		label = "prompt · approval pending"
 	}
-	dividerWidth := max(1, width-lipgloss.Width(label))
-	divider := m.styles.footerMuted.Render(label) + m.styles.paneDivider.Render(strings.Repeat("─", dividerWidth))
-	return lipgloss.JoinVertical(
-		lipgloss.Left,
-		divider,
-		m.styles.inputShell.Width(width).Render(m.input.View()),
-	)
+	return tuiui.RenderPromptChrome(tuiui.PromptChrome{
+		Width:        width,
+		Label:        label,
+		Body:         m.input.View(),
+		LabelStyle:   m.styles.footerMuted,
+		DividerStyle: m.styles.paneDivider,
+		BodyStyle:    m.styles.inputShell,
+	})
 }
 
 func (m *tuiModel) renderApprovalStickyPanel() string {
