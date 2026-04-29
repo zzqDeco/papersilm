@@ -1799,27 +1799,26 @@ func (m *tuiModel) renderFooter() string {
 		rightParts = append(rightParts, string(m.styles.theme))
 	}
 	right := strings.Join(rightParts, " · ")
-	metaLine := renderSplitLine(
-		width,
-		left,
-		right,
-		m.styles.footerMuted,
-		m.styles.footerMuted,
-	)
-
 	shortcuts := "Enter send · Tab complete · Ctrl+K commands · Ctrl+O transcript · Ctrl+R history · Ctrl+/ hints · Esc close"
 	if m.screen == tuiScreenTranscript {
 		shortcuts = "/ search · n/N next · q/Esc back · Ctrl+/ hints"
 	}
-	lines := []string{m.styles.footer.Width(width).Render(metaLine)}
+	searchLine := ""
 	if m.screen == tuiScreenMain && m.focus == tuiFocusHistorySearch {
-		lines = append(lines, m.styles.footer.Width(width).Render(m.renderHistorySearchFooterLine(width)))
-		return lipgloss.JoinVertical(lipgloss.Left, lines...)
+		searchLine = m.renderHistorySearchFooterLine(width)
 	}
-	if m.hintsVisible && m.height >= 18 {
-		lines = append(lines, m.styles.footer.Width(width).Render(m.styles.footerMuted.Render(truncateRight(shortcuts, width))))
-	}
-	return lipgloss.JoinVertical(lipgloss.Left, lines...)
+	return tuiui.RenderFooterChrome(tuiui.FooterChrome{
+		Width:       width,
+		MetaLeft:    left,
+		MetaRight:   right,
+		SearchLine:  searchLine,
+		Hints:       shortcuts,
+		ShowHints:   m.hintsVisible && m.height >= 18,
+		FooterStyle: m.styles.footer,
+		LeftStyle:   m.styles.footerMuted,
+		RightStyle:  m.styles.footerMuted,
+		HintStyle:   m.styles.footerMuted,
+	})
 }
 
 func (m *tuiModel) renderHistorySearchFooterLine(width int) string {
@@ -3386,28 +3385,6 @@ func compactWorkspaceName(pathValue, fallback string) string {
 		return pathValue
 	}
 	return name
-}
-
-func renderSplitLine(width int, left, right string, leftStyle, rightStyle lipgloss.Style) string {
-	width = max(0, width)
-	if width == 0 {
-		return ""
-	}
-	rightBudget := 0
-	if right != "" && width >= 36 {
-		rightBudget = clamp(width/2, 12, min(44, width-12))
-	}
-	leftBudget := width
-	if rightBudget > 0 {
-		leftBudget = max(0, width-rightBudget-1)
-	}
-	left = truncateRight(left, leftBudget)
-	right = truncateRight(right, rightBudget)
-	if right == "" {
-		return leftStyle.Render(truncateRight(left, width))
-	}
-	gap := max(1, width-lipgloss.Width(left)-lipgloss.Width(right))
-	return leftStyle.Render(left) + strings.Repeat(" ", gap) + rightStyle.Render(right)
 }
 
 func padRight(value string, width int) string {

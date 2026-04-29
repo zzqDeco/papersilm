@@ -39,21 +39,6 @@ func TestTranscriptHistoryEntriesRespectsMode(t *testing.T) {
 	}
 }
 
-func TestTranscriptSearchMatches(t *testing.T) {
-	t.Parallel()
-
-	entries := []protocol.TranscriptEntry{
-		{ID: "1", Type: protocol.TranscriptEntrySystem, Title: "Session", Body: "session created"},
-		{ID: "2", Type: protocol.TranscriptEntryAssistant, Title: "Assistant", Body: "Summarize the transformer paper"},
-		{ID: "3", Type: protocol.TranscriptEntryCommand, Title: "Command", Body: "/tasks"},
-	}
-
-	matches := transcriptSearchMatches(entries, "transformer")
-	if len(matches) != 1 || matches[0] != 1 {
-		t.Fatalf("expected only assistant transformer match, got %+v", matches)
-	}
-}
-
 func TestTranscriptEntryFromApprovalEventUsesDecisionSubtype(t *testing.T) {
 	t.Parallel()
 

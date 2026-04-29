@@ -236,24 +236,3 @@ func transcriptHistoryEntries(entries []protocol.TranscriptEntry, mode protocol.
 	}
 	return out
 }
-
-func transcriptSearchMatches(entries []protocol.TranscriptEntry, query string) []int {
-	query = strings.TrimSpace(strings.ToLower(query))
-	if query == "" {
-		return nil
-	}
-	matches := make([]int, 0)
-	for idx, entry := range entries {
-		haystack := strings.ToLower(strings.Join([]string{
-			string(entry.Type),
-			entry.Subtype,
-			entry.Title,
-			entry.Body,
-			entry.SourceRef,
-		}, " "))
-		if strings.Contains(haystack, query) {
-			matches = append(matches, idx)
-		}
-	}
-	return matches
-}
