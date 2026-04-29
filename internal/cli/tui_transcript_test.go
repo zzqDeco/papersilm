@@ -385,6 +385,10 @@ func TestApprovalContextDoesNotSwallowDraftTyping(t *testing.T) {
 	if updated.input.Value() != "keep typing!" {
 		t.Fatalf("expected normal typing to remain visible while approval is pending, got %q", updated.input.Value())
 	}
+	view := updated.renderMainScreen()
+	if !strings.Contains(view, "Draft active") {
+		t.Fatalf("expected approval panel to explain draft mode, got:\n%s", view)
+	}
 }
 
 func TestApprovalShortcutSelection(t *testing.T) {
