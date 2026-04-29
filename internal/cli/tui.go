@@ -1210,12 +1210,21 @@ func (m *tuiModel) renderHeader() string {
 	if rightWidth > 0 {
 		leftWidth = max(12, width-rightWidth-1)
 	}
-	workspaceBudget := max(0, leftWidth-lipgloss.Width("papersilm · "))
-	workspaceName = truncateRight(workspaceName, workspaceBudget)
-	leftRaw := "papersilm · " + workspaceName
+	if width < 64 {
+		workspaceName = ""
+	}
+	leftRaw := "papersilm"
+	if workspaceName != "" {
+		workspaceBudget := max(0, leftWidth-lipgloss.Width("papersilm · "))
+		workspaceName = truncateRight(workspaceName, workspaceBudget)
+		leftRaw = "papersilm · " + workspaceName
+	}
 	right = truncateRight(right, rightWidth)
 
-	line := m.styles.headerAccent.Render("papersilm") + m.styles.headerMuted.Render(" · "+workspaceName)
+	line := m.styles.headerAccent.Render("papersilm")
+	if workspaceName != "" {
+		line += m.styles.headerMuted.Render(" · " + workspaceName)
+	}
 	if right != "" {
 		gap := max(1, width-lipgloss.Width(leftRaw)-lipgloss.Width(right))
 		line += strings.Repeat(" ", gap) + m.styles.headerStatus.Render(right)

@@ -1088,6 +1088,20 @@ func TestHeaderStaysSingleLine(t *testing.T) {
 	}
 }
 
+func TestHeaderDropsWorkspaceOnNarrowWidth(t *testing.T) {
+	t.Parallel()
+
+	model := newTestTUIModel()
+	model.width = 58
+	model.workspaceName = "papersilm"
+	model.reflow()
+
+	header := model.renderHeader()
+	if strings.Contains(header, "papersilm · papersilm") {
+		t.Fatalf("expected narrow header to avoid duplicated app/workspace label, got %q", header)
+	}
+}
+
 func TestFooterMetaStaysSingleLineWithLongWorkspace(t *testing.T) {
 	t.Parallel()
 
