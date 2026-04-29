@@ -68,7 +68,21 @@ func TestRenderTimelineRejectedCompact(t *testing.T) {
 		Body:    "User rejected tool use",
 		Compact: true,
 	}, 80, plainTimelineRenderer())
-	if !strings.Contains(rendered, "Rejected") || strings.Contains(rendered, "\n") {
+	if !strings.Contains(rendered, "✗ Rejected") || strings.Contains(rendered, "\n") {
 		t.Fatalf("expected compact rejection line, got %q", rendered)
+	}
+}
+
+func TestRenderTimelineApprovedUsesDecisionMarker(t *testing.T) {
+	t.Parallel()
+
+	rendered := RenderTimelineItem(TimelineItem{
+		Kind:    TimelineItemApproval,
+		Subtype: TimelineSubtypeApprovalApproved,
+		Title:   "Approved",
+		Body:    "Plan mode restrictions have been lifted.",
+	}, 80, plainTimelineRenderer())
+	if !strings.Contains(rendered, "✓ Approved") {
+		t.Fatalf("expected approved decision marker, got %q", rendered)
 	}
 }

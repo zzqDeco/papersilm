@@ -135,14 +135,14 @@ func renderTimelineDecision(item TimelineItem, width, bodyWidth int, timestamp s
 	switch item.Subtype {
 	case TimelineSubtypeApprovalApproved:
 		body := styles.Body.Width(bodyWidth).Render(item.Body)
-		header := renderTimelineTimestamp(styles.SuccessLabel, styles.FooterMuted, firstTimelineText(item.Title, "Approved"), timestamp)
+		header := renderTimelineTimestamp(styles.SuccessLabel, styles.FooterMuted, decisionTitle("✓", firstTimelineText(item.Title, "Approved")), timestamp)
 		return styles.SuccessShell.Width(width).Render(header + "\n" + body)
 	case TimelineSubtypeApprovalRejected:
 		if item.Compact {
-			return renderCompactTimelineDecision(styles.RejectionLabel, styles.FooterMuted, firstTimelineText(item.Title, "Rejected"), timestamp, item.Body, width)
+			return renderCompactTimelineDecision(styles.RejectionLabel, styles.FooterMuted, decisionTitle("✗", firstTimelineText(item.Title, "Rejected")), timestamp, item.Body, width)
 		}
 		body := styles.Body.Width(bodyWidth).Render(item.Body)
-		header := renderTimelineTimestamp(styles.RejectionLabel, styles.FooterMuted, firstTimelineText(item.Title, "Rejected"), timestamp)
+		header := renderTimelineTimestamp(styles.RejectionLabel, styles.FooterMuted, decisionTitle("✗", firstTimelineText(item.Title, "Rejected")), timestamp)
 		return styles.RejectionShell.Width(width).Render(header + "\n" + body)
 	default:
 		body := styles.Body.Width(bodyWidth).Render(item.Body)
@@ -152,6 +152,14 @@ func renderTimelineDecision(item TimelineItem, width, bodyWidth int, timestamp s
 		header := renderTimelineTimestamp(styles.ApprovalLabel, styles.FooterMuted, firstTimelineText(item.Title, "Approval Required"), timestamp)
 		return styles.ApprovalShell.Width(width).Render(header + "\n" + body)
 	}
+}
+
+func decisionTitle(icon, title string) string {
+	title = strings.TrimSpace(title)
+	if title == "" || strings.HasPrefix(title, icon) {
+		return title
+	}
+	return icon + " " + title
 }
 
 func renderTimelineTimestamp(labelStyle lipgloss.Style, timeStyle lipgloss.Style, label, timestamp string) string {
