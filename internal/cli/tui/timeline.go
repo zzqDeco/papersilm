@@ -122,6 +122,9 @@ func wrapTimelineText(text string, width int) string {
 func renderTimelineDecision(item TimelineItem, width, bodyWidth int, styles TimelineStyles) string {
 	switch item.Subtype {
 	case TimelineSubtypeApprovalApproved:
+		if shouldRenderCompactDecision(item.Body) {
+			return renderCompactTimelineDecision(styles.SuccessLabel, styles.FooterMuted, decisionTitle("✓", firstTimelineText(item.Title, "Approved")), item.Body, width)
+		}
 		body := styles.Body.Width(bodyWidth).Render(item.Body)
 		header := styles.SuccessLabel.Render(decisionTitle("✓", firstTimelineText(item.Title, "Approved")))
 		return styles.SuccessShell.Render(header + "\n" + body)
@@ -140,6 +143,14 @@ func renderTimelineDecision(item TimelineItem, width, bodyWidth int, styles Time
 		header := styles.ApprovalLabel.Render(firstTimelineText(item.Title, "Approval Required"))
 		return styles.ApprovalShell.Render(header + "\n" + body)
 	}
+}
+
+func shouldRenderCompactDecision(body string) bool {
+	body = strings.TrimSpace(body)
+	if body == "" {
+		return true
+	}
+	return !strings.Contains(body, "\n") && lipgloss.Width(body) <= 96
 }
 
 func decisionTitle(icon, title string) string {

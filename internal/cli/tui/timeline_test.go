@@ -102,4 +102,7 @@ func TestRenderTimelineApprovedUsesDecisionMarker(t *testing.T) {
 	if !strings.Contains(rendered, "✓ Approved") {
 		t.Fatalf("expected approved decision marker, got %q", rendered)
 	}
+	if strings.Contains(rendered, "\n") {
+		t.Fatalf("expected short approved decision to render as compact row, got %q", rendered)
+	}
 }
