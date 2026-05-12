@@ -257,6 +257,8 @@ func (a *Agent) readWorkspaceFileForEdit(store *storage.Store, targetPath string
 	if err == nil {
 		return content, true, nil
 	}
+	// Workspace edits may intentionally create new files. Treat a missing
+	// target as an empty draft and let preview application detect conflicts.
 	if errors.Is(err, os.ErrNotExist) {
 		return "", false, nil
 	}

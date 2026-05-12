@@ -142,6 +142,27 @@ func TestExecuteWorkspaceEditRequiresApprovedPreview(t *testing.T) {
 	}
 }
 
+func TestExecuteWorkspaceEditAllowsMissingTargetBeforeRewrite(t *testing.T) {
+	t.Parallel()
+
+	cfg := config.Default()
+	cfg.BaseDir = t.TempDir()
+	cfg.Provider.APIKey = ""
+	cfg.Provider.Model = ""
+	store := storage.New(cfg.BaseDir)
+	if err := store.Ensure(); err != nil {
+		t.Fatalf("Ensure: %v", err)
+	}
+	agent := New(tools.New(pipeline.New(cfg)), cfg)
+	_, err := agent.executeWorkspaceEdit(context.Background(), store, "sess_auto_create", "edit_target", "create notes.md", workspaceIntent{targetPath: "notes.md"})
+	if err == nil || !strings.Contains(err.Error(), "workspace file editing requires a configured provider/model") {
+		t.Fatalf("expected rewrite/provider error instead of missing file error, got %v", err)
+	}
+	if _, readErr := store.ReadWorkspaceFile("notes.md"); !os.IsNotExist(readErr) {
+		t.Fatalf("expected missing target to remain unwritten, got %v", readErr)
+	}
+}
+
 func TestApplyWorkspaceEditPreviewCanCreateNewFile(t *testing.T) {
 	t.Parallel()
 
