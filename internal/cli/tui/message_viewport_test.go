@@ -63,6 +63,36 @@ func TestMessageViewportCachesByStableKey(t *testing.T) {
 	}
 }
 
+func TestMessageViewportInvalidatesStableKeyWhenVersionChanges(t *testing.T) {
+	t.Parallel()
+
+	var viewport MessageViewport
+	calls := 0
+	content := viewport.ContentByKeyVersion(80, []string{"message"}, []string{"v1"}, func(index int, width int) string {
+		calls++
+		return "old body"
+	})
+	if content != "old body" || calls != 1 {
+		t.Fatalf("unexpected first render content=%q calls=%d", content, calls)
+	}
+
+	cached := viewport.ContentByKeyVersion(80, []string{"message"}, []string{"v1"}, func(index int, width int) string {
+		calls++
+		return "stale"
+	})
+	if cached != "old body" || calls != 1 {
+		t.Fatalf("expected unchanged version to reuse cache, content=%q calls=%d", cached, calls)
+	}
+
+	updated := viewport.ContentByKeyVersion(80, []string{"message"}, []string{"v2"}, func(index int, width int) string {
+		calls++
+		return "new body"
+	})
+	if updated != "new body" || calls != 2 {
+		t.Fatalf("expected version change to rerender, content=%q calls=%d", updated, calls)
+	}
+}
+
 func TestMessageViewportCachesDuplicateKeysByOccurrence(t *testing.T) {
 	t.Parallel()
 

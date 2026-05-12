@@ -1599,16 +1599,30 @@ func (m *tuiModel) renderTranscriptSearchBar(width int) string {
 
 func (m *tuiModel) renderTimelineContent(width int) string {
 	keys := make([]string, 0, len(m.items))
+	versions := make([]string, 0, len(m.items))
 	for i, item := range m.items {
 		key := strings.TrimSpace(item.ID)
 		if key == "" {
 			key = fmt.Sprintf("%s_%d_%d", item.Kind, item.CreatedAt.UnixNano(), i)
 		}
 		keys = append(keys, key)
+		versions = append(versions, timelineItemVersion(item))
 	}
-	return m.messageViewport.ContentByKey(width, keys, func(index int, width int) string {
+	return m.messageViewport.ContentByKeyVersion(width, keys, versions, func(index int, width int) string {
 		return m.renderTimelineItem(m.items[index], width)
 	})
+}
+
+func timelineItemVersion(item tuiTimelineItem) string {
+	return strings.Join([]string{
+		string(item.Kind),
+		item.Subtype,
+		item.Title,
+		item.Body,
+		fmt.Sprint(item.Markdown),
+		fmt.Sprint(item.Compact),
+		fmt.Sprint(item.CreatedAt.UnixNano()),
+	}, "\x00")
 }
 
 func (m *tuiModel) renderTranscriptContent(width int) string {
