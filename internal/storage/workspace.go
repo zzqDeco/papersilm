@@ -257,7 +257,7 @@ func (s *Store) RunWorkspaceCommand(command string) (protocol.WorkspaceCommandRe
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, "zsh", "-lc", command)
+	cmd := exec.CommandContext(ctx, workspaceCommandShell(), "-lc", command)
 	cmd.Dir = s.workspaceRoot
 	stdout := newCappedBuffer(workspaceCommandOutputLimit)
 	stderr := newCappedBuffer(workspaceCommandOutputLimit)
@@ -290,6 +290,13 @@ func (s *Store) RunWorkspaceCommand(command string) (protocol.WorkspaceCommandRe
 		runErr = logErr
 	}
 	return record, runErr
+}
+
+func workspaceCommandShell() string {
+	if _, err := exec.LookPath("zsh"); err == nil {
+		return "zsh"
+	}
+	return "sh"
 }
 
 func (s *Store) scanWorkspaceFiles() ([]protocol.WorkspaceFile, error) {
