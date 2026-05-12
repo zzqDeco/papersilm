@@ -639,7 +639,7 @@ func (m *tuiModel) commitModalSelection() (tea.Model, tea.Cmd) {
 		}
 		choice := m.modal.Visible[m.modal.Selection]
 		m.closeModal()
-		m.input.SetValue(choice.Value)
+		m.setPromptValue(choice.Value)
 		m.refreshSuggestions()
 		m.reflow()
 		return m, m.input.Focus()
@@ -808,7 +808,7 @@ func (m *tuiModel) refreshSuggestions() {
 }
 
 func (m *tuiModel) applySuggestion(suggestion tuiSuggestion) {
-	m.input.SetValue(suggestion.Insert)
+	m.setPromptValue(suggestion.Insert)
 	m.refreshSuggestions()
 	m.focus = tuiFocusInput
 	m.setMainStatus(fmt.Sprintf("Inserted %s", suggestion.Label))
@@ -864,8 +864,7 @@ func (m *tuiModel) openHistorySearch() tea.Cmd {
 
 func (m *tuiModel) closeHistorySearch(restoreDraft bool) tea.Cmd {
 	if restoreDraft {
-		m.input.SetValue(m.historyDraft)
-		m.input.CursorEnd()
+		m.setPromptValue(m.historyDraft)
 	}
 	m.historyIn.SetValue("")
 	m.historyIn.Blur()
@@ -1050,14 +1049,19 @@ func (m *tuiModel) ensureWelcomeItem() {
 
 func (m *tuiModel) consumeSubmittedInput() string {
 	line := strings.TrimSpace(m.input.Value())
-	m.input.SetValue("")
+	m.setPromptValue("")
 	m.historyState = tuiHistoryState{}
-	m.promptController.SetValue("")
 	m.promptController.CancelHistory()
 	m.focus = tuiFocusInput
 	m.suggestions = nil
 	m.sel = 0
 	return line
+}
+
+func (m *tuiModel) setPromptValue(value string) {
+	m.input.SetValue(value)
+	m.input.CursorEnd()
+	m.promptController.SetValue(value)
 }
 
 func (m *tuiModel) toggleHints() {
@@ -1804,8 +1808,7 @@ func (m *tuiModel) acceptHistorySearch(execute bool) tea.Cmd {
 	}
 	value := m.historyMatches[m.historySelection].Body
 	cmd := m.closeHistorySearch(false)
-	m.input.SetValue(value)
-	m.input.CursorEnd()
+	m.setPromptValue(value)
 	m.refreshSuggestions()
 	if !execute {
 		return cmd
@@ -1881,8 +1884,7 @@ func (m *tuiModel) historyUp() {
 	if m.historyState.index < len(entries) {
 		m.historyState.index++
 	}
-	m.input.SetValue(m.promptController.Value())
-	m.input.CursorEnd()
+	m.setPromptValue(m.promptController.Value())
 }
 
 func (m *tuiModel) historyDown() {
@@ -1901,12 +1903,10 @@ func (m *tuiModel) historyDown() {
 	}
 	if m.historyState.index > 1 {
 		m.historyState.index--
-		m.input.SetValue(m.promptController.Value())
-		m.input.CursorEnd()
+		m.setPromptValue(m.promptController.Value())
 		return
 	}
-	m.input.SetValue(m.promptController.Value())
-	m.input.CursorEnd()
+	m.setPromptValue(m.promptController.Value())
 	m.historyState = tuiHistoryState{}
 }
 
