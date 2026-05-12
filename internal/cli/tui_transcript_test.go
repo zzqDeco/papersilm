@@ -130,6 +130,159 @@ func TestProgressEventsGroupIntoSingleActivityRow(t *testing.T) {
 	if model.items[0].Kind != tuiItemProgress || !containsString(model.items[0].Body, "2 updates") {
 		t.Fatalf("expected grouped progress body, got %+v", model.items[0])
 	}
+	if containsString(model.items[0].Body, "node execution completed") {
+		t.Fatalf("expected grouped activity to hide low-value progress detail, got %+v", model.items[0])
+	}
+}
+
+func TestFailedProgressDetailStaysVisibleInActivityRow(t *testing.T) {
+	t.Parallel()
+
+	model := newTestTUIModel()
+	model.items = nil
+	model.messageViewport.Reset()
+
+	model.appendTranscript(protocol.TranscriptEntry{
+		ID:           "p1",
+		SessionID:    "sess_test",
+		Type:         protocol.TranscriptEntryProgress,
+		Subtype:      string(protocol.EventProgress),
+		Title:        "Progress",
+		Body:         "node execution started",
+		Visibility:   protocol.TranscriptVisibilityActivity,
+		Presentation: protocol.TranscriptPresentationGrouped,
+		CreatedAt:    time.Now().UTC(),
+	}, false)
+	model.appendTranscript(protocol.TranscriptEntry{
+		ID:           "p2",
+		SessionID:    "sess_test",
+		Type:         protocol.TranscriptEntryProgress,
+		Subtype:      string(protocol.EventProgress),
+		Title:        "Progress",
+		Body:         "node execution failed: merge_digest returned empty digest",
+		Visibility:   protocol.TranscriptVisibilityActivity,
+		Presentation: protocol.TranscriptPresentationGrouped,
+		CreatedAt:    time.Now().UTC(),
+	}, false)
+
+	if len(model.items) != 1 {
+		t.Fatalf("expected one grouped activity item, got %+v", model.items)
+	}
+	if !containsString(model.items[0].Body, "merge_digest returned empty digest") {
+		t.Fatalf("expected failed progress detail to remain visible, got %+v", model.items[0])
+	}
+}
+
+func TestFailedProgressWithToolMetadataKeepsErrorVisible(t *testing.T) {
+	t.Parallel()
+
+	model := newTestTUIModel()
+	model.items = nil
+	model.messageViewport.Reset()
+
+	model.appendTranscript(protocol.TranscriptEntry{
+		ID:           "p1",
+		SessionID:    "sess_test",
+		Type:         protocol.TranscriptEntryProgress,
+		Subtype:      string(protocol.EventProgress),
+		Title:        "Progress",
+		Body:         "node execution started",
+		Visibility:   protocol.TranscriptVisibilityActivity,
+		Presentation: protocol.TranscriptPresentationGrouped,
+		CreatedAt:    time.Now().UTC(),
+	}, false)
+	model.appendTranscript(protocol.TranscriptEntry{
+		ID:           "p2",
+		SessionID:    "sess_test",
+		Type:         protocol.TranscriptEntryProgress,
+		Subtype:      string(protocol.EventProgress),
+		Title:        "Progress",
+		Body:         "failed · tool=paper_merge · node=merge_digest · node execution failed · error=empty digest",
+		Visibility:   protocol.TranscriptVisibilityActivity,
+		Presentation: protocol.TranscriptPresentationGrouped,
+		CreatedAt:    time.Now().UTC(),
+	}, false)
+
+	if len(model.items) != 1 {
+		t.Fatalf("expected one grouped activity item, got %+v", model.items)
+	}
+	body := model.items[0].Body
+	if !containsString(body, "failed: empty digest") {
+		t.Fatalf("expected extracted failure detail in activity row, got %+v", model.items[0])
+	}
+	if containsString(body, "tool=") || containsString(body, "node=") {
+		t.Fatalf("expected tool metadata to stay out of compact activity row, got %+v", model.items[0])
+	}
+}
+
+func TestFailedProgressWithCountedToolKeepsErrorVisible(t *testing.T) {
+	t.Parallel()
+
+	model := newTestTUIModel()
+	model.items = nil
+	model.messageViewport.Reset()
+
+	model.appendTranscript(protocol.TranscriptEntry{
+		ID:           "p1",
+		SessionID:    "sess_test",
+		Type:         protocol.TranscriptEntryProgress,
+		Subtype:      string(protocol.EventProgress),
+		Title:        "Progress",
+		Body:         "started · tool=workspace_command · node=run_tests",
+		Visibility:   protocol.TranscriptVisibilityActivity,
+		Presentation: protocol.TranscriptPresentationGrouped,
+		CreatedAt:    time.Now().UTC(),
+	}, false)
+	model.appendTranscript(protocol.TranscriptEntry{
+		ID:           "p2",
+		SessionID:    "sess_test",
+		Type:         protocol.TranscriptEntryProgress,
+		Subtype:      string(protocol.EventProgress),
+		Title:        "Progress",
+		Body:         "failed · tool=workspace_command · node=run_tests · error=exit status 1",
+		Visibility:   protocol.TranscriptVisibilityActivity,
+		Presentation: protocol.TranscriptPresentationGrouped,
+		CreatedAt:    time.Now().UTC(),
+	}, false)
+
+	if len(model.items) != 1 {
+		t.Fatalf("expected one grouped activity item, got %+v", model.items)
+	}
+	body := model.items[0].Body
+	if !containsString(body, "1 command") || !containsString(body, "failed: exit status 1") {
+		t.Fatalf("expected counted tool summary plus failure detail, got %+v", model.items[0])
+	}
+}
+
+func TestProgressNodeNameContainingErrorIsNotFailure(t *testing.T) {
+	t.Parallel()
+
+	model := newTestTUIModel()
+	model.items = nil
+	model.messageViewport.Reset()
+
+	model.appendTranscript(protocol.TranscriptEntry{
+		ID:           "p1",
+		SessionID:    "sess_test",
+		Type:         protocol.TranscriptEntryProgress,
+		Subtype:      string(protocol.EventProgress),
+		Title:        "Progress",
+		Body:         "started · tool=workspace_inspect · node=read_error_logs",
+		Visibility:   protocol.TranscriptVisibilityActivity,
+		Presentation: protocol.TranscriptPresentationGrouped,
+		CreatedAt:    time.Now().UTC(),
+	}, false)
+
+	if len(model.items) != 1 {
+		t.Fatalf("expected one grouped activity item, got %+v", model.items)
+	}
+	body := model.items[0].Body
+	if !containsString(body, "1 read") {
+		t.Fatalf("expected normal tool summary, got %+v", model.items[0])
+	}
+	if containsString(body, "tool=") || containsString(body, "node=") {
+		t.Fatalf("did not expect node name containing error to expose metadata, got %+v", model.items[0])
+	}
 }
 
 func TestWorkspaceActivitySummarizesToolsInsteadOfUpdates(t *testing.T) {

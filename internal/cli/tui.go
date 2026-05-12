@@ -2044,10 +2044,90 @@ func activitySummary(entry protocol.TranscriptEntry, stats map[string]int, count
 			parts = append(parts, elapsed.String())
 		}
 	}
-	if last != "" && statText == "" {
-		parts = append(parts, truncateRight(last, 72))
+	if detail, ok := activityDisplayDetail(last); ok {
+		failure := isFailureActivityDetail(last)
+		if failure || (statText == "" && count == 1) {
+			parts = append(parts, truncateRight(detail, 72))
+		}
 	}
 	return strings.Join(parts, " · ")
+}
+
+func activityDisplayDetail(detail string) (string, bool) {
+	detail = strings.TrimSpace(detail)
+	if detail == "" {
+		return "", false
+	}
+	if isFailureActivityDetail(detail) {
+		if failure := failureActivityDetail(detail); failure != "" {
+			return failure, true
+		}
+		return detail, true
+	}
+	if !shouldShowActivityDetail(detail) {
+		return "", false
+	}
+	return detail, true
+}
+
+func failureActivityDetail(detail string) string {
+	parts := strings.Split(detail, "·")
+	for _, part := range parts {
+		part = strings.TrimSpace(part)
+		lower := strings.ToLower(part)
+		if strings.HasPrefix(lower, "error=") {
+			msg := strings.TrimSpace(part[len("error="):])
+			if msg != "" {
+				return "failed: " + msg
+			}
+		}
+	}
+	for _, part := range parts {
+		part = strings.TrimSpace(part)
+		lower := strings.ToLower(part)
+		if strings.Contains(lower, "failed") && !strings.Contains(lower, "tool=") && !strings.Contains(lower, "node=") {
+			return part
+		}
+	}
+	return ""
+}
+
+func isFailureActivityDetail(detail string) bool {
+	for _, part := range strings.Split(detail, "·") {
+		text := strings.ToLower(strings.TrimSpace(part))
+		switch {
+		case text == "failed":
+			return true
+		case strings.HasPrefix(text, "failed "):
+			return true
+		case strings.Contains(text, "execution failed"):
+			return true
+		case strings.HasPrefix(text, "error="):
+			return true
+		}
+	}
+	return false
+}
+
+func shouldShowActivityDetail(detail string) bool {
+	text := strings.ToLower(strings.TrimSpace(detail))
+	if text == "" {
+		return false
+	}
+	lowValue := []string{
+		"node execution started",
+		"node execution completed",
+		"started",
+		"completed",
+		"tool=",
+		"node=",
+	}
+	for _, marker := range lowValue {
+		if strings.Contains(text, marker) {
+			return false
+		}
+	}
+	return true
 }
 
 func activityVerb(entry protocol.TranscriptEntry, stats map[string]int) string {
