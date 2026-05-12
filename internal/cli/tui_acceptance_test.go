@@ -79,7 +79,7 @@ func TestCCTUIAcceptancePromptOverlayKeepsDraftVisible(t *testing.T) {
 	t.Parallel()
 
 	model := newTestTUIModel()
-	model.setPromptValue("/m")
+	model.setPromptValue("draft-visible-input-row")
 	model.suggestions = []tuiSuggestion{
 		{Label: "/model", Detail: "Open provider/model picker", Insert: "/model"},
 		{Label: "/commands", Detail: "Open command palette", Insert: "/commands"},
@@ -88,7 +88,7 @@ func TestCCTUIAcceptancePromptOverlayKeepsDraftVisible(t *testing.T) {
 	model.reflow()
 
 	view := model.renderMainScreen()
-	if !containsString(view, "/m") {
+	if !containsString(view, "draft-visible-input-row") {
 		t.Fatalf("expected prompt draft to remain visible with suggestions, got:\n%s", view)
 	}
 	if !containsString(view, "/model") {
