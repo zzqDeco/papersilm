@@ -11,7 +11,6 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
-	"syscall"
 	"time"
 
 	"github.com/zzqDeco/papersilm/pkg/protocol"
@@ -260,14 +259,7 @@ func (s *Store) RunWorkspaceCommand(command string) (protocol.WorkspaceCommandRe
 	defer cancel()
 	cmd := exec.CommandContext(ctx, workspaceCommandShell(), "-lc", command)
 	cmd.Dir = s.workspaceRoot
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
-	cmd.Cancel = func() error {
-		if cmd.Process == nil {
-			return nil
-		}
-		return syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
-	}
-	cmd.WaitDelay = time.Second
+	configureWorkspaceCommandProcess(cmd)
 	stdout := newCappedBuffer(workspaceCommandOutputLimit)
 	stderr := newCappedBuffer(workspaceCommandOutputLimit)
 	cmd.Stdout = stdout
