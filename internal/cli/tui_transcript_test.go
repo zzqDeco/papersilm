@@ -599,6 +599,32 @@ func TestTranscriptHotkeyPreservesDraft(t *testing.T) {
 	}
 }
 
+func TestTranscriptScreenShowsFrozenNewEntryCount(t *testing.T) {
+	t.Parallel()
+
+	model := newTestTUIModel()
+	model.messageStore.Reset([]protocol.TranscriptEntry{{
+		ID:   "1",
+		Type: protocol.TranscriptEntryAssistant,
+		Body: "visible before transcript",
+	}})
+	model.openTranscriptScreen(false)
+	model.appendTranscript(protocol.TranscriptEntry{
+		ID:        "2",
+		Type:      protocol.TranscriptEntryAssistant,
+		Body:      "arrived after transcript",
+		CreatedAt: time.Now(),
+	}, false)
+
+	transcript := model.renderTranscriptContent(80)
+	if containsString(transcript, "arrived after transcript") {
+		t.Fatalf("expected transcript reader to keep frozen snapshot, got %q", transcript)
+	}
+	if footer := model.renderFooter(); !containsString(footer, "1 newer") {
+		t.Fatalf("expected transcript footer to expose newer entries, got %q", footer)
+	}
+}
+
 func TestCtrlRStartsPromptHistorySearchWithoutOpeningTranscript(t *testing.T) {
 	t.Parallel()
 

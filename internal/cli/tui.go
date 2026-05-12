@@ -1403,6 +1403,9 @@ func (m *tuiModel) renderFooter() string {
 		}
 	} else if m.screen == tuiScreenTranscript {
 		leftParts = append(leftParts, "transcript")
+		if unseen := m.transcriptScreen.UnseenCount(m.messageStore.Len()); unseen > 0 {
+			leftParts = append(leftParts, fmt.Sprintf("%d newer", unseen))
+		}
 	}
 	if taskCount > 0 {
 		leftParts = append(leftParts, fmt.Sprintf("%d tasks", taskCount))
