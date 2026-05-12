@@ -135,6 +135,44 @@ func TestProgressEventsGroupIntoSingleActivityRow(t *testing.T) {
 	}
 }
 
+func TestFailedProgressDetailStaysVisibleInActivityRow(t *testing.T) {
+	t.Parallel()
+
+	model := newTestTUIModel()
+	model.items = nil
+	model.messageViewport.Reset()
+
+	model.appendTranscript(protocol.TranscriptEntry{
+		ID:           "p1",
+		SessionID:    "sess_test",
+		Type:         protocol.TranscriptEntryProgress,
+		Subtype:      string(protocol.EventProgress),
+		Title:        "Progress",
+		Body:         "node execution started",
+		Visibility:   protocol.TranscriptVisibilityActivity,
+		Presentation: protocol.TranscriptPresentationGrouped,
+		CreatedAt:    time.Now().UTC(),
+	}, false)
+	model.appendTranscript(protocol.TranscriptEntry{
+		ID:           "p2",
+		SessionID:    "sess_test",
+		Type:         protocol.TranscriptEntryProgress,
+		Subtype:      string(protocol.EventProgress),
+		Title:        "Progress",
+		Body:         "node execution failed: merge_digest returned empty digest",
+		Visibility:   protocol.TranscriptVisibilityActivity,
+		Presentation: protocol.TranscriptPresentationGrouped,
+		CreatedAt:    time.Now().UTC(),
+	}, false)
+
+	if len(model.items) != 1 {
+		t.Fatalf("expected one grouped activity item, got %+v", model.items)
+	}
+	if !containsString(model.items[0].Body, "merge_digest returned empty digest") {
+		t.Fatalf("expected failed progress detail to remain visible, got %+v", model.items[0])
+	}
+}
+
 func TestWorkspaceActivitySummarizesToolsInsteadOfUpdates(t *testing.T) {
 	t.Parallel()
 

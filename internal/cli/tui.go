@@ -2044,10 +2044,15 @@ func activitySummary(entry protocol.TranscriptEntry, stats map[string]int, count
 			parts = append(parts, elapsed.String())
 		}
 	}
-	if last != "" && statText == "" && count == 1 && shouldShowActivityDetail(last) {
+	if last != "" && statText == "" && shouldShowActivityDetail(last) && (count == 1 || isFailureActivityDetail(last)) {
 		parts = append(parts, truncateRight(last, 72))
 	}
 	return strings.Join(parts, " · ")
+}
+
+func isFailureActivityDetail(detail string) bool {
+	text := strings.ToLower(strings.TrimSpace(detail))
+	return strings.Contains(text, "failed") || strings.Contains(text, "error")
 }
 
 func shouldShowActivityDetail(detail string) bool {
