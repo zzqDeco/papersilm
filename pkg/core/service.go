@@ -120,6 +120,10 @@ func (s *Service) RejectTask(ctx context.Context, sessionID, taskID, comment str
 	return s.agent.RejectTask(ctx, s.store, s.sink, sessionID, taskID, comment)
 }
 
+func (s *Service) DecidePermission(ctx context.Context, sessionID string, decision protocol.PermissionDecision) (protocol.RunResult, error) {
+	return s.agent.DecidePermission(ctx, s.store, s.sink, sessionID, decision)
+}
+
 func (s *Service) ListSkills(sessionID string) ([]protocol.SkillDescriptor, error) {
 	meta, err := s.store.LoadMeta(sessionID)
 	if err != nil {

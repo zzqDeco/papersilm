@@ -1,8 +1,6 @@
 package cli
 
 import (
-	"strings"
-
 	tea "github.com/charmbracelet/bubbletea"
 
 	tuiui "github.com/zzqDeco/papersilm/internal/cli/tui"
@@ -90,6 +88,18 @@ func (m *tuiModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.commitApprovalSelection(msg.String())
 	case tuiui.ActionApprovalReject:
 		return m.commitApprovalSelection(msg.String())
+	case tuiui.ActionApprovalFeedback:
+		m.toggleApprovalFeedback()
+		m.reflow()
+		return m, nil
+	case tuiui.ActionApprovalScope:
+		m.cycleApprovalScope()
+		m.reflow()
+		return m, nil
+	case tuiui.ActionApprovalExplain:
+		m.openApprovalExplanation()
+		m.reflow()
+		return m, nil
 	case tuiui.ActionHistoryPrev:
 		if m.shouldUseHistoryUp() {
 			m.historyUp()
@@ -178,8 +188,12 @@ func (m *tuiModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 
-	if m.approvalKeyboardActive() && !isPromptEditingKey(msg) {
-		m.setMainStatus("Approval pending: choose an option")
+	if m.handleApprovalFeedbackInput(msg) {
+		m.reflow()
+		return m, nil
+	}
+	if m.approvalKeyboardActive() {
+		m.setMainStatus("Permission request active: choose Yes/No or press Tab to add feedback")
 		m.reflow()
 		return m, nil
 	}
@@ -207,14 +221,14 @@ func (m *tuiModel) keyContexts() []tuiui.KeyContext {
 		contexts = append(contexts, tuiui.ContextPane)
 	}
 	if m.approvalKeyboardActive() {
-		contexts = append(contexts, tuiui.ContextApproval, tuiui.ContextConfirmation)
+		contexts = append(contexts, tuiui.ContextConfirmation)
 	}
 	contexts = append(contexts, tuiui.ContextChat, tuiui.ContextGlobal)
 	return contexts
 }
 
 func (m *tuiModel) approvalKeyboardActive() bool {
-	return m.approvalPanelActive() && strings.TrimSpace(m.input.Value()) == ""
+	return m.approvalPanelActive()
 }
 
 func isPromptEditingKey(msg tea.KeyMsg) bool {

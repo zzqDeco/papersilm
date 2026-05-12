@@ -28,14 +28,24 @@ func TestRouteKeyFallsThroughToChat(t *testing.T) {
 func TestRouteKeyApprovalSelectsBeforeChat(t *testing.T) {
 	t.Parallel()
 
-	action := RouteKey([]KeyContext{ContextApproval, ContextChat, ContextGlobal}, "enter")
+	action := RouteKey([]KeyContext{ContextConfirmation, ContextChat, ContextGlobal}, "enter")
 	if action != ActionApprovalCommit {
 		t.Fatalf("expected approval commit before chat submit, got %q", action)
 	}
 
-	action = RouteKey([]KeyContext{ContextApproval, ContextChat, ContextGlobal}, "down")
+	action = RouteKey([]KeyContext{ContextConfirmation, ContextChat, ContextGlobal}, "down")
 	if action != ActionApprovalNext {
 		t.Fatalf("expected approval next before chat history, got %q", action)
+	}
+
+	action = RouteKey([]KeyContext{ContextConfirmation, ContextChat, ContextGlobal}, "tab")
+	if action != ActionApprovalFeedback {
+		t.Fatalf("expected tab to enter feedback mode, got %q", action)
+	}
+
+	action = RouteKey([]KeyContext{ContextConfirmation, ContextChat, ContextGlobal}, "ctrl+e")
+	if action != ActionApprovalExplain {
+		t.Fatalf("expected ctrl+e to open approval details, got %q", action)
 	}
 }
 
@@ -67,7 +77,7 @@ func TestRouteKeyConfirmationRejectsLikeClaudeCode(t *testing.T) {
 	t.Parallel()
 
 	for _, key := range []string{"n", "esc"} {
-		action := RouteKey([]KeyContext{ContextApproval, ContextChat, ContextGlobal}, key)
+		action := RouteKey([]KeyContext{ContextConfirmation, ContextChat, ContextGlobal}, key)
 		if action != ActionApprovalReject {
 			t.Fatalf("expected %s to reject approval, got %q", key, action)
 		}

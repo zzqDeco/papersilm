@@ -301,6 +301,41 @@ func TestExecutionToTranscriptEntriesBuildsApprovalDecisionMessages(t *testing.T
 	}
 }
 
+func TestExecutionToTranscriptEntriesBuildsPermissionDecisionMessages(t *testing.T) {
+	t.Parallel()
+
+	before := protocol.SessionSnapshot{
+		Meta: protocol.SessionMeta{SessionID: "sess_test", State: protocol.SessionStateAwaitingApproval, ApprovalPending: true},
+		Approval: &protocol.ApprovalRequest{
+			ActiveRequestID: "req_1",
+			Requests: []protocol.PermissionRequest{
+				{
+					RequestID:  "req_1",
+					Tool:       string(protocol.NodeKindWorkspaceCommand),
+					Title:      "Run command",
+					Command:    "go test ./...",
+					TargetPath: "",
+				},
+			},
+		},
+	}
+	after := before
+	after.Meta.State = protocol.SessionStateCompleted
+	after.Meta.ApprovalPending = false
+	after.Approval = nil
+
+	entries := executionToTranscriptEntries("/permission reject node -- use unit tests only", before, after, "Permission decision: reject")
+	if len(entries) == 0 {
+		t.Fatalf("expected permission decision entry")
+	}
+	if entries[0].Subtype != transcriptSubtypeApprovalRejected {
+		t.Fatalf("expected rejected subtype, got %q", entries[0].Subtype)
+	}
+	if !strings.Contains(entries[0].Body, "Run command") || !strings.Contains(entries[0].Body, "feedback: use unit tests only") {
+		t.Fatalf("expected command and feedback in body, got %q", entries[0].Body)
+	}
+}
+
 func TestExecutionToTranscriptEntriesSummarizesPendingApproval(t *testing.T) {
 	t.Parallel()
 
@@ -356,41 +391,41 @@ func TestApprovalRequiredRendersDecisionOptions(t *testing.T) {
 	model.reflow()
 
 	view := model.renderMainScreen()
-	for _, want := range []string{"Approval required", "❯ Approve", "Inspect tasks", "Keep planning", "Y/Enter approve"} {
+	for _, want := range []string{"Review plan checkpoint", "❯ Yes", "Yes, during this session", "No", "Tab add feedback"} {
 		if !strings.Contains(view, want) {
 			t.Fatalf("expected approval decision option %q in view:\n%s", want, view)
 		}
 	}
 }
 
-func TestApprovalContextDoesNotSwallowDraftTyping(t *testing.T) {
+func TestApprovalContextOwnsKeyboardButPreservesDraft(t *testing.T) {
 	t.Parallel()
 
 	model := newTestTUIModel()
 	model.snapshot.Meta.State = protocol.SessionStateAwaitingApproval
 	model.snapshot.Meta.ApprovalPending = true
-	if !hasKeyContext(model.keyContexts(), tuiui.ContextApproval) {
-		t.Fatalf("expected approval context for empty input")
+	if !hasKeyContext(model.keyContexts(), tuiui.ContextConfirmation) {
+		t.Fatalf("expected confirmation context")
 	}
 	gotModel, _ := model.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("h")})
 	updated := gotModel.(*tuiModel)
-	if updated.input.Value() != "h" {
-		t.Fatalf("expected first typed character to remain visible while approval is pending, got %q", updated.input.Value())
+	if updated.input.Value() != "" {
+		t.Fatalf("expected approval context to keep chat input unchanged, got %q", updated.input.Value())
 	}
 	model = updated
 
 	model.input.SetValue("keep typing")
-	if hasKeyContext(model.keyContexts(), tuiui.ContextApproval) {
-		t.Fatalf("did not expect approval context to swallow draft input")
+	if !hasKeyContext(model.keyContexts(), tuiui.ContextConfirmation) {
+		t.Fatalf("expected confirmation context to stay active while draft is preserved")
 	}
 	gotModel, _ = model.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("!")})
 	updated = gotModel.(*tuiModel)
-	if updated.input.Value() != "keep typing!" {
-		t.Fatalf("expected normal typing to remain visible while approval is pending, got %q", updated.input.Value())
+	if updated.input.Value() != "keep typing" {
+		t.Fatalf("expected chat draft to be preserved while confirmation owns focus, got %q", updated.input.Value())
 	}
 	view := updated.renderMainScreen()
-	if !strings.Contains(view, "Draft active") {
-		t.Fatalf("expected approval panel to explain draft mode, got:\n%s", view)
+	if !strings.Contains(view, "Permission request active") {
+		t.Fatalf("expected main status to explain active permission request, got:\n%s", view)
 	}
 }
 
@@ -404,8 +439,8 @@ func TestApprovalShortcutSelection(t *testing.T) {
 	if cmd == nil {
 		t.Fatalf("expected rejection command")
 	}
-	if model.approvalSelection != approvalOptionIndex(model.approvalOptions(), tuiApprovalReject) {
-		t.Fatalf("expected r to select keep planning, got %d", model.approvalSelection)
+	if model.approvalSelection != approvalOptionIndex(model.approvalOptions(), tuiPermissionReject) {
+		t.Fatalf("expected r to select reject, got %d", model.approvalSelection)
 	}
 	if !model.busy {
 		t.Fatalf("expected approval action to enter busy state")

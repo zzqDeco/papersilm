@@ -94,6 +94,14 @@ func (s *Store) executionStatePath(sessionID string) string {
 	return filepath.Join(s.SessionDir(sessionID), "execution_state.json")
 }
 
+func (s *Store) pendingApprovalPath(sessionID string) string {
+	return filepath.Join(s.SessionDir(sessionID), "pending_approval.json")
+}
+
+func (s *Store) permissionRulesPath(sessionID string) string {
+	return filepath.Join(s.SessionDir(sessionID), "permission_rules.json")
+}
+
 func (s *Store) digestsDir(sessionID string) string {
 	return filepath.Join(s.SessionDir(sessionID), "digests")
 }
@@ -230,6 +238,57 @@ func (s *Store) LoadExecutionState(sessionID string) (*protocol.ExecutionState, 
 		return nil, err
 	}
 	return &state, nil
+}
+
+func (s *Store) SavePendingApproval(sessionID string, approval protocol.ApprovalRequest) error {
+	return s.saveJSON(s.pendingApprovalPath(sessionID), approval)
+}
+
+func (s *Store) DeletePendingApproval(sessionID string) error {
+	err := os.Remove(s.pendingApprovalPath(sessionID))
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	return err
+}
+
+func (s *Store) LoadPendingApproval(sessionID string) (*protocol.ApprovalRequest, error) {
+	var approval protocol.ApprovalRequest
+	err := s.loadJSON(s.pendingApprovalPath(sessionID), &approval)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &approval, nil
+}
+
+func (s *Store) SavePermissionRules(sessionID string, rules []protocol.PermissionRule) error {
+	return s.saveJSON(s.permissionRulesPath(sessionID), rules)
+}
+
+func (s *Store) LoadPermissionRules(sessionID string) ([]protocol.PermissionRule, error) {
+	var rules []protocol.PermissionRule
+	err := s.loadJSON(s.permissionRulesPath(sessionID), &rules)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil, nil
+	}
+	return rules, err
+}
+
+func (s *Store) AddPermissionRule(sessionID string, rule protocol.PermissionRule) error {
+	rules, err := s.LoadPermissionRules(sessionID)
+	if err != nil {
+		return err
+	}
+	for _, existing := range rules {
+		if permissionRuleEquivalent(existing, rule) {
+			return nil
+		}
+	}
+	rules = append(rules, rule)
+	return s.SavePermissionRules(sessionID, rules)
 }
 
 func (s *Store) SaveDigest(sessionID string, digest protocol.PaperDigest) error {
@@ -618,6 +677,10 @@ func (s *Store) Snapshot(sessionID string) (protocol.SessionSnapshot, error) {
 	if err != nil {
 		return protocol.SessionSnapshot{}, err
 	}
+	approval, err := s.LoadPendingApproval(sessionID)
+	if err != nil {
+		return protocol.SessionSnapshot{}, err
+	}
 	digests, err := s.LoadDigests(sessionID)
 	if err != nil {
 		return protocol.SessionSnapshot{}, err
@@ -660,6 +723,7 @@ func (s *Store) Snapshot(sessionID string) (protocol.SessionSnapshot, error) {
 		Workspace:      workspace,
 		Sources:        sources,
 		Plan:           plan,
+		Approval:       approval,
 		TaskBoard:      board,
 		Execution:      execution,
 		Digests:        digests,
@@ -691,6 +755,9 @@ func (s *Store) InvalidatePlanState(sessionID string) error {
 	if err := os.RemoveAll(s.checkpointsDir(sessionID)); err != nil && !errors.Is(err, os.ErrNotExist) {
 		return err
 	}
+	if err := s.DeletePendingApproval(sessionID); err != nil {
+		return err
+	}
 	if err := os.MkdirAll(s.digestsDir(sessionID), 0o755); err != nil {
 		return err
 	}
@@ -715,6 +782,16 @@ func (s *Store) InvalidatePlanState(sessionID string) error {
 	}
 	meta.UpdatedAt = time.Now().UTC()
 	return s.SaveMeta(meta)
+}
+
+func permissionRuleEquivalent(a, b protocol.PermissionRule) bool {
+	return a.Tool == b.Tool &&
+		a.Operation == b.Operation &&
+		a.Scope == b.Scope &&
+		a.TargetPath == b.TargetPath &&
+		a.Directory == b.Directory &&
+		a.CommandPrefix == b.CommandPrefix &&
+		a.NodeKind == b.NodeKind
 }
 
 func (s *Store) CheckPointStore(sessionID string) adk.CheckPointStore {
