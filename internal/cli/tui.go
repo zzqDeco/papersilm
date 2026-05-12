@@ -2044,10 +2044,49 @@ func activitySummary(entry protocol.TranscriptEntry, stats map[string]int, count
 			parts = append(parts, elapsed.String())
 		}
 	}
-	if last != "" && statText == "" && shouldShowActivityDetail(last) && (count == 1 || isFailureActivityDetail(last)) {
-		parts = append(parts, truncateRight(last, 72))
+	if detail, ok := activityDisplayDetail(last); ok && statText == "" && (count == 1 || isFailureActivityDetail(last)) {
+		parts = append(parts, truncateRight(detail, 72))
 	}
 	return strings.Join(parts, " · ")
+}
+
+func activityDisplayDetail(detail string) (string, bool) {
+	detail = strings.TrimSpace(detail)
+	if detail == "" {
+		return "", false
+	}
+	if isFailureActivityDetail(detail) {
+		if failure := failureActivityDetail(detail); failure != "" {
+			return failure, true
+		}
+		return detail, true
+	}
+	if !shouldShowActivityDetail(detail) {
+		return "", false
+	}
+	return detail, true
+}
+
+func failureActivityDetail(detail string) string {
+	parts := strings.Split(detail, "·")
+	for _, part := range parts {
+		part = strings.TrimSpace(part)
+		lower := strings.ToLower(part)
+		if strings.HasPrefix(lower, "error=") {
+			msg := strings.TrimSpace(part[len("error="):])
+			if msg != "" {
+				return "failed: " + msg
+			}
+		}
+	}
+	for _, part := range parts {
+		part = strings.TrimSpace(part)
+		lower := strings.ToLower(part)
+		if strings.Contains(lower, "failed") && !strings.Contains(lower, "tool=") && !strings.Contains(lower, "node=") {
+			return part
+		}
+	}
+	return ""
 }
 
 func isFailureActivityDetail(detail string) bool {
