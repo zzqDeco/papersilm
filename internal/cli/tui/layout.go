@@ -4,6 +4,7 @@ import (
 	"strings"
 
 	"github.com/charmbracelet/lipgloss"
+	"github.com/muesli/reflow/truncate"
 )
 
 // Drawer renders Claude Code-style bottom overlays: one neutral divider,
@@ -220,17 +221,13 @@ func overlayTop(base string, reservedBottom, overlayHeight int) int {
 
 func truncateRight(value string, width int) string {
 	value = strings.ReplaceAll(value, "\n", " ")
-	if width <= 0 || lipgloss.Width(value) <= width {
+	if width <= 0 {
+		return ""
+	}
+	if lipgloss.Width(value) <= width {
 		return value
 	}
-	if width <= 1 {
-		return value[:width]
-	}
-	runes := []rune(value)
-	if len(runes) <= width-1 {
-		return value
-	}
-	return string(runes[:width-1]) + "…"
+	return truncate.StringWithTail(value, uint(width), "…")
 }
 
 func padRight(value string, width int) string {
