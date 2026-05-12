@@ -106,3 +106,21 @@ func TestRenderTimelineApprovedUsesDecisionMarker(t *testing.T) {
 		t.Fatalf("expected short approved decision to render as compact row, got %q", rendered)
 	}
 }
+
+func TestRenderTimelineApprovedUsesBlockWhenBodyDoesNotFit(t *testing.T) {
+	t.Parallel()
+
+	body := "Approved the current checkpoint. 1 approval item(s) were released. Execution completed."
+	rendered := RenderTimelineItem(TimelineItem{
+		Kind:    TimelineItemApproval,
+		Subtype: TimelineSubtypeApprovalApproved,
+		Title:   "Approved",
+		Body:    body,
+	}, 80, plainTimelineRenderer())
+	if !strings.Contains(rendered, "Execution") || !strings.Contains(rendered, "completed.") {
+		t.Fatalf("expected long approved body to remain visible, got %q", rendered)
+	}
+	if !strings.Contains(rendered, "\n") {
+		t.Fatalf("expected long approved body to use block path, got %q", rendered)
+	}
+}

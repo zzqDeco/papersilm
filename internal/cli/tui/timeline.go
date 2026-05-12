@@ -122,11 +122,12 @@ func wrapTimelineText(text string, width int) string {
 func renderTimelineDecision(item TimelineItem, width, bodyWidth int, styles TimelineStyles) string {
 	switch item.Subtype {
 	case TimelineSubtypeApprovalApproved:
-		if shouldRenderCompactDecision(item.Body) {
-			return renderCompactTimelineDecision(styles.SuccessLabel, styles.FooterMuted, decisionTitle("✓", firstTimelineText(item.Title, "Approved")), item.Body, width)
+		title := decisionTitle("✓", firstTimelineText(item.Title, "Approved"))
+		if shouldRenderCompactDecision(item.Body, title, width) {
+			return renderCompactTimelineDecision(styles.SuccessLabel, styles.FooterMuted, title, item.Body, width)
 		}
 		body := styles.Body.Width(bodyWidth).Render(item.Body)
-		header := styles.SuccessLabel.Render(decisionTitle("✓", firstTimelineText(item.Title, "Approved")))
+		header := styles.SuccessLabel.Render(title)
 		return styles.SuccessShell.Render(header + "\n" + body)
 	case TimelineSubtypeApprovalRejected:
 		if item.Compact {
@@ -145,12 +146,16 @@ func renderTimelineDecision(item TimelineItem, width, bodyWidth int, styles Time
 	}
 }
 
-func shouldRenderCompactDecision(body string) bool {
+func shouldRenderCompactDecision(body string, title string, width int) bool {
 	body = strings.TrimSpace(body)
 	if body == "" {
 		return true
 	}
-	return !strings.Contains(body, "\n") && lipgloss.Width(body) <= 96
+	if strings.Contains(body, "\n") {
+		return false
+	}
+	available := max(0, width-lipgloss.Width(title)-3)
+	return lipgloss.Width(body) <= available
 }
 
 func decisionTitle(icon, title string) string {
