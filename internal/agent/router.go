@@ -223,9 +223,6 @@ func (a *Agent) Approve(ctx context.Context, store *storage.Store, sink EventSin
 	if err := store.SaveMeta(meta); err != nil {
 		return protocol.RunResult{}, err
 	}
-	if err := store.DeletePendingApproval(sessionID); err != nil {
-		return protocol.RunResult{}, err
-	}
 	return a.runDAGExecution(ctx, store, sink, sessionID, meta, *planResult, execState, meta.LastTask, meta.Language, meta.Style)
 }
 
