@@ -478,7 +478,7 @@ func (a *Agent) executeWorkspaceEdit(ctx context.Context, store *storage.Store, 
 	} else if err != nil {
 		return "", err
 	}
-	content, err := a.tools.ReadWorkspaceFile(store, intent.targetPath)
+	content, _, err := a.readWorkspaceFileForEdit(store, intent.targetPath)
 	if err != nil {
 		return "", err
 	}

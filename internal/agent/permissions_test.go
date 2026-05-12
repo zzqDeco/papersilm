@@ -142,6 +142,78 @@ func TestExecuteWorkspaceEditRequiresApprovedPreview(t *testing.T) {
 	}
 }
 
+func TestApplyWorkspaceEditPreviewCanCreateNewFile(t *testing.T) {
+	t.Parallel()
+
+	cfg := config.Default()
+	cfg.BaseDir = t.TempDir()
+	store := storage.New(cfg.BaseDir)
+	if err := store.Ensure(); err != nil {
+		t.Fatalf("Ensure: %v", err)
+	}
+	agent := New(tools.New(pipeline.New(cfg)), cfg)
+	summary, applied, err := agent.applyWorkspaceEditPreview(store, workspaceIntent{}, protocol.PermissionRequest{
+		TargetPath: "notes.md",
+		Preview: protocol.PermissionPreview{
+			Kind:       "diff",
+			Summary:    "Create notes.md",
+			NewContent: "hello\n",
+		},
+	})
+	if err != nil {
+		t.Fatalf("applyWorkspaceEditPreview: %v", err)
+	}
+	if !applied {
+		t.Fatalf("expected preview to be applied")
+	}
+	if summary != "Create notes.md" {
+		t.Fatalf("unexpected summary %q", summary)
+	}
+	content, err := store.ReadWorkspaceFile("notes.md")
+	if err != nil {
+		t.Fatalf("ReadWorkspaceFile: %v", err)
+	}
+	if content != "hello\n" {
+		t.Fatalf("unexpected file content %q", content)
+	}
+}
+
+func TestApplyWorkspaceEditPreviewConflictsWhenNewFileWasCreated(t *testing.T) {
+	t.Parallel()
+
+	cfg := config.Default()
+	cfg.BaseDir = t.TempDir()
+	store := storage.New(cfg.BaseDir)
+	if err := store.Ensure(); err != nil {
+		t.Fatalf("Ensure: %v", err)
+	}
+	if err := os.WriteFile(storePath(t, store, "notes.md"), []byte("existing\n"), 0o644); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+	agent := New(tools.New(pipeline.New(cfg)), cfg)
+	_, applied, err := agent.applyWorkspaceEditPreview(store, workspaceIntent{}, protocol.PermissionRequest{
+		TargetPath: "notes.md",
+		Preview: protocol.PermissionPreview{
+			Kind:       "diff",
+			Summary:    "Create notes.md",
+			NewContent: "hello\n",
+		},
+	})
+	if !applied {
+		t.Fatalf("expected preview path to be handled")
+	}
+	if err == nil || !strings.Contains(err.Error(), "file was created since approval preview was created") {
+		t.Fatalf("expected conflict error, got %v", err)
+	}
+	content, err := store.ReadWorkspaceFile("notes.md")
+	if err != nil {
+		t.Fatalf("ReadWorkspaceFile: %v", err)
+	}
+	if content != "existing\n" {
+		t.Fatalf("expected file to remain unchanged, got %q", content)
+	}
+}
+
 func storePath(t *testing.T, store *storage.Store, path string) string {
 	t.Helper()
 	resolved, err := store.ResolveWorkspacePath(path)
