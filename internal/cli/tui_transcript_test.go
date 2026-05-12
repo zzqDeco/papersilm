@@ -130,6 +130,9 @@ func TestProgressEventsGroupIntoSingleActivityRow(t *testing.T) {
 	if model.items[0].Kind != tuiItemProgress || !containsString(model.items[0].Body, "2 updates") {
 		t.Fatalf("expected grouped progress body, got %+v", model.items[0])
 	}
+	if containsString(model.items[0].Body, "node execution completed") {
+		t.Fatalf("expected grouped activity to hide low-value progress detail, got %+v", model.items[0])
+	}
 }
 
 func TestWorkspaceActivitySummarizesToolsInsteadOfUpdates(t *testing.T) {

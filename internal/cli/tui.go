@@ -2044,10 +2044,31 @@ func activitySummary(entry protocol.TranscriptEntry, stats map[string]int, count
 			parts = append(parts, elapsed.String())
 		}
 	}
-	if last != "" && statText == "" {
+	if last != "" && statText == "" && count == 1 && shouldShowActivityDetail(last) {
 		parts = append(parts, truncateRight(last, 72))
 	}
 	return strings.Join(parts, " · ")
+}
+
+func shouldShowActivityDetail(detail string) bool {
+	text := strings.ToLower(strings.TrimSpace(detail))
+	if text == "" {
+		return false
+	}
+	lowValue := []string{
+		"node execution started",
+		"node execution completed",
+		"started",
+		"completed",
+		"tool=",
+		"node=",
+	}
+	for _, marker := range lowValue {
+		if strings.Contains(text, marker) {
+			return false
+		}
+	}
+	return true
 }
 
 func activityVerb(entry protocol.TranscriptEntry, stats map[string]int) string {
