@@ -24,6 +24,23 @@ func TestTranscriptScreenFreezesEntries(t *testing.T) {
 	}
 }
 
+func TestTranscriptScreenReportsUnseenEntries(t *testing.T) {
+	t.Parallel()
+
+	var screen TranscriptScreen
+	screen.Open(2)
+	if got := screen.FrozenLen(); got != 2 {
+		t.Fatalf("expected frozen len, got %d", got)
+	}
+	if got := screen.UnseenCount(5); got != 3 {
+		t.Fatalf("expected unseen count, got %d", got)
+	}
+	screen.Close()
+	if got := screen.UnseenCount(5); got != 0 {
+		t.Fatalf("expected closed screen to report no unseen entries, got %d", got)
+	}
+}
+
 func TestTranscriptScreenSearchState(t *testing.T) {
 	t.Parallel()
 

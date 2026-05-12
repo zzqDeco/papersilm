@@ -37,6 +37,20 @@ func (s *TranscriptScreen) Entries(entries []protocol.TranscriptEntry) []protoco
 	return append([]protocol.TranscriptEntry(nil), entries[:limit]...)
 }
 
+func (s *TranscriptScreen) FrozenLen() int {
+	if !s.active {
+		return 0
+	}
+	return s.frozenLen
+}
+
+func (s *TranscriptScreen) UnseenCount(totalEntries int) int {
+	if !s.active {
+		return 0
+	}
+	return max(0, totalEntries-s.frozenLen)
+}
+
 func (s *TranscriptScreen) OpenSearch() {
 	s.searchOpen = true
 	s.matches = nil
