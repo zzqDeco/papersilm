@@ -6,6 +6,7 @@ type MessageViewport struct {
 	width    int
 	rendered []string
 	keys     []string
+	versions []string
 }
 
 type ViewportAnchor struct {
@@ -19,10 +20,16 @@ type viewportKeyOccurrence struct {
 	occurrence int
 }
 
+type viewportCacheEntry struct {
+	rendered string
+	version  string
+}
+
 func (v *MessageViewport) Reset() {
 	v.width = 0
 	v.rendered = nil
 	v.keys = nil
+	v.versions = nil
 }
 
 func (v *MessageViewport) Content(width, count int, render func(index int, width int) string) string {
@@ -35,6 +42,7 @@ func (v *MessageViewport) Content(width, count int, render func(index int, width
 	}
 	v.width = width
 	v.keys = nil
+	v.versions = nil
 	v.rendered = make([]string, 0, count)
 	for i := 0; i < count; i++ {
 		v.rendered = append(v.rendered, render(i, width))
@@ -43,14 +51,21 @@ func (v *MessageViewport) Content(width, count int, render func(index int, width
 }
 
 func (v *MessageViewport) ContentByKey(width int, keys []string, render func(index int, width int) string) string {
+	return v.ContentByKeyVersion(width, keys, keys, render)
+}
+
+func (v *MessageViewport) ContentByKeyVersion(width int, keys []string, versions []string, render func(index int, width int) string) string {
 	if len(keys) == 0 {
 		v.Reset()
 		return ""
 	}
-	if v.width == width && sameStrings(v.keys, keys) && len(v.rendered) == len(keys) {
+	if len(versions) != len(keys) {
+		versions = keys
+	}
+	if v.width == width && sameStrings(v.keys, keys) && sameStrings(v.versions, versions) && len(v.rendered) == len(keys) {
 		return strings.Join(v.rendered, "\n\n")
 	}
-	previous := make(map[viewportKeyOccurrence]string, len(v.keys))
+	previous := make(map[viewportKeyOccurrence]viewportCacheEntry, len(v.keys))
 	if v.width == width {
 		seen := make(map[string]int, len(v.keys))
 		for i, key := range v.keys {
@@ -59,18 +74,26 @@ func (v *MessageViewport) ContentByKey(width int, keys []string, render func(ind
 			}
 			occurrence := seen[key]
 			seen[key]++
-			previous[viewportKeyOccurrence{key: key, occurrence: occurrence}] = v.rendered[i]
+			version := ""
+			if i < len(v.versions) {
+				version = v.versions[i]
+			}
+			previous[viewportKeyOccurrence{key: key, occurrence: occurrence}] = viewportCacheEntry{
+				rendered: v.rendered[i],
+				version:  version,
+			}
 		}
 	}
 	v.width = width
 	v.keys = append(v.keys[:0], keys...)
+	v.versions = append(v.versions[:0], versions...)
 	v.rendered = make([]string, 0, len(keys))
 	seen := make(map[string]int, len(keys))
 	for i, key := range keys {
 		occurrence := seen[key]
 		seen[key]++
-		if cached, ok := previous[viewportKeyOccurrence{key: key, occurrence: occurrence}]; ok {
-			v.rendered = append(v.rendered, cached)
+		if cached, ok := previous[viewportKeyOccurrence{key: key, occurrence: occurrence}]; ok && cached.version == versions[i] {
+			v.rendered = append(v.rendered, cached.rendered)
 			continue
 		}
 		v.rendered = append(v.rendered, render(i, width))
@@ -82,7 +105,7 @@ func (v *MessageViewport) Append(width int, previousCount int, rendered string) 
 	if previousCount < 0 {
 		return "", false
 	}
-	if v.width != width || len(v.rendered) != previousCount || len(v.keys) > 0 {
+	if v.width != width || len(v.rendered) != previousCount || len(v.keys) > 0 || len(v.versions) > 0 {
 		return "", false
 	}
 	v.rendered = append(v.rendered, rendered)
