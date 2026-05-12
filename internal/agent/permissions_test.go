@@ -275,3 +275,32 @@ func TestInferWorkspaceIntentDoesNotDefaultEditsToReadme(t *testing.T) {
 		t.Fatalf("expected ambiguous edit target to stay empty, got %q", intent.targetPath)
 	}
 }
+
+func TestInferWorkspaceIntentCanonicalizesExplicitPathMention(t *testing.T) {
+	t.Parallel()
+
+	files := []protocol.WorkspaceFile{{Path: "README.md"}, {Path: "docs/Guide.md"}}
+	intent := inferWorkspaceIntent("update `readme.md`", files)
+	if intent.kind != protocol.NodeKindWorkspaceEdit {
+		t.Fatalf("expected edit intent, got %s", intent.kind)
+	}
+	if intent.targetPath != "README.md" {
+		t.Fatalf("expected indexed path README.md, got %q", intent.targetPath)
+	}
+
+	intent = inferWorkspaceIntent("update docs/guide.md", files)
+	if intent.kind != protocol.NodeKindWorkspaceEdit {
+		t.Fatalf("expected edit intent, got %s", intent.kind)
+	}
+	if intent.targetPath != "docs/Guide.md" {
+		t.Fatalf("expected indexed path docs/Guide.md, got %q", intent.targetPath)
+	}
+
+	intent = inferWorkspaceIntent("create notes.md", files)
+	if intent.kind != protocol.NodeKindWorkspaceEdit {
+		t.Fatalf("expected edit intent, got %s", intent.kind)
+	}
+	if intent.targetPath != "notes.md" {
+		t.Fatalf("expected raw new-file target, got %q", intent.targetPath)
+	}
+}

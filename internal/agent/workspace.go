@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"path"
 	"path/filepath"
 	"regexp"
 	"sort"
@@ -285,14 +286,18 @@ func inferWorkspaceIntent(goal string, files []protocol.WorkspaceFile) workspace
 func findWorkspaceTargetPath(goal string, files []protocol.WorkspaceFile, allowDefault bool) string {
 	lower := strings.ToLower(goal)
 	if explicit := extractWorkspacePathMention(goal); explicit != "" {
+		if indexed := matchIndexedWorkspacePath(explicit, files); indexed != "" {
+			return indexed
+		}
 		return explicit
 	}
 	best := ""
 	bestScore := 0
 	for _, file := range files {
 		base := strings.ToLower(filepathBase(file.Path))
+		filePath := strings.ToLower(file.Path)
 		score := 0
-		if strings.Contains(lower, file.Path) {
+		if strings.Contains(lower, filePath) {
 			score += 10
 		}
 		if base != "" && strings.Contains(lower, base) {
@@ -314,6 +319,45 @@ func findWorkspaceTargetPath(goal string, files []protocol.WorkspaceFile, allowD
 		}
 	}
 	return best
+}
+
+func matchIndexedWorkspacePath(explicit string, files []protocol.WorkspaceFile) string {
+	key := workspacePathMatchKey(explicit)
+	if key == "" {
+		return ""
+	}
+	for _, file := range files {
+		if workspacePathMatchKey(file.Path) == key {
+			return file.Path
+		}
+	}
+	if strings.Contains(key, "/") {
+		return ""
+	}
+	match := ""
+	for _, file := range files {
+		if workspacePathMatchKey(filepathBase(file.Path)) != key {
+			continue
+		}
+		if match != "" {
+			return ""
+		}
+		match = file.Path
+	}
+	return match
+}
+
+func workspacePathMatchKey(value string) string {
+	value = strings.TrimSpace(strings.ReplaceAll(value, "\\", "/"))
+	if value == "" {
+		return ""
+	}
+	value = path.Clean(value)
+	if value == "." {
+		return ""
+	}
+	value = strings.TrimPrefix(value, "./")
+	return strings.ToLower(value)
 }
 
 func extractWorkspacePathMention(goal string) string {
