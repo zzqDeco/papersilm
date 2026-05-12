@@ -41,6 +41,8 @@ type FullscreenLayout struct {
 	Pane          string
 	PromptOverlay string
 	ScrollPill    string
+	Modal         string
+	ModalPeekRows int
 }
 
 func RenderFullscreenLayout(layout FullscreenLayout) string {
@@ -72,6 +74,13 @@ func RenderFullscreenLayout(layout FullscreenLayout) string {
 	if promptOverlayHeight > 0 {
 		top := overlayTop(base, bottomHeight, promptOverlayHeight)
 		base = OverlayAt(base, layout.PromptOverlay, top, lipgloss.Left, width)
+	}
+	if strings.TrimSpace(layout.Modal) != "" {
+		peek := layout.ModalPeekRows
+		if peek <= 0 {
+			peek = 2
+		}
+		base = OverlayBottomWithPeek(base, layout.Modal, width, peek)
 	}
 	return base
 }

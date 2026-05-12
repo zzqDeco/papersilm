@@ -88,3 +88,33 @@ func TestRenderFullscreenLayoutSlots(t *testing.T) {
 		t.Fatalf("expected layout to keep base height, got %d lines: %q", got, rendered)
 	}
 }
+
+func TestRenderFullscreenLayoutModalDrawsLastWithPeek(t *testing.T) {
+	t.Parallel()
+
+	rendered := RenderFullscreenLayout(FullscreenLayout{
+		Width:         32,
+		Header:        "header",
+		StickyHeader:  "sticky",
+		Scrollable:    strings.Join([]string{"m1", "m2", "m3", "m4"}, "\n"),
+		Bottom:        strings.Join([]string{"input", "footer"}, "\n"),
+		PromptOverlay: "suggestion",
+		ScrollPill:    "jump",
+		Modal:         strings.Join([]string{"modal", "row1", "row2", "row3", "row4", "row5", "row6"}, "\n"),
+		ModalPeekRows: 2,
+	})
+
+	lines := strings.Split(rendered, "\n")
+	if len(lines) != 8 {
+		t.Fatalf("expected modal overlay to keep base height, got %d lines: %q", len(lines), rendered)
+	}
+	if !strings.Contains(lines[0], "header") || !strings.Contains(lines[1], "sticky") {
+		t.Fatalf("expected modal to preserve two-row transcript peek, got %q", rendered)
+	}
+	if !strings.Contains(rendered, "modal") || strings.Contains(rendered, "input") || strings.Contains(rendered, "suggestion") {
+		t.Fatalf("expected modal to draw over prompt overlay and bottom slot, got %q", rendered)
+	}
+	if strings.Contains(rendered, "row6") {
+		t.Fatalf("expected modal to clip to available height, got %q", rendered)
+	}
+}
