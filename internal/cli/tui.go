@@ -2093,8 +2093,20 @@ func failureActivityDetail(detail string) string {
 }
 
 func isFailureActivityDetail(detail string) bool {
-	text := strings.ToLower(strings.TrimSpace(detail))
-	return strings.Contains(text, "failed") || strings.Contains(text, "error")
+	for _, part := range strings.Split(detail, "·") {
+		text := strings.ToLower(strings.TrimSpace(part))
+		switch {
+		case text == "failed":
+			return true
+		case strings.HasPrefix(text, "failed "):
+			return true
+		case strings.Contains(text, "execution failed"):
+			return true
+		case strings.HasPrefix(text, "error="):
+			return true
+		}
+	}
+	return false
 }
 
 func shouldShowActivityDetail(detail string) bool {

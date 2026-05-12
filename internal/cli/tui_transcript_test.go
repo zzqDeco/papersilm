@@ -254,6 +254,37 @@ func TestFailedProgressWithCountedToolKeepsErrorVisible(t *testing.T) {
 	}
 }
 
+func TestProgressNodeNameContainingErrorIsNotFailure(t *testing.T) {
+	t.Parallel()
+
+	model := newTestTUIModel()
+	model.items = nil
+	model.messageViewport.Reset()
+
+	model.appendTranscript(protocol.TranscriptEntry{
+		ID:           "p1",
+		SessionID:    "sess_test",
+		Type:         protocol.TranscriptEntryProgress,
+		Subtype:      string(protocol.EventProgress),
+		Title:        "Progress",
+		Body:         "started · tool=workspace_inspect · node=read_error_logs",
+		Visibility:   protocol.TranscriptVisibilityActivity,
+		Presentation: protocol.TranscriptPresentationGrouped,
+		CreatedAt:    time.Now().UTC(),
+	}, false)
+
+	if len(model.items) != 1 {
+		t.Fatalf("expected one grouped activity item, got %+v", model.items)
+	}
+	body := model.items[0].Body
+	if !containsString(body, "1 read") {
+		t.Fatalf("expected normal tool summary, got %+v", model.items[0])
+	}
+	if containsString(body, "tool=") || containsString(body, "node=") {
+		t.Fatalf("did not expect node name containing error to expose metadata, got %+v", model.items[0])
+	}
+}
+
 func TestWorkspaceActivitySummarizesToolsInsteadOfUpdates(t *testing.T) {
 	t.Parallel()
 
