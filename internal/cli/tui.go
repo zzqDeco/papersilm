@@ -477,11 +477,7 @@ func (m *tuiModel) View() string {
 		return m.styles.background.Width(m.width).Height(m.height).Render(view)
 	}
 
-	main := m.renderMainScreen()
-	if m.modal.Kind != tuiModalNone {
-		return m.renderModalOver(main)
-	}
-	return m.styles.background.Width(m.width).Height(m.height).Render(main)
+	return m.styles.background.Width(m.width).Height(m.height).Render(m.renderMainScreen())
 }
 
 func (m *tuiModel) renderMainScreen() string {
@@ -505,6 +501,8 @@ func (m *tuiModel) renderMainScreen() string {
 		Pane:          m.renderPane(),
 		PromptOverlay: suggestions,
 		ScrollPill:    pill,
+		Modal:         m.renderModalBox(),
+		ModalPeekRows: 2,
 	})
 }
 
@@ -1494,6 +1492,9 @@ func (m *tuiModel) renderModal() string {
 }
 
 func (m *tuiModel) renderModalBox() string {
+	if m.modal.Kind == tuiModalNone {
+		return ""
+	}
 	width := max(40, m.width)
 	bodyWidth := max(20, width-4)
 	filter := m.modalIn.View()
