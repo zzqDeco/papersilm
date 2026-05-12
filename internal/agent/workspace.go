@@ -405,15 +405,12 @@ func (a *Agent) executeWorkspaceSearch(ctx context.Context, store *storage.Store
 	return strings.Join(lines, "\n"), nil
 }
 
-func (a *Agent) executeWorkspaceEdit(ctx context.Context, store *storage.Store, sessionID, goal string, intent workspaceIntent) (string, error) {
+func (a *Agent) executeWorkspaceEdit(ctx context.Context, store *storage.Store, sessionID, nodeID, goal string, intent workspaceIntent) (string, error) {
 	if strings.TrimSpace(intent.targetPath) == "" {
 		return "", fmt.Errorf("workspace edit task requires a concrete target file")
 	}
 	if approval, err := store.LoadPendingApproval(sessionID); err == nil && approval != nil {
-		for _, request := range approval.Requests {
-			if request.Tool != string(protocol.NodeKindWorkspaceEdit) || request.TargetPath != intent.targetPath {
-				continue
-			}
+		if request, ok := findWorkspaceEditPreviewRequest(approval, nodeID, intent.targetPath); ok {
 			if summary, applied, applyErr := a.applyWorkspaceEditPreview(store, intent, request); applied || applyErr != nil {
 				return summary, applyErr
 			}

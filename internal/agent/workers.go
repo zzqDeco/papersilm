@@ -105,7 +105,7 @@ func (a *Agent) executeNode(ctx context.Context, store *storage.Store, sessionID
 			return nil, err
 		}
 		intent := inferWorkspaceIntent(goal, files)
-		response, err := a.executeWorkspaceEdit(ctx, store, sessionID, goal, intent)
+		response, err := a.executeWorkspaceEdit(ctx, store, sessionID, node.ID, goal, intent)
 		if err != nil {
 			return nil, err
 		}

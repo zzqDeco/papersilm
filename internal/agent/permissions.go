@@ -345,7 +345,7 @@ func permissionAllowedByRule(request protocol.PermissionRequest, rule protocol.P
 		rel, err := filepath.Rel(rule.Directory, request.TargetPath)
 		return err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
 	case permissionScopeCommandPrefix:
-		return rule.CommandPrefix != "" && strings.HasPrefix(request.Command, rule.CommandPrefix)
+		return commandPrefixMatches(request.Command, rule.CommandPrefix)
 	case permissionScopeNode:
 		return rule.NodeKind != "" && rule.NodeKind == request.Tool
 	case permissionScopeSession:
@@ -355,6 +355,20 @@ func permissionAllowedByRule(request protocol.PermissionRequest, rule protocol.P
 	}
 }
 
+func commandPrefixMatches(command, prefix string) bool {
+	commandFields := strings.Fields(command)
+	prefixFields := strings.Fields(prefix)
+	if len(prefixFields) == 0 || len(commandFields) < len(prefixFields) {
+		return false
+	}
+	for i, field := range prefixFields {
+		if commandFields[i] != field {
+			return false
+		}
+	}
+	return true
+}
+
 func permissionAllowedBySessionRules(request protocol.PermissionRequest, rules []protocol.PermissionRule) bool {
 	for _, rule := range rules {
 		if permissionAllowedByRule(request, rule) {
@@ -362,6 +376,25 @@ func permissionAllowedBySessionRules(request protocol.PermissionRequest, rules [
 		}
 	}
 	return false
+}
+
+func findWorkspaceEditPreviewRequest(approval *protocol.ApprovalRequest, nodeID, targetPath string) (protocol.PermissionRequest, bool) {
+	if approval == nil || strings.TrimSpace(nodeID) == "" {
+		return protocol.PermissionRequest{}, false
+	}
+	for _, request := range approval.Requests {
+		if request.Tool != string(protocol.NodeKindWorkspaceEdit) {
+			continue
+		}
+		if request.NodeID != nodeID {
+			continue
+		}
+		if request.TargetPath != targetPath {
+			continue
+		}
+		return request, true
+	}
+	return protocol.PermissionRequest{}, false
 }
 
 func (a *Agent) DecidePermission(ctx context.Context, store *storage.Store, sink EventSink, sessionID string, decision protocol.PermissionDecision) (protocol.RunResult, error) {

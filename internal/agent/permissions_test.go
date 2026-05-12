@@ -45,6 +45,39 @@ func TestPermissionRuleMatchesScopedRequests(t *testing.T) {
 	}) {
 		t.Fatalf("expected command prefix rule to match")
 	}
+	if permissionAllowedByRule(protocol.PermissionRequest{
+		Tool:      string(protocol.NodeKindWorkspaceCommand),
+		Operation: "shell",
+		Command:   "go testify ./...",
+	}, protocol.PermissionRule{
+		Tool:          string(protocol.NodeKindWorkspaceCommand),
+		Operation:     "shell",
+		Scope:         permissionScopeCommandPrefix,
+		CommandPrefix: "go test",
+	}) {
+		t.Fatalf("did not expect byte-prefix command overlap to match")
+	}
+}
+
+func TestFindWorkspaceEditPreviewRequestRequiresNodeID(t *testing.T) {
+	t.Parallel()
+
+	approval := &protocol.ApprovalRequest{
+		Requests: []protocol.PermissionRequest{
+			{NodeID: "edit_a", Tool: string(protocol.NodeKindWorkspaceEdit), TargetPath: "README.md", Preview: protocol.PermissionPreview{Kind: "diff", NewContent: "A"}},
+			{NodeID: "edit_b", Tool: string(protocol.NodeKindWorkspaceEdit), TargetPath: "README.md", Preview: protocol.PermissionPreview{Kind: "diff", NewContent: "B"}},
+		},
+	}
+	request, ok := findWorkspaceEditPreviewRequest(approval, "edit_b", "README.md")
+	if !ok {
+		t.Fatalf("expected matching request")
+	}
+	if request.Preview.NewContent != "B" {
+		t.Fatalf("expected request bound to approved node, got %q", request.Preview.NewContent)
+	}
+	if _, ok := findWorkspaceEditPreviewRequest(approval, "", "README.md"); ok {
+		t.Fatalf("did not expect empty node id to match by path alone")
+	}
 }
 
 func TestCompactUnifiedDiffShowsChangedLines(t *testing.T) {
