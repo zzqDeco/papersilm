@@ -2044,8 +2044,11 @@ func activitySummary(entry protocol.TranscriptEntry, stats map[string]int, count
 			parts = append(parts, elapsed.String())
 		}
 	}
-	if detail, ok := activityDisplayDetail(last); ok && statText == "" && (count == 1 || isFailureActivityDetail(last)) {
-		parts = append(parts, truncateRight(detail, 72))
+	if detail, ok := activityDisplayDetail(last); ok {
+		failure := isFailureActivityDetail(last)
+		if failure || (statText == "" && count == 1) {
+			parts = append(parts, truncateRight(detail, 72))
+		}
 	}
 	return strings.Join(parts, " · ")
 }

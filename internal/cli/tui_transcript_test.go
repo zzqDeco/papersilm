@@ -215,6 +215,45 @@ func TestFailedProgressWithToolMetadataKeepsErrorVisible(t *testing.T) {
 	}
 }
 
+func TestFailedProgressWithCountedToolKeepsErrorVisible(t *testing.T) {
+	t.Parallel()
+
+	model := newTestTUIModel()
+	model.items = nil
+	model.messageViewport.Reset()
+
+	model.appendTranscript(protocol.TranscriptEntry{
+		ID:           "p1",
+		SessionID:    "sess_test",
+		Type:         protocol.TranscriptEntryProgress,
+		Subtype:      string(protocol.EventProgress),
+		Title:        "Progress",
+		Body:         "started · tool=workspace_command · node=run_tests",
+		Visibility:   protocol.TranscriptVisibilityActivity,
+		Presentation: protocol.TranscriptPresentationGrouped,
+		CreatedAt:    time.Now().UTC(),
+	}, false)
+	model.appendTranscript(protocol.TranscriptEntry{
+		ID:           "p2",
+		SessionID:    "sess_test",
+		Type:         protocol.TranscriptEntryProgress,
+		Subtype:      string(protocol.EventProgress),
+		Title:        "Progress",
+		Body:         "failed · tool=workspace_command · node=run_tests · error=exit status 1",
+		Visibility:   protocol.TranscriptVisibilityActivity,
+		Presentation: protocol.TranscriptPresentationGrouped,
+		CreatedAt:    time.Now().UTC(),
+	}, false)
+
+	if len(model.items) != 1 {
+		t.Fatalf("expected one grouped activity item, got %+v", model.items)
+	}
+	body := model.items[0].Body
+	if !containsString(body, "1 command") || !containsString(body, "failed: exit status 1") {
+		t.Fatalf("expected counted tool summary plus failure detail, got %+v", model.items[0])
+	}
+}
+
 func TestWorkspaceActivitySummarizesToolsInsteadOfUpdates(t *testing.T) {
 	t.Parallel()
 
