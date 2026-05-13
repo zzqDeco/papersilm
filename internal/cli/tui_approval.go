@@ -3,6 +3,7 @@ package cli
 import (
 	"context"
 	"fmt"
+	"path/filepath"
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -369,7 +370,7 @@ func permissionOptionRowDetail(option protocol.PermissionOption, request protoco
 	if detail == "" {
 		return target
 	}
-	return detail + " · " + target
+	return target + " · " + detail
 }
 
 func permissionOptionScopeTarget(option protocol.PermissionOption, request protocol.PermissionRequest) string {
@@ -382,17 +383,28 @@ func permissionOptionScopeTarget(option protocol.PermissionOption, request proto
 			return "path " + target
 		}
 	case "command-prefix":
-		if prefix := strings.TrimSpace(request.Preview.CommandPrefix); prefix != "" {
+		if prefix := firstNonEmpty(strings.TrimSpace(request.Preview.CommandPrefix), permissionShellCommandPrefix(request.Command)); prefix != "" {
 			return "prefix " + prefix
 		}
 	case "directory":
 		if target := strings.TrimSpace(request.TargetPath); target != "" {
-			return "directory " + target
+			return "directory " + filepath.Dir(target)
 		}
 	case "session":
 		return "session scope"
 	}
 	return ""
+}
+
+func permissionShellCommandPrefix(command string) string {
+	fields := strings.Fields(command)
+	if len(fields) == 0 {
+		return ""
+	}
+	if len(fields) == 1 {
+		return fields[0]
+	}
+	return strings.Join(fields[:2], " ")
 }
 
 func approvalFeedbackPrompt(option protocol.PermissionOption) string {
