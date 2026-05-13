@@ -360,6 +360,18 @@ func permissionOptionDetail(option protocol.PermissionOption) string {
 	return strings.Join(parts, " · ")
 }
 
+func approvalFeedbackPrompt(option protocol.PermissionOption) string {
+	label := firstNonEmpty(strings.TrimSpace(option.Label), strings.TrimSpace(option.Value), "Decision")
+	switch option.Feedback {
+	case tuiPermissionFeedbackReject:
+		return label + " and tell papersilm what to do differently"
+	case tuiPermissionFeedbackAccept:
+		return label + " and tell papersilm what to do next"
+	default:
+		return ""
+	}
+}
+
 func (m *tuiModel) handleApprovalFeedbackInput(msg tea.KeyMsg) bool {
 	if !m.approvalKeyboardActive() || m.approvalFeedbackMode == "" {
 		return false

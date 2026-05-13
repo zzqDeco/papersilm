@@ -18,20 +18,21 @@ type DecisionPanel struct {
 }
 
 type PermissionDialog struct {
-	Width        int
-	Title        string
-	Subtitle     string
-	Question     string
-	Summary      string
-	Preview      string
-	Rows         []ListRow
-	Feedback     string
-	FeedbackMode string
-	Hint         string
-	DividerStyle lipgloss.Style
-	TitleStyle   lipgloss.Style
-	MutedStyle   lipgloss.Style
-	BodyStyle    lipgloss.Style
+	Width         int
+	Title         string
+	Subtitle      string
+	Question      string
+	Summary       string
+	Preview       string
+	Rows          []ListRow
+	Feedback      string
+	FeedbackMode  string
+	FeedbackLabel string
+	Hint          string
+	DividerStyle  lipgloss.Style
+	TitleStyle    lipgloss.Style
+	MutedStyle    lipgloss.Style
+	BodyStyle     lipgloss.Style
 }
 
 func RenderDecisionPanel(panel DecisionPanel) string {
@@ -90,9 +91,12 @@ func RenderPermissionDialog(dialog PermissionDialog) string {
 		lines = append(lines, RenderListRows(dialog.Rows, bodyWidth)...)
 	}
 	if mode := strings.TrimSpace(dialog.FeedbackMode); mode != "" {
-		label := "Tell papersilm what to do next"
-		if mode == "reject" {
+		label := strings.TrimSpace(dialog.FeedbackLabel)
+		if label == "" && mode == "reject" {
 			label = "Tell papersilm what to do differently"
+		}
+		if label == "" {
+			label = "Tell papersilm what to do next"
 		}
 		value := strings.TrimRight(dialog.Feedback, "\n")
 		if value == "" {

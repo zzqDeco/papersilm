@@ -1325,20 +1325,21 @@ func (m *tuiModel) renderApprovalStickyPanel() string {
 		hint = "Enter submit with feedback · Ctrl+J newline · Esc rejects"
 	}
 	return tuiui.RenderPermissionDialog(tuiui.PermissionDialog{
-		Width:        width,
-		Title:        firstNonEmpty(request.Title, "Permission request"),
-		Subtitle:     request.Subtitle,
-		Question:     firstNonEmpty(request.Question, "Do you want papersilm to proceed?"),
-		Summary:      request.Summary,
-		Preview:      permissionPreviewText(request),
-		Rows:         rows,
-		Feedback:     m.approvalFeedback,
-		FeedbackMode: m.approvalFeedbackMode,
-		Hint:         hint,
-		DividerStyle: m.styles.paneDivider,
-		TitleStyle:   m.styles.approvalLabel,
-		MutedStyle:   m.styles.footerMuted,
-		BodyStyle:    m.styles.body,
+		Width:         width,
+		Title:         firstNonEmpty(request.Title, "Permission request"),
+		Subtitle:      request.Subtitle,
+		Question:      firstNonEmpty(request.Question, "Do you want papersilm to proceed?"),
+		Summary:       request.Summary,
+		Preview:       permissionPreviewText(request),
+		Rows:          rows,
+		Feedback:      m.approvalFeedback,
+		FeedbackMode:  m.approvalFeedbackMode,
+		FeedbackLabel: approvalFeedbackPrompt(options[m.approvalSelection]),
+		Hint:          hint,
+		DividerStyle:  m.styles.paneDivider,
+		TitleStyle:    m.styles.approvalLabel,
+		MutedStyle:    m.styles.footerMuted,
+		BodyStyle:     m.styles.body,
 	})
 }
 
