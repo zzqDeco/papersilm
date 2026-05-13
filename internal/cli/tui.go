@@ -2395,33 +2395,56 @@ func approvalDecisionTranscriptEntry(input string, before, after protocol.Sessio
 }
 
 func permissionDecisionBody(request protocol.PermissionRequest, value string, fields []string, feedback string) string {
-	parts := make([]string, 0, 4)
-	if request.Title != "" {
-		parts = append(parts, request.Title)
-	}
-	switch {
-	case request.TargetPath != "":
-		parts = append(parts, request.TargetPath)
-	case request.Command != "":
-		parts = append(parts, request.Command)
-	case request.Summary != "":
-		parts = append(parts, request.Summary)
-	}
-	if len(fields) > 0 && strings.TrimSpace(fields[0]) != "" {
-		parts = append(parts, "scope "+fields[0])
-	}
-	if strings.TrimSpace(feedback) != "" {
-		parts = append(parts, "feedback: "+strings.TrimSpace(feedback))
-	}
-	if len(parts) == 0 {
-		switch value {
-		case tuiPermissionReject:
-			return "Tool use rejected."
-		default:
-			return "Permission granted."
+	scope := permissionDecisionScope(fields)
+	feedback = strings.TrimSpace(feedback)
+	parts := make([]string, 0, 5)
+	switch value {
+	case tuiPermissionReject:
+		if feedback == "" {
+			return ""
 		}
+		parts = append(parts, "Rejected with feedback.")
+	case tuiPermissionAcceptSession:
+		parts = append(parts, "Allowed during this session.")
+	default:
+		parts = append(parts, "Allowed once.")
+	}
+	if target := permissionDecisionTarget(request); target != "" {
+		parts = append(parts, target)
+	}
+	if scope != "" {
+		parts = append(parts, "Scope: "+scope)
+	}
+	if feedback != "" {
+		parts = append(parts, "Feedback: "+feedback)
 	}
 	return strings.Join(parts, "\n")
+}
+
+func permissionDecisionScope(fields []string) string {
+	if len(fields) == 0 {
+		return ""
+	}
+	scope := strings.TrimSpace(fields[0])
+	if scope == "" {
+		return ""
+	}
+	return strings.ReplaceAll(scope, "-", " ")
+}
+
+func permissionDecisionTarget(request protocol.PermissionRequest) string {
+	switch {
+	case strings.TrimSpace(request.Command) != "":
+		return "Command: " + strings.TrimSpace(request.Command)
+	case strings.TrimSpace(request.TargetPath) != "":
+		return "File: " + strings.TrimSpace(request.TargetPath)
+	case strings.TrimSpace(request.Summary) != "":
+		return "Target: " + strings.TrimSpace(request.Summary)
+	case strings.TrimSpace(request.Title) != "":
+		return "Request: " + strings.TrimSpace(request.Title)
+	default:
+		return ""
+	}
 }
 
 func pendingApprovalTranscriptEntry(after protocol.SessionSnapshot) (protocol.TranscriptEntry, bool) {
