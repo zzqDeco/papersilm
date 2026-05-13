@@ -819,6 +819,106 @@ func TestPermissionPreviewTextShowsCommandContext(t *testing.T) {
 	}
 }
 
+func TestApprovalDetailsPaneShowsEditDiffAndDecisionOptions(t *testing.T) {
+	t.Parallel()
+
+	model := newTestTUIModel()
+	model.snapshot.Meta.State = protocol.SessionStateAwaitingApproval
+	model.snapshot.Meta.ApprovalPending = true
+	model.snapshot.Approval = &protocol.ApprovalRequest{
+		ActiveRequestID: "req_edit",
+		Requests: []protocol.PermissionRequest{
+			{
+				RequestID:  "req_edit",
+				Tool:       string(protocol.NodeKindWorkspaceEdit),
+				Operation:  "write",
+				Title:      "Edit file",
+				Question:   "Do you want to make this edit?",
+				TargetPath: "README.md",
+				Preview: protocol.PermissionPreview{
+					Kind: "diff",
+					Diff: "--- README.md\n+++ README.md\n+hello",
+				},
+				Options: []protocol.PermissionOption{
+					{Value: tuiPermissionAcceptOnce, Label: "Yes", Scope: "node", Feedback: tuiPermissionFeedbackAccept, Description: "Allow this edit once"},
+					{Value: tuiPermissionAcceptSession, Label: "Yes, during this session", Scope: "path", Feedback: tuiPermissionFeedbackAccept, Description: "Allow this file path for this session"},
+					{Value: tuiPermissionReject, Label: "No", Scope: "node", Feedback: tuiPermissionFeedbackReject, Description: "Reject this edit"},
+				},
+			},
+		},
+	}
+	model.approvalSelection = 1
+
+	model.openApprovalExplanation()
+	if !model.paneVisible {
+		t.Fatalf("expected permission details pane to open")
+	}
+	if model.paneTitle != "Permission Details" {
+		t.Fatalf("expected permission details title, got %q", model.paneTitle)
+	}
+	for _, want := range []string{
+		"Tool",
+		string(protocol.NodeKindWorkspaceEdit) + " · write",
+		"Target",
+		"README.md",
+		"Diff preview",
+		"+hello",
+		"selected: Yes, during this session",
+		"Shift+Tab scope",
+	} {
+		if !strings.Contains(model.paneBody, want) {
+			t.Fatalf("expected %q in permission detail pane, got:\n%s", want, model.paneBody)
+		}
+	}
+}
+
+func TestApprovalDetailsPaneShowsCommandRiskAndSessionScope(t *testing.T) {
+	t.Parallel()
+
+	model := newTestTUIModel()
+	model.snapshot.Meta.State = protocol.SessionStateAwaitingApproval
+	model.snapshot.Meta.ApprovalPending = true
+	model.snapshot.Approval = &protocol.ApprovalRequest{
+		ActiveRequestID: "req_cmd",
+		Requests: []protocol.PermissionRequest{
+			{
+				RequestID: "req_cmd",
+				Tool:      string(protocol.NodeKindWorkspaceCommand),
+				Operation: "shell",
+				Title:     "Run command",
+				Question:  "Do you want to run this command?",
+				Command:   "go test ./...",
+				Preview: protocol.PermissionPreview{
+					Kind:          "command",
+					Summary:       "cwd: /tmp/workspace",
+					CommandPrefix: "go test",
+				},
+				Options: []protocol.PermissionOption{
+					{Value: tuiPermissionAcceptOnce, Label: "Yes", Scope: "node", Feedback: tuiPermissionFeedbackAccept},
+					{Value: tuiPermissionAcceptSession, Label: "Yes, during this session", Scope: "command-prefix", Feedback: tuiPermissionFeedbackAccept},
+					{Value: tuiPermissionReject, Label: "No", Scope: "node", Feedback: tuiPermissionFeedbackReject},
+				},
+			},
+		},
+	}
+
+	model.openApprovalExplanation()
+	for _, want := range []string{
+		"Command",
+		"$ go test ./...",
+		"Working directory",
+		"cwd: /tmp/workspace",
+		"Session scope",
+		"go test",
+		"Risk",
+		"Shell commands can read, write, or execute workspace files",
+	} {
+		if !strings.Contains(model.paneBody, want) {
+			t.Fatalf("expected %q in command permission detail pane, got:\n%s", want, model.paneBody)
+		}
+	}
+}
+
 func TestStatusForSnapshotShowsAwaitingApproval(t *testing.T) {
 	t.Parallel()
 
