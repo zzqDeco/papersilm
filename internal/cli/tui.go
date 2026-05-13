@@ -943,14 +943,19 @@ func (m *tuiModel) appendTranscriptProjection(entry protocol.TranscriptEntry) (b
 		m.upsertActivityItem(entry)
 		return true, false
 	case isApprovalRequiredTranscriptEntry(entry):
+		m.resetActivityGrouping()
 		return false, false
 	default:
-		m.activityCount = 0
-		m.activityStarted = time.Time{}
-		m.activityStats = make(map[string]int)
+		m.resetActivityGrouping()
 		m.appendItem(timelineItemFromUIMessage(message))
 		return true, true
 	}
+}
+
+func (m *tuiModel) resetActivityGrouping() {
+	m.activityCount = 0
+	m.activityStarted = time.Time{}
+	m.activityStats = make(map[string]int)
 }
 
 func (m *tuiModel) upsertActivityItem(entry protocol.TranscriptEntry) {

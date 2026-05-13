@@ -632,6 +632,57 @@ func TestApprovalRequiredDoesNotReappearAfterResolution(t *testing.T) {
 	}
 }
 
+func TestApprovalRequiredResetsActivityGrouping(t *testing.T) {
+	t.Parallel()
+
+	model := newTestTUIModel()
+	model.items = nil
+	model.messageViewport.Reset()
+
+	model.appendTranscript(protocol.TranscriptEntry{
+		ID:           "p1",
+		SessionID:    "sess_test",
+		Type:         protocol.TranscriptEntryProgress,
+		Subtype:      string(protocol.EventProgress),
+		Title:        "Progress",
+		Body:         "started · tool=workspace_search · node=search_readme",
+		Visibility:   protocol.TranscriptVisibilityActivity,
+		Presentation: protocol.TranscriptPresentationGrouped,
+		CreatedAt:    time.Now().UTC(),
+	}, false)
+	model.appendTranscript(protocol.TranscriptEntry{
+		ID:        "approval",
+		SessionID: "sess_test",
+		Type:      protocol.TranscriptEntryApproval,
+		Subtype:   transcriptSubtypeApprovalRequired,
+		Title:     "Approval Required",
+		Body:      "Edit file · README.md",
+		CreatedAt: time.Now().UTC(),
+	}, false)
+	model.appendTranscript(protocol.TranscriptEntry{
+		ID:           "p2",
+		SessionID:    "sess_test",
+		Type:         protocol.TranscriptEntryProgress,
+		Subtype:      string(protocol.EventProgress),
+		Title:        "Progress",
+		Body:         "started · tool=workspace_inspect · node=read_readme",
+		Visibility:   protocol.TranscriptVisibilityActivity,
+		Presentation: protocol.TranscriptPresentationGrouped,
+		CreatedAt:    time.Now().UTC(),
+	}, false)
+
+	if len(model.items) != 1 {
+		t.Fatalf("expected one visible activity row after hidden approval boundary, got %+v", model.items)
+	}
+	body := model.items[0].Body
+	if strings.Contains(body, "search") || strings.Contains(body, "2 updates") {
+		t.Fatalf("expected post-approval activity to start a fresh group, got %q", body)
+	}
+	if !strings.Contains(body, "1 read") {
+		t.Fatalf("expected fresh read activity after approval, got %q", body)
+	}
+}
+
 func TestApprovalContextOwnsKeyboardButPreservesDraft(t *testing.T) {
 	t.Parallel()
 
