@@ -113,6 +113,21 @@ func TestRenderPermissionDialogUsesCommandPreviewHierarchy(t *testing.T) {
 	}
 }
 
+func TestRenderPermissionDialogHonorsPreviewMaxLines(t *testing.T) {
+	t.Parallel()
+
+	rendered := RenderPermissionDialog(PermissionDialog{
+		Width:           80,
+		Title:           "Edit file",
+		PreviewKind:     "diff",
+		PreviewMaxLines: 3,
+		Preview:         "--- README.md\n+++ README.md\n-old line\n+new line\n+another line",
+	})
+	if strings.Contains(rendered, "+new line") || !strings.Contains(rendered, "│ …") {
+		t.Fatalf("expected preview to truncate after max lines, got %q", rendered)
+	}
+}
+
 func TestRenderPermissionDialogUsesCompactOptionRows(t *testing.T) {
 	t.Parallel()
 
@@ -137,5 +152,32 @@ func TestRenderPermissionDialogUsesCompactOptionRows(t *testing.T) {
 	}
 	if strings.Contains(rendered, "Yes, during this session      ") {
 		t.Fatalf("expected compact permission rows instead of padded table rows, got %q", rendered)
+	}
+}
+
+func TestRenderPermissionDialogKeeps80ColumnPromptCompact(t *testing.T) {
+	t.Parallel()
+
+	rendered := RenderPermissionDialog(PermissionDialog{
+		Width:           80,
+		Title:           "Edit file",
+		Question:        "Do you want to make this workspace edit?",
+		PreviewKind:     "diff",
+		PreviewMaxLines: 4,
+		Preview:         "--- README.md\n+++ README.md\n-old line\n+new line\n+another line\n+more context",
+		Rows: []ListRow{
+			{Label: "Yes", Detail: "Allow this tool use once", SelectedPrefix: "❯ "},
+			{Label: "Yes, during this session", Detail: "path README.md · Allow edits to this file for this session", Selected: true, SelectedPrefix: "❯ "},
+			{Label: "No", Detail: "Reject this tool use", SelectedPrefix: "❯ "},
+		},
+		Hint: "Enter yes · N no · Tab amend · Shift+Tab scope · Ctrl+E details",
+	})
+	if got := strings.Count(rendered, "\n") + 1; got > 12 {
+		t.Fatalf("expected compact 80-column permission prompt, got %d lines:\n%s", got, rendered)
+	}
+	for _, want := range []string{"│ …", "path README.md", "Tab amend"} {
+		if !strings.Contains(rendered, want) {
+			t.Fatalf("expected %q in compact prompt, got %q", want, rendered)
+		}
 	}
 }
