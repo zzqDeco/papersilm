@@ -829,6 +829,26 @@ func TestApprovalFeedbackModeCapturesYNAsText(t *testing.T) {
 	}
 }
 
+func TestPermissionOptionRowDetailShowsSessionScopeTarget(t *testing.T) {
+	t.Parallel()
+
+	commandDetail := permissionOptionRowDetail(
+		protocol.PermissionOption{Value: tuiPermissionAcceptSession, Description: "Allow this command prefix for this session", Scope: "command-prefix"},
+		protocol.PermissionRequest{Preview: protocol.PermissionPreview{CommandPrefix: "go test"}},
+	)
+	if !strings.Contains(commandDetail, "prefix go test") {
+		t.Fatalf("expected command prefix target in detail, got %q", commandDetail)
+	}
+
+	pathDetail := permissionOptionRowDetail(
+		protocol.PermissionOption{Value: tuiPermissionAcceptSession, Description: "Allow edits to this file for this session", Scope: "path"},
+		protocol.PermissionRequest{TargetPath: "README.md"},
+	)
+	if !strings.Contains(pathDetail, "path README.md") {
+		t.Fatalf("expected path target in detail, got %q", pathDetail)
+	}
+}
+
 func TestPermissionPreviewTextShowsCommandContext(t *testing.T) {
 	t.Parallel()
 

@@ -360,6 +360,41 @@ func permissionOptionDetail(option protocol.PermissionOption) string {
 	return strings.Join(parts, " · ")
 }
 
+func permissionOptionRowDetail(option protocol.PermissionOption, request protocol.PermissionRequest) string {
+	detail := strings.TrimSpace(option.Description)
+	target := permissionOptionScopeTarget(option, request)
+	if target == "" {
+		return detail
+	}
+	if detail == "" {
+		return target
+	}
+	return detail + " · " + target
+}
+
+func permissionOptionScopeTarget(option protocol.PermissionOption, request protocol.PermissionRequest) string {
+	if option.Value != tuiPermissionAcceptSession {
+		return ""
+	}
+	switch option.Scope {
+	case "path":
+		if target := strings.TrimSpace(request.TargetPath); target != "" {
+			return "path " + target
+		}
+	case "command-prefix":
+		if prefix := strings.TrimSpace(request.Preview.CommandPrefix); prefix != "" {
+			return "prefix " + prefix
+		}
+	case "directory":
+		if target := strings.TrimSpace(request.TargetPath); target != "" {
+			return "directory " + target
+		}
+	case "session":
+		return "session scope"
+	}
+	return ""
+}
+
 func approvalFeedbackPrompt(option protocol.PermissionOption) string {
 	label := firstNonEmpty(strings.TrimSpace(option.Label), strings.TrimSpace(option.Value), "Decision")
 	switch option.Feedback {

@@ -1310,7 +1310,7 @@ func (m *tuiModel) renderApprovalStickyPanel() string {
 		}
 		rows = append(rows, tuiui.ListRow{
 			Label:          option.Label,
-			Detail:         option.Description,
+			Detail:         permissionOptionRowDetail(option, request),
 			Selected:       selected,
 			SelectedPrefix: "❯ ",
 			IdlePrefix:     "  ",
