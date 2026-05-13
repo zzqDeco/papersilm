@@ -18,25 +18,26 @@ type DecisionPanel struct {
 }
 
 type PermissionDialog struct {
-	Width          int
-	Title          string
-	Subtitle       string
-	Question       string
-	Summary        string
-	Preview        string
-	PreviewKind    string
-	Rows           []ListRow
-	Feedback       string
-	FeedbackMode   string
-	FeedbackLabel  string
-	Hint           string
-	DividerStyle   lipgloss.Style
-	TitleStyle     lipgloss.Style
-	MutedStyle     lipgloss.Style
-	BodyStyle      lipgloss.Style
-	PreviewAdd     lipgloss.Style
-	PreviewDelete  lipgloss.Style
-	PreviewCommand lipgloss.Style
+	Width               int
+	Title               string
+	Subtitle            string
+	Question            string
+	Summary             string
+	Preview             string
+	PreviewKind         string
+	Rows                []ListRow
+	Feedback            string
+	FeedbackMode        string
+	FeedbackLabel       string
+	FeedbackPlaceholder string
+	Hint                string
+	DividerStyle        lipgloss.Style
+	TitleStyle          lipgloss.Style
+	MutedStyle          lipgloss.Style
+	BodyStyle           lipgloss.Style
+	PreviewAdd          lipgloss.Style
+	PreviewDelete       lipgloss.Style
+	PreviewCommand      lipgloss.Style
 }
 
 func RenderDecisionPanel(panel DecisionPanel) string {
@@ -87,26 +88,48 @@ func RenderPermissionDialog(dialog PermissionDialog) string {
 		lines = append(lines, RenderCompactListRows(dialog.Rows, bodyWidth)...)
 	}
 	if mode := strings.TrimSpace(dialog.FeedbackMode); mode != "" {
-		label := strings.TrimSpace(dialog.FeedbackLabel)
-		if label == "" && mode == "reject" {
-			label = "Tell papersilm what to do differently"
-		}
-		if label == "" {
-			label = "Tell papersilm what to do next"
-		}
-		value := strings.TrimRight(dialog.Feedback, "\n")
-		if value == "" {
-			value = " "
-		}
-		lines = append(lines, "  "+dialog.MutedStyle.Render(label))
-		for _, line := range strings.Split(value, "\n") {
-			lines = append(lines, "  "+bodyStyle.Render("› "+truncateRight(line, bodyWidth-2)))
-		}
+		lines = append(lines, renderPermissionFeedback(dialog, bodyWidth)...)
 	}
 	if hint := strings.TrimSpace(dialog.Hint); hint != "" {
 		lines = append(lines, "  "+dialog.MutedStyle.Render(truncateRight(hint, bodyWidth)))
 	}
 	return strings.Join(lines, "\n")
+}
+
+func renderPermissionFeedback(dialog PermissionDialog, bodyWidth int) []string {
+	label := permissionFeedbackLabel(dialog)
+	placeholder := strings.TrimSpace(dialog.FeedbackPlaceholder)
+	if placeholder == "" {
+		placeholder = "Type feedback, then Enter"
+	}
+	value := strings.TrimRight(dialog.Feedback, "\n")
+	lines := []string{
+		"  " + dialog.MutedStyle.Render("│ "+truncateRight(label, bodyWidth-2)),
+	}
+	if strings.TrimSpace(value) == "" {
+		lines = append(lines, "  "+dialog.MutedStyle.Render("│ › "+truncateRight(placeholder, bodyWidth-4)))
+		return lines
+	}
+	valueLines := strings.Split(value, "\n")
+	limit := min(len(valueLines), 4)
+	for i := 0; i < limit; i++ {
+		lines = append(lines, "  "+dialog.BodyStyle.Render("│ › "+truncateRight(valueLines[i], bodyWidth-4)))
+	}
+	if len(valueLines) > limit {
+		lines = append(lines, "  "+dialog.MutedStyle.Render("│ …"))
+	}
+	return lines
+}
+
+func permissionFeedbackLabel(dialog PermissionDialog) string {
+	label := strings.TrimSpace(dialog.FeedbackLabel)
+	if label != "" {
+		return label
+	}
+	if strings.TrimSpace(dialog.FeedbackMode) == "reject" {
+		return "Tell papersilm what to do differently"
+	}
+	return "Tell papersilm what to do next"
 }
 
 func renderPermissionPreview(dialog PermissionDialog, bodyWidth int) []string {

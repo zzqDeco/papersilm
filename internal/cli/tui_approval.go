@@ -447,6 +447,16 @@ func (m *tuiModel) handleApprovalFeedbackInput(msg tea.KeyMsg) bool {
 	return true
 }
 
+func (m *tuiModel) cancelApprovalFeedback() {
+	m.approvalFeedbackMode = ""
+	m.approvalFeedback = ""
+	m.setMainStatus("Feedback cancelled")
+}
+
+func (m *tuiModel) shouldCancelApprovalFeedbackKey(msg tea.KeyMsg) bool {
+	return m.approvalKeyboardActive() && m.approvalFeedbackMode != "" && msg.String() == "esc"
+}
+
 func (m *tuiModel) shouldCaptureApprovalFeedbackKey(msg tea.KeyMsg) bool {
 	if !m.approvalKeyboardActive() || m.approvalFeedbackMode == "" {
 		return false

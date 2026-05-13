@@ -42,10 +42,42 @@ func TestRenderPermissionDialogUsesFeedbackLabel(t *testing.T) {
 		FeedbackLabel: "No and tell papersilm what to do differently",
 		Feedback:      "use tests only",
 	})
-	for _, want := range []string{"No and tell papersilm what to do differently", "› use tests only"} {
+	for _, want := range []string{"│ No and tell papersilm what to do differently", "│ › use tests only"} {
 		if !strings.Contains(rendered, want) {
 			t.Fatalf("expected %q in permission dialog, got %q", want, rendered)
 		}
+	}
+}
+
+func TestRenderPermissionDialogUsesAmendPlaceholder(t *testing.T) {
+	t.Parallel()
+
+	rendered := RenderPermissionDialog(PermissionDialog{
+		Width:               50,
+		Title:               "Run command",
+		FeedbackMode:        "accept",
+		FeedbackLabel:       "Yes and tell papersilm what to do next",
+		FeedbackPlaceholder: "Add optional feedback",
+	})
+	for _, want := range []string{"│ Yes and tell papersilm what to do next", "│ › Add optional feedback"} {
+		if !strings.Contains(rendered, want) {
+			t.Fatalf("expected %q in amend placeholder, got %q", want, rendered)
+		}
+	}
+}
+
+func TestRenderPermissionDialogLimitsFeedbackHeight(t *testing.T) {
+	t.Parallel()
+
+	rendered := RenderPermissionDialog(PermissionDialog{
+		Width:         50,
+		Title:         "Run command",
+		FeedbackMode:  "reject",
+		FeedbackLabel: "No and tell papersilm what to do differently",
+		Feedback:      "one\ntwo\nthree\nfour\nfive",
+	})
+	if strings.Contains(rendered, "five") || !strings.Contains(rendered, "│ …") {
+		t.Fatalf("expected feedback text to truncate after four lines, got %q", rendered)
 	}
 }
 
