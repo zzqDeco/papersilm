@@ -671,15 +671,19 @@ func TestApprovalRequiredResetsActivityGrouping(t *testing.T) {
 		CreatedAt:    time.Now().UTC(),
 	}, false)
 
-	if len(model.items) != 1 {
-		t.Fatalf("expected one visible activity row after hidden approval boundary, got %+v", model.items)
+	if len(model.items) != 2 {
+		t.Fatalf("expected separate activity rows across hidden approval boundary, got %+v", model.items)
 	}
-	body := model.items[0].Body
-	if strings.Contains(body, "search") || strings.Contains(body, "2 updates") {
-		t.Fatalf("expected post-approval activity to start a fresh group, got %q", body)
+	firstBody := model.items[0].Body
+	secondBody := model.items[1].Body
+	if !strings.Contains(firstBody, "1 search") {
+		t.Fatalf("expected pre-approval search activity to be preserved, got %q", firstBody)
 	}
-	if !strings.Contains(body, "1 read") {
-		t.Fatalf("expected fresh read activity after approval, got %q", body)
+	if strings.Contains(secondBody, "search") || strings.Contains(secondBody, "2 updates") {
+		t.Fatalf("expected post-approval activity to start a fresh group, got %q", secondBody)
+	}
+	if !strings.Contains(secondBody, "1 read") {
+		t.Fatalf("expected fresh read activity after approval, got %q", secondBody)
 	}
 }
 

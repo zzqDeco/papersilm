@@ -959,6 +959,7 @@ func (m *tuiModel) resetActivityGrouping() {
 }
 
 func (m *tuiModel) upsertActivityItem(entry protocol.TranscriptEntry) {
+	newGroup := m.activityCount == 0
 	if m.activityCount == 0 {
 		m.activityStarted = entry.CreatedAt
 		if m.activityStarted.IsZero() {
@@ -973,13 +974,13 @@ func (m *tuiModel) upsertActivityItem(entry protocol.TranscriptEntry) {
 		m.activityStats[key]++
 	}
 	item := timelineItemFromTranscriptEntry(entry)
-	item.ID = "activity.grouped"
+	item.ID = fmt.Sprintf("activity.grouped.%d", m.activityStarted.UnixNano())
 	item.Kind = tuiItemProgress
 	item.Subtype = "activity.grouped"
 	item.Title = "Activity"
 	item.Body = activitySummary(entry, m.activityStats, m.activityCount, m.activityStarted)
 	item.CreatedAt = m.activityStarted
-	if len(m.items) > 0 && m.items[len(m.items)-1].Kind == tuiItemProgress && m.items[len(m.items)-1].Subtype == "activity.grouped" {
+	if !newGroup && len(m.items) > 0 && m.items[len(m.items)-1].Kind == tuiItemProgress && m.items[len(m.items)-1].Subtype == "activity.grouped" {
 		m.replaceLastItem(item)
 		return
 	}
