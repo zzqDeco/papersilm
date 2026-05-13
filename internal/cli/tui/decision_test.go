@@ -80,3 +80,30 @@ func TestRenderPermissionDialogUsesCommandPreviewHierarchy(t *testing.T) {
 		}
 	}
 }
+
+func TestRenderPermissionDialogUsesCompactOptionRows(t *testing.T) {
+	t.Parallel()
+
+	rendered := RenderPermissionDialog(PermissionDialog{
+		Width:    80,
+		Title:    "Run command",
+		Question: "Do you want to run this command?",
+		Rows: []ListRow{
+			{
+				Label:          "Yes, during this session",
+				Detail:         "prefix go test · Allow this command prefix for this session",
+				Selected:       true,
+				SelectedPrefix: "❯ ",
+			},
+			{Label: "No", Detail: "Reject this tool use"},
+		},
+	})
+	for _, want := range []string{"❯ Yes, during this session", "prefix go test", "No – Reject this tool use"} {
+		if !strings.Contains(rendered, want) {
+			t.Fatalf("expected %q in compact permission dialog, got %q", want, rendered)
+		}
+	}
+	if strings.Contains(rendered, "Yes, during this session      ") {
+		t.Fatalf("expected compact permission rows instead of padded table rows, got %q", rendered)
+	}
+}
