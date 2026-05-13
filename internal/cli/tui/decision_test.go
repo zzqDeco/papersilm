@@ -30,3 +30,21 @@ func TestRenderDecisionPanelUsesSingleDividerAndRows(t *testing.T) {
 		t.Fatalf("expected no box corners, got %q", rendered)
 	}
 }
+
+func TestRenderPermissionDialogUsesFeedbackLabel(t *testing.T) {
+	t.Parallel()
+
+	rendered := RenderPermissionDialog(PermissionDialog{
+		Width:         50,
+		Title:         "Run command",
+		Question:      "Do you want to run this command?",
+		FeedbackMode:  "reject",
+		FeedbackLabel: "No and tell papersilm what to do differently",
+		Feedback:      "use tests only",
+	})
+	for _, want := range []string{"No and tell papersilm what to do differently", "› use tests only"} {
+		if !strings.Contains(rendered, want) {
+			t.Fatalf("expected %q in permission dialog, got %q", want, rendered)
+		}
+	}
+}
