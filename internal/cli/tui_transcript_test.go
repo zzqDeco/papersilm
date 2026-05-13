@@ -600,6 +600,59 @@ func TestApprovalShortcutSelection(t *testing.T) {
 	}
 }
 
+func TestApprovalScopeCyclesBetweenOnceAndSession(t *testing.T) {
+	t.Parallel()
+
+	model := newTestTUIModel()
+	model.snapshot.Meta.State = protocol.SessionStateAwaitingApproval
+	model.snapshot.Meta.ApprovalPending = true
+	model.snapshot.Approval = &protocol.ApprovalRequest{
+		ActiveRequestID: "req_edit",
+		Requests: []protocol.PermissionRequest{
+			{
+				RequestID:  "req_edit",
+				Tool:       string(protocol.NodeKindWorkspaceEdit),
+				Operation:  "write",
+				Title:      "Edit file",
+				TargetPath: "README.md",
+				Options: []protocol.PermissionOption{
+					{Value: tuiPermissionAcceptOnce, Label: "Yes", Scope: "node", Feedback: tuiPermissionFeedbackAccept},
+					{Value: tuiPermissionAcceptSession, Label: "Yes, during this session", Scope: "path", Feedback: tuiPermissionFeedbackAccept},
+					{Value: tuiPermissionReject, Label: "No", Scope: "node", Feedback: tuiPermissionFeedbackReject},
+				},
+			},
+		},
+	}
+	model.approvalSelection = 0
+	model.cycleApprovalScope()
+	options := model.approvalOptions()
+	if got := options[model.approvalSelection].Value; got != tuiPermissionAcceptSession {
+		t.Fatalf("expected session-scoped accept after scope cycle, got %q", got)
+	}
+	model.cycleApprovalScope()
+	if got := options[model.approvalSelection].Value; got != tuiPermissionAcceptOnce {
+		t.Fatalf("expected once-scoped accept after second scope cycle, got %q", got)
+	}
+}
+
+func TestPermissionPreviewTextShowsCommandContext(t *testing.T) {
+	t.Parallel()
+
+	preview := permissionPreviewText(protocol.PermissionRequest{
+		Command: "go test ./...",
+		Preview: protocol.PermissionPreview{
+			Kind:          "command",
+			Summary:       "cwd: /tmp/workspace",
+			CommandPrefix: "go test",
+		},
+	})
+	for _, want := range []string{"$ go test ./...", "cwd: /tmp/workspace", "session scope: go test"} {
+		if !strings.Contains(preview, want) {
+			t.Fatalf("expected %q in command preview, got %q", want, preview)
+		}
+	}
+}
+
 func TestStatusForSnapshotShowsAwaitingApproval(t *testing.T) {
 	t.Parallel()
 

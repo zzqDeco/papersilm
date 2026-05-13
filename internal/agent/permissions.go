@@ -190,16 +190,27 @@ func permissionOptionsForNode(node protocol.PlanNode) []protocol.PermissionOptio
 	sessionScope := permissionScopeSession
 	switch node.Kind {
 	case protocol.NodeKindWorkspaceEdit:
-		sessionLabel = "Yes, allow edits to this file during this session"
+		sessionLabel = "Yes, during this session"
 		sessionScope = permissionScopePath
 	case protocol.NodeKindWorkspaceCommand:
-		sessionLabel = "Yes, and do not ask again for this command prefix"
+		sessionLabel = "Yes, during this session"
 		sessionScope = permissionScopeCommandPrefix
 	}
 	return []protocol.PermissionOption{
-		{Value: permissionValueAcceptOnce, Label: "Yes", Scope: permissionScopeNode, Feedback: "accept"},
-		{Value: permissionValueAcceptSession, Label: sessionLabel, Scope: sessionScope, Feedback: "accept"},
-		{Value: permissionValueReject, Label: "No", Scope: permissionScopeNode, Feedback: "reject"},
+		{Value: permissionValueAcceptOnce, Label: "Yes", Description: "Allow this tool use once", Scope: permissionScopeNode, Feedback: "accept"},
+		{Value: permissionValueAcceptSession, Label: sessionLabel, Description: permissionSessionScopeDescription(node.Kind), Scope: sessionScope, Feedback: "accept"},
+		{Value: permissionValueReject, Label: "No", Description: "Reject this tool use", Scope: permissionScopeNode, Feedback: "reject"},
+	}
+}
+
+func permissionSessionScopeDescription(kind protocol.NodeKind) string {
+	switch kind {
+	case protocol.NodeKindWorkspaceEdit:
+		return "Allow edits to this file for this session"
+	case protocol.NodeKindWorkspaceCommand:
+		return "Allow this command prefix for this session"
+	default:
+		return "Allow similar tasks for this session"
 	}
 }
 

@@ -147,6 +147,16 @@ func (m *tuiModel) cycleApprovalScope() {
 		return
 	}
 	current := options[clamp(m.approvalSelection, 0, len(options)-1)]
+	if current.Feedback == tuiPermissionFeedbackAccept {
+		for i := 1; i <= len(options); i++ {
+			next := (m.approvalSelection + i) % len(options)
+			if options[next].Feedback == tuiPermissionFeedbackAccept && options[next].Scope != current.Scope {
+				m.approvalSelection = next
+				m.approvalFeedbackMode = ""
+				return
+			}
+		}
+	}
 	for i := 1; i <= len(options); i++ {
 		next := (m.approvalSelection + i) % len(options)
 		if options[next].Value == current.Value && options[next].Scope != current.Scope {
@@ -185,8 +195,32 @@ func (m *tuiModel) openApprovalExplanation() {
 }
 
 func permissionPreviewText(request protocol.PermissionRequest) string {
-	if strings.TrimSpace(request.Preview.Diff) != "" {
-		return strings.TrimSpace(request.Preview.Diff)
+	switch request.Preview.Kind {
+	case "diff":
+		if strings.TrimSpace(request.Preview.Diff) != "" {
+			return strings.TrimSpace(request.Preview.Diff)
+		}
+		if strings.TrimSpace(request.Preview.Summary) != "" {
+			return strings.TrimSpace(request.Preview.Summary)
+		}
+	case "command":
+		lines := make([]string, 0, 4)
+		if strings.TrimSpace(request.Command) != "" {
+			lines = append(lines, "$ "+strings.TrimSpace(request.Command))
+		}
+		if strings.TrimSpace(request.Preview.Summary) != "" {
+			lines = append(lines, strings.TrimSpace(request.Preview.Summary))
+		}
+		if strings.TrimSpace(request.Preview.CommandPrefix) != "" {
+			lines = append(lines, "session scope: "+strings.TrimSpace(request.Preview.CommandPrefix))
+		}
+		if len(lines) > 0 {
+			return strings.Join(lines, "\n")
+		}
+	case "error":
+		if strings.TrimSpace(request.Preview.Summary) != "" {
+			return "Preview error: " + strings.TrimSpace(request.Preview.Summary)
+		}
 	}
 	if strings.TrimSpace(request.Preview.NewContent) != "" {
 		return strings.TrimSpace(request.Preview.NewContent)
