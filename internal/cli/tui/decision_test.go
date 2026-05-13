@@ -48,3 +48,35 @@ func TestRenderPermissionDialogUsesFeedbackLabel(t *testing.T) {
 		}
 	}
 }
+
+func TestRenderPermissionDialogUsesDiffPreviewHierarchy(t *testing.T) {
+	t.Parallel()
+
+	rendered := RenderPermissionDialog(PermissionDialog{
+		Width:       60,
+		Title:       "Edit file",
+		PreviewKind: "diff",
+		Preview:     "--- README.md\n+++ README.md\n-old line\n+new line",
+	})
+	for _, want := range []string{"│ --- README.md", "│ +++ README.md", "│ -old line", "│ +new line"} {
+		if !strings.Contains(rendered, want) {
+			t.Fatalf("expected %q in diff preview, got %q", want, rendered)
+		}
+	}
+}
+
+func TestRenderPermissionDialogUsesCommandPreviewHierarchy(t *testing.T) {
+	t.Parallel()
+
+	rendered := RenderPermissionDialog(PermissionDialog{
+		Width:       60,
+		Title:       "Run command",
+		PreviewKind: "command",
+		Preview:     "$ go test ./...\ncwd: /tmp/workspace\nsession scope: go test",
+	})
+	for _, want := range []string{"│ $ go test ./...", "│ cwd: /tmp/workspace", "│ session scope: go test"} {
+		if !strings.Contains(rendered, want) {
+			t.Fatalf("expected %q in command preview, got %q", want, rendered)
+		}
+	}
+}
