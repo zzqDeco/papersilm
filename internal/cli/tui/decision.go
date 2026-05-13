@@ -84,7 +84,7 @@ func RenderPermissionDialog(dialog PermissionDialog) string {
 		lines = append(lines, renderPermissionPreview(dialog, bodyWidth)...)
 	}
 	if len(dialog.Rows) > 0 {
-		lines = append(lines, RenderListRows(dialog.Rows, bodyWidth)...)
+		lines = append(lines, RenderCompactListRows(dialog.Rows, bodyWidth)...)
 	}
 	if mode := strings.TrimSpace(dialog.FeedbackMode); mode != "" {
 		label := strings.TrimSpace(dialog.FeedbackLabel)
