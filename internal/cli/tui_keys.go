@@ -7,6 +7,11 @@ import (
 )
 
 func (m *tuiModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	if m.shouldCancelApprovalFeedbackKey(msg) {
+		m.cancelApprovalFeedback()
+		m.reflow()
+		return m, nil
+	}
 	if m.shouldCaptureApprovalFeedbackKey(msg) {
 		m.handleApprovalFeedbackInput(msg)
 		m.reflow()

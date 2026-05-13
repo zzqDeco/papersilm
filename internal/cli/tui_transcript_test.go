@@ -829,6 +829,31 @@ func TestApprovalFeedbackModeCapturesYNAsText(t *testing.T) {
 	}
 }
 
+func TestApprovalFeedbackEscCancelsAmendWithoutRejecting(t *testing.T) {
+	t.Parallel()
+
+	model := newTestTUIModel()
+	model.snapshot.Meta.State = protocol.SessionStateAwaitingApproval
+	model.snapshot.Meta.ApprovalPending = true
+	model.approvalFeedbackMode = tuiPermissionFeedbackReject
+	model.approvalFeedback = "use tests only"
+
+	gotModel, cmd := model.handleKey(tea.KeyMsg{Type: tea.KeyEsc})
+	if cmd != nil {
+		t.Fatalf("did not expect esc in feedback mode to submit a command")
+	}
+	updated := gotModel.(*tuiModel)
+	if updated.busy {
+		t.Fatalf("esc should only cancel amend feedback, not reject")
+	}
+	if updated.approvalFeedbackMode != "" || updated.approvalFeedback != "" {
+		t.Fatalf("expected feedback mode and text to clear, got mode=%q feedback=%q", updated.approvalFeedbackMode, updated.approvalFeedback)
+	}
+	if !strings.Contains(updated.mainStatus, "Feedback cancelled") {
+		t.Fatalf("expected feedback cancelled status, got %q", updated.mainStatus)
+	}
+}
+
 func TestPermissionOptionRowDetailShowsSessionScopeTarget(t *testing.T) {
 	t.Parallel()
 
