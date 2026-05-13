@@ -2420,6 +2420,9 @@ func permissionDecisionBody(request protocol.PermissionRequest, value string, fi
 	if scope != "" {
 		parts = append(parts, "Scope: "+scope)
 	}
+	if value == tuiPermissionAcceptSession {
+		parts = append(parts, permissionSessionRuleMessage(scope))
+	}
 	if feedback != "" {
 		parts = append(parts, "Feedback: "+feedback)
 	}
@@ -2435,6 +2438,21 @@ func permissionDecisionScope(fields []string) string {
 		return ""
 	}
 	return strings.ReplaceAll(scope, "-", " ")
+}
+
+func permissionSessionRuleMessage(scope string) string {
+	switch scope {
+	case "path":
+		return "This file path can continue without asking again."
+	case "directory":
+		return "This directory can continue without asking again."
+	case "command prefix":
+		return "Matching command prefixes can continue without asking again."
+	case "session":
+		return "Similar requests can continue without asking again."
+	default:
+		return "Matching requests can continue without asking again."
+	}
 }
 
 func permissionDecisionTarget(request protocol.PermissionRequest) string {

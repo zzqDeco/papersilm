@@ -497,7 +497,12 @@ func TestExecutionToTranscriptEntriesBuildsPermissionDecisionMessages(t *testing
 	if entries[0].Subtype != transcriptSubtypeApprovalApproved {
 		t.Fatalf("expected approved subtype, got %q", entries[0].Subtype)
 	}
-	for _, want := range []string{"Allowed during this session.", "Command: go test ./...", "Scope: command prefix"} {
+	for _, want := range []string{
+		"Allowed during this session.",
+		"Command: go test ./...",
+		"Scope: command prefix",
+		"Matching command prefixes can continue without asking again.",
+	} {
 		if !strings.Contains(entries[0].Body, want) {
 			t.Fatalf("expected %q in accept-session body, got %q", want, entries[0].Body)
 		}
