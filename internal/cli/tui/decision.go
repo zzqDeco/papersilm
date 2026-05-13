@@ -25,6 +25,7 @@ type PermissionDialog struct {
 	Summary             string
 	Preview             string
 	PreviewKind         string
+	PreviewMaxLines     int
 	Rows                []ListRow
 	Feedback            string
 	FeedbackMode        string
@@ -134,7 +135,11 @@ func permissionFeedbackLabel(dialog PermissionDialog) string {
 
 func renderPermissionPreview(dialog PermissionDialog, bodyWidth int) []string {
 	previewLines := strings.Split(strings.TrimSpace(dialog.Preview), "\n")
-	limit := min(len(previewLines), 6)
+	maxLines := dialog.PreviewMaxLines
+	if maxLines <= 0 {
+		maxLines = 6
+	}
+	limit := min(len(previewLines), maxLines)
 	lines := make([]string, 0, limit+1)
 	for i := 0; i < limit; i++ {
 		raw := strings.TrimRight(previewLines[i], "\r")

@@ -1320,9 +1320,9 @@ func (m *tuiModel) renderApprovalStickyPanel() string {
 		})
 	}
 
-	hint := "Y/Enter yes · N/Esc no · Tab add feedback · Shift+Tab scope · Ctrl+E details"
+	hint := "Enter yes · N no · Tab amend · Shift+Tab scope · Ctrl+E details"
 	if m.approvalFeedbackMode != "" {
-		hint = "Enter submit with feedback · Ctrl+J newline · Esc cancel amend"
+		hint = "Enter submit · Ctrl+J newline · Esc cancel"
 	}
 	return tuiui.RenderPermissionDialog(tuiui.PermissionDialog{
 		Width:               width,
@@ -1332,6 +1332,7 @@ func (m *tuiModel) renderApprovalStickyPanel() string {
 		Summary:             request.Summary,
 		Preview:             permissionPreviewText(request),
 		PreviewKind:         request.Preview.Kind,
+		PreviewMaxLines:     4,
 		Rows:                rows,
 		Feedback:            m.approvalFeedback,
 		FeedbackMode:        m.approvalFeedbackMode,
