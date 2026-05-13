@@ -2,6 +2,7 @@ package storage
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"fmt"
 	"hash/fnv"
@@ -18,7 +19,49 @@ import (
 const (
 	workspaceMaxIndexedFileSize = 512 * 1024
 	workspaceSearchResultLimit  = 50
+	workspaceCommandOutputLimit = 64 * 1024
 )
+
+var workspaceCommandTimeout = 2 * time.Minute
+
+type cappedBuffer struct {
+	buf       bytes.Buffer
+	limit     int
+	truncated bool
+}
+
+func newCappedBuffer(limit int) *cappedBuffer {
+	if limit <= 0 {
+		limit = workspaceCommandOutputLimit
+	}
+	return &cappedBuffer{limit: limit}
+}
+
+func (b *cappedBuffer) Write(p []byte) (int, error) {
+	remaining := b.limit - b.buf.Len()
+	if remaining <= 0 {
+		b.truncated = true
+		return len(p), nil
+	}
+	if len(p) > remaining {
+		_, _ = b.buf.Write(p[:remaining])
+		b.truncated = true
+		return len(p), nil
+	}
+	_, _ = b.buf.Write(p)
+	return len(p), nil
+}
+
+func (b *cappedBuffer) Text(label string) string {
+	text := b.buf.String()
+	if b.truncated {
+		if strings.TrimSpace(text) != "" && !strings.HasSuffix(text, "\n") {
+			text += "\n"
+		}
+		text += fmt.Sprintf("[%s truncated after %d bytes]", label, b.limit)
+	}
+	return text
+}
 
 func (s *Store) workspaceMetaPath() string {
 	return filepath.Join(s.baseDir, "workspace.json")
@@ -208,19 +251,30 @@ func (s *Store) RunWorkspaceCommand(command string) (protocol.WorkspaceCommandRe
 		return protocol.WorkspaceCommandRecord{}, fmt.Errorf("command is required")
 	}
 	startedAt := time.Now().UTC()
-	cmd := exec.Command("zsh", "-lc", command)
+	timeout := workspaceCommandTimeout
+	if timeout <= 0 {
+		timeout = 2 * time.Minute
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, workspaceCommandShell(), "-lc", command)
 	cmd.Dir = s.workspaceRoot
-	var stdout bytes.Buffer
-	var stderr bytes.Buffer
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
+	configureWorkspaceCommandProcess(cmd)
+	stdout := newCappedBuffer(workspaceCommandOutputLimit)
+	stderr := newCappedBuffer(workspaceCommandOutputLimit)
+	cmd.Stdout = stdout
+	cmd.Stderr = stderr
 	runErr := cmd.Run()
 	exitCode := 0
+	if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+		runErr = fmt.Errorf("command timed out after %s", timeout)
+		exitCode = 124
+	}
 	if runErr != nil {
 		var exitErr *exec.ExitError
 		if errors.As(runErr, &exitErr) {
 			exitCode = exitErr.ExitCode()
-		} else {
+		} else if exitCode == 0 {
 			exitCode = 1
 		}
 	}
@@ -228,8 +282,8 @@ func (s *Store) RunWorkspaceCommand(command string) (protocol.WorkspaceCommandRe
 		Command:     command,
 		Cwd:         s.workspaceRoot,
 		ExitCode:    exitCode,
-		Stdout:      stdout.String(),
-		Stderr:      stderr.String(),
+		Stdout:      stdout.Text("stdout"),
+		Stderr:      stderr.Text("stderr"),
 		StartedAt:   startedAt,
 		CompletedAt: time.Now().UTC(),
 	}
@@ -237,6 +291,13 @@ func (s *Store) RunWorkspaceCommand(command string) (protocol.WorkspaceCommandRe
 		runErr = logErr
 	}
 	return record, runErr
+}
+
+func workspaceCommandShell() string {
+	if _, err := exec.LookPath("zsh"); err == nil {
+		return "zsh"
+	}
+	return "sh"
 }
 
 func (s *Store) scanWorkspaceFiles() ([]protocol.WorkspaceFile, error) {

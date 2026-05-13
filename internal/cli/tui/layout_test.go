@@ -3,6 +3,8 @@ package tui
 import (
 	"strings"
 	"testing"
+
+	"github.com/charmbracelet/lipgloss"
 )
 
 func TestRenderBottomDrawerUsesSingleDivider(t *testing.T) {
@@ -116,5 +118,17 @@ func TestRenderFullscreenLayoutModalDrawsLastWithPeek(t *testing.T) {
 	}
 	if strings.Contains(rendered, "row6") {
 		t.Fatalf("expected modal to clip to available height, got %q", rendered)
+	}
+}
+
+func TestTruncateRightHandlesWideRunes(t *testing.T) {
+	t.Parallel()
+
+	rendered := truncateRight("中文输入内容", 5)
+	if lipgloss.Width(rendered) > 5 {
+		t.Fatalf("expected display width <= 5, got %d for %q", lipgloss.Width(rendered), rendered)
+	}
+	if !strings.HasSuffix(rendered, "…") {
+		t.Fatalf("expected ellipsis tail, got %q", rendered)
 	}
 }

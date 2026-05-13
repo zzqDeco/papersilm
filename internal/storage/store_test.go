@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 
@@ -52,6 +53,52 @@ func TestStoreSnapshotRoundTrip(t *testing.T) {
 	if snapshot.TaskBoard != nil {
 		t.Fatalf("did not expect task board without a dag-backed plan, got %+v", snapshot.TaskBoard)
 	}
+}
+
+func TestRunWorkspaceCommandTimesOut(t *testing.T) {
+	store := New(t.TempDir())
+	if err := store.Ensure(); err != nil {
+		t.Fatalf("Ensure: %v", err)
+	}
+	previousTimeout := workspaceCommandTimeout
+	workspaceCommandTimeout = 50 * time.Millisecond
+	defer func() { workspaceCommandTimeout = previousTimeout }()
+
+	started := time.Now()
+	record, err := store.RunWorkspaceCommand("sleep 2")
+	if err == nil || !strings.Contains(err.Error(), "timed out") {
+		t.Fatalf("expected timeout error, got record=%+v err=%v", record, err)
+	}
+	if elapsed := time.Since(started); elapsed > time.Second {
+		t.Fatalf("expected command to be canceled quickly, took %s", elapsed)
+	}
+	if record.ExitCode != 124 {
+		t.Fatalf("expected timeout exit code 124, got %d", record.ExitCode)
+	}
+}
+
+func TestRunWorkspaceCommandCapsOutput(t *testing.T) {
+	store := New(t.TempDir())
+	if err := store.Ensure(); err != nil {
+		t.Fatalf("Ensure: %v", err)
+	}
+	record, err := store.RunWorkspaceCommand("yes x | head -c 70000")
+	if err != nil {
+		t.Fatalf("RunWorkspaceCommand: %v", err)
+	}
+	if len(record.Stdout) > workspaceCommandOutputLimit+128 {
+		t.Fatalf("expected capped stdout, got %d bytes", len(record.Stdout))
+	}
+	if !strings.Contains(record.Stdout, "stdout truncated") {
+		t.Fatalf("expected truncation marker, got suffix %q", tail(record.Stdout, 80))
+	}
+}
+
+func tail(value string, n int) string {
+	if len(value) <= n {
+		return value
+	}
+	return value[len(value)-n:]
 }
 
 func TestLoadPlanUpgradesLegacyStepsToDAG(t *testing.T) {

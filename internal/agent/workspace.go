@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"path"
 	"path/filepath"
 	"regexp"
 	"sort"
@@ -262,7 +263,6 @@ func buildWorkspacePlan(goal string, approvalRequired bool, intent workspaceInte
 func inferWorkspaceIntent(goal string, files []protocol.WorkspaceFile) workspaceIntent {
 	lower := strings.ToLower(strings.TrimSpace(goal))
 	intent := workspaceIntent{kind: protocol.NodeKindWorkspaceInspect}
-	intent.targetPath = findWorkspaceTargetPath(goal, files)
 	if command := extractBacktickCommand(goal); command != "" {
 		intent.kind = protocol.NodeKindWorkspaceCommand
 		intent.command = command
@@ -272,24 +272,32 @@ func inferWorkspaceIntent(goal string, files []protocol.WorkspaceFile) workspace
 	case containsAny(lower, "search ", "grep ", "查找", "搜索", "find "):
 		intent.kind = protocol.NodeKindWorkspaceSearch
 		intent.searchQuery = extractSearchQuery(goal)
-	case containsAny(lower, "edit ", "update ", "rewrite ", "fix ", "modify ", "修改", "更新", "改写", "修复"):
+	case containsAny(lower, "edit ", "update ", "rewrite ", "fix ", "modify ", "create ", "add ", "修改", "更新", "改写", "修复", "创建", "新增"):
 		intent.kind = protocol.NodeKindWorkspaceEdit
 	case containsAny(lower, "list files", "show files", "tree", "目录", "列出", "文件"):
 		intent.kind = protocol.NodeKindWorkspaceInspect
 	default:
 		intent.kind = protocol.NodeKindWorkspaceInspect
 	}
+	intent.targetPath = findWorkspaceTargetPath(goal, files, intent.kind != protocol.NodeKindWorkspaceEdit)
 	return intent
 }
 
-func findWorkspaceTargetPath(goal string, files []protocol.WorkspaceFile) string {
+func findWorkspaceTargetPath(goal string, files []protocol.WorkspaceFile, allowDefault bool) string {
 	lower := strings.ToLower(goal)
+	if explicit := extractWorkspacePathMention(goal); explicit != "" {
+		if indexed := matchIndexedWorkspacePath(explicit, files); indexed != "" {
+			return indexed
+		}
+		return explicit
+	}
 	best := ""
 	bestScore := 0
 	for _, file := range files {
 		base := strings.ToLower(filepathBase(file.Path))
+		filePath := strings.ToLower(file.Path)
 		score := 0
-		if strings.Contains(lower, file.Path) {
+		if strings.Contains(lower, filePath) {
 			score += 10
 		}
 		if base != "" && strings.Contains(lower, base) {
@@ -303,7 +311,7 @@ func findWorkspaceTargetPath(goal string, files []protocol.WorkspaceFile) string
 			best = file.Path
 		}
 	}
-	if bestScore == 0 {
+	if bestScore == 0 && allowDefault {
 		for _, file := range files {
 			if strings.EqualFold(filepathBase(file.Path), "README.md") {
 				return file.Path
@@ -311,6 +319,77 @@ func findWorkspaceTargetPath(goal string, files []protocol.WorkspaceFile) string
 		}
 	}
 	return best
+}
+
+func matchIndexedWorkspacePath(explicit string, files []protocol.WorkspaceFile) string {
+	key := workspacePathMatchKey(explicit)
+	if key == "" {
+		return ""
+	}
+	for _, file := range files {
+		if workspacePathMatchKey(file.Path) == key {
+			return file.Path
+		}
+	}
+	if strings.Contains(key, "/") {
+		return ""
+	}
+	match := ""
+	for _, file := range files {
+		if workspacePathMatchKey(filepathBase(file.Path)) != key {
+			continue
+		}
+		if match != "" {
+			return ""
+		}
+		match = file.Path
+	}
+	return match
+}
+
+func workspacePathMatchKey(value string) string {
+	value = strings.TrimSpace(strings.ReplaceAll(value, "\\", "/"))
+	if value == "" {
+		return ""
+	}
+	value = path.Clean(value)
+	if value == "." {
+		return ""
+	}
+	value = strings.TrimPrefix(value, "./")
+	return strings.ToLower(value)
+}
+
+func extractWorkspacePathMention(goal string) string {
+	for _, segment := range backtickSegments(goal) {
+		if pathLooksLikeWorkspaceFile(segment) {
+			return strings.TrimSpace(segment)
+		}
+	}
+	for _, field := range strings.Fields(goal) {
+		field = strings.Trim(field, " \t\r\n,.;:()[]{}<>\"'")
+		if pathLooksLikeWorkspaceFile(field) {
+			return field
+		}
+	}
+	return ""
+}
+
+func pathLooksLikeWorkspaceFile(value string) bool {
+	value = strings.TrimSpace(value)
+	if value == "" || strings.ContainsAny(value, "\n\r") {
+		return false
+	}
+	if strings.Contains(value, "://") || strings.ContainsAny(value, "*?") {
+		return false
+	}
+	ext := strings.ToLower(filepathExt(value))
+	switch ext {
+	case ".md", ".txt", ".go", ".py", ".js", ".ts", ".tsx", ".jsx", ".json", ".yaml", ".yml", ".toml", ".tex", ".csv":
+		return true
+	default:
+		return false
+	}
 }
 
 func extractSearchQuery(goal string) string {
@@ -338,15 +417,33 @@ func extractSearchQuery(goal string) string {
 }
 
 func extractBacktickCommand(goal string) string {
-	start := strings.Index(goal, "`")
-	if start < 0 {
-		return ""
+	lower := strings.ToLower(goal)
+	commandContext := containsAny(lower, "run ", "execute ", "shell", "command", "terminal", "运行", "执行", "命令")
+	for _, segment := range backtickSegments(goal) {
+		segment = strings.TrimSpace(segment)
+		if segment == "" {
+			continue
+		}
+		if !commandContext && pathLooksLikeWorkspaceFile(segment) {
+			continue
+		}
+		return segment
 	}
-	end := strings.Index(goal[start+1:], "`")
-	if end < 0 {
-		return ""
+	return ""
+}
+
+func backtickSegments(value string) []string {
+	parts := strings.Split(value, "`")
+	if len(parts) < 3 {
+		return nil
 	}
-	return strings.TrimSpace(goal[start+1 : start+1+end])
+	segments := make([]string, 0, len(parts)/2)
+	for i := 1; i < len(parts); i += 2 {
+		if segment := strings.TrimSpace(parts[i]); segment != "" {
+			segments = append(segments, segment)
+		}
+	}
+	return segments
 }
 
 func containsAny(input string, tokens ...string) bool {
@@ -410,13 +507,22 @@ func (a *Agent) executeWorkspaceEdit(ctx context.Context, store *storage.Store, 
 		return "", fmt.Errorf("workspace edit task requires a concrete target file")
 	}
 	if approval, err := store.LoadPendingApproval(sessionID); err == nil && approval != nil {
-		if request, ok := findWorkspaceEditPreviewRequest(approval, nodeID, intent.targetPath); ok {
-			if summary, applied, applyErr := a.applyWorkspaceEditPreview(store, intent, request); applied || applyErr != nil {
-				return summary, applyErr
+		if len(approval.Requests) > 0 {
+			request, ok := findWorkspaceEditPreviewRequest(approval, nodeID, intent.targetPath)
+			if !ok {
+				return "", fmt.Errorf("approved workspace edit preview not found for %s; regenerate the permission request", nodeID)
 			}
+			if summary, applied, applyErr := a.applyWorkspaceEditPreview(store, intent, request); applyErr != nil {
+				return summary, applyErr
+			} else if applied {
+				return summary, nil
+			}
+			return "", fmt.Errorf("approved workspace edit preview is unavailable for %s; regenerate the permission request", intent.targetPath)
 		}
+	} else if err != nil {
+		return "", err
 	}
-	content, err := a.tools.ReadWorkspaceFile(store, intent.targetPath)
+	content, _, err := a.readWorkspaceFileForEdit(store, intent.targetPath)
 	if err != nil {
 		return "", err
 	}

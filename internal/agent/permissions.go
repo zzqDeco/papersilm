@@ -4,7 +4,9 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 	"time"
@@ -206,7 +208,7 @@ func (a *Agent) prepareWorkspaceEditPreview(ctx context.Context, store *storage.
 	if targetPath == "" {
 		return protocol.PermissionPreview{Kind: "error", Summary: "workspace edit requires a concrete target file"}
 	}
-	content, err := a.tools.ReadWorkspaceFile(store, targetPath)
+	content, existed, err := a.readWorkspaceFileForEdit(store, targetPath)
 	if err != nil {
 		return protocol.PermissionPreview{Kind: "error", Summary: err.Error()}
 	}
@@ -214,11 +216,17 @@ func (a *Agent) prepareWorkspaceEditPreview(ctx context.Context, store *storage.
 	if err != nil {
 		return protocol.PermissionPreview{Kind: "error", Summary: err.Error()}
 	}
+	summary := fmt.Sprintf("Create %s", targetPath)
+	oldContentHash := ""
+	if existed {
+		summary = fmt.Sprintf("Update %s", targetPath)
+		oldContentHash = contentHash(content)
+	}
 	return protocol.PermissionPreview{
 		Kind:           "diff",
-		Summary:        firstNonEmpty(strings.TrimSpace(rewritten.Summary), fmt.Sprintf("Update %s", targetPath)),
+		Summary:        firstNonEmpty(strings.TrimSpace(rewritten.Summary), summary),
 		Diff:           compactUnifiedDiff(targetPath, content, rewritten.Content),
-		OldContentHash: contentHash(content),
+		OldContentHash: oldContentHash,
 		NewContent:     rewritten.Content,
 	}
 }
@@ -227,17 +235,34 @@ func (a *Agent) applyWorkspaceEditPreview(store *storage.Store, intent workspace
 	if strings.TrimSpace(request.TargetPath) == "" || request.Preview.Kind != "diff" || request.Preview.NewContent == "" {
 		return "", false, nil
 	}
-	current, err := a.tools.ReadWorkspaceFile(store, request.TargetPath)
+	current, existed, err := a.readWorkspaceFileForEdit(store, request.TargetPath)
 	if err != nil {
 		return "", true, err
 	}
-	if got := contentHash(current); request.Preview.OldContentHash != "" && got != request.Preview.OldContentHash {
+	if request.Preview.OldContentHash == "" {
+		if existed {
+			return "", true, fmt.Errorf("file was created since approval preview was created: %s", request.TargetPath)
+		}
+	} else if got := contentHash(current); got != request.Preview.OldContentHash {
 		return "", true, fmt.Errorf("file changed since approval preview was created: %s", request.TargetPath)
 	}
 	if err := a.tools.WriteWorkspaceFile(store, request.TargetPath, request.Preview.NewContent); err != nil {
 		return "", true, err
 	}
 	return firstNonEmpty(request.Preview.Summary, fmt.Sprintf("Updated %s", request.TargetPath)), true, nil
+}
+
+func (a *Agent) readWorkspaceFileForEdit(store *storage.Store, targetPath string) (string, bool, error) {
+	content, err := a.tools.ReadWorkspaceFile(store, targetPath)
+	if err == nil {
+		return content, true, nil
+	}
+	// Workspace edits may intentionally create new files. Treat a missing
+	// target as an empty draft and let preview application detect conflicts.
+	if errors.Is(err, os.ErrNotExist) {
+		return "", false, nil
+	}
+	return "", false, err
 }
 
 func contentHash(content string) string {

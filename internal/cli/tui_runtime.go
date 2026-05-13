@@ -168,12 +168,26 @@ func (r *tuiRuntimeManager) discoverModels(profile string) ([]string, error) {
 	if !ok {
 		return nil, fmt.Errorf("provider profile not found: %s", profile)
 	}
+	timeout := providerDiscoveryTimeout(provider)
+	ctx, cancel := context.WithTimeout(r.ctx, timeout)
+	defer cancel()
 	switch provider.Provider {
 	case config.ProviderOllama:
-		return discoverOllamaModels(provider)
+		return discoverOllamaModels(ctx, provider)
 	default:
-		return discoverOpenAICompatibleModels(provider)
+		return discoverOpenAICompatibleModels(ctx, provider)
 	}
+}
+
+func providerDiscoveryTimeout(provider config.ProviderConfig) time.Duration {
+	timeout, err := time.ParseDuration(strings.TrimSpace(provider.Timeout))
+	if err != nil || timeout <= 0 {
+		return 15 * time.Second
+	}
+	if timeout > 30*time.Second {
+		return 30 * time.Second
+	}
+	return timeout
 }
 
 func providerProfileBlocked(provider config.ProviderConfig) (bool, string) {
@@ -205,12 +219,12 @@ type ollamaModelsResponse struct {
 	} `json:"models"`
 }
 
-func discoverOpenAICompatibleModels(provider config.ProviderConfig) ([]string, error) {
+func discoverOpenAICompatibleModels(ctx context.Context, provider config.ProviderConfig) ([]string, error) {
 	baseURL := strings.TrimRight(strings.TrimSpace(provider.BaseURL), "/")
 	if baseURL == "" {
 		baseURL = "https://api.openai.com/v1"
 	}
-	req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, baseURL+"/models", nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, baseURL+"/models", nil)
 	if err != nil {
 		return nil, err
 	}
@@ -240,9 +254,9 @@ func discoverOpenAICompatibleModels(provider config.ProviderConfig) ([]string, e
 	return uniqueStrings(models), nil
 }
 
-func discoverOllamaModels(provider config.ProviderConfig) ([]string, error) {
+func discoverOllamaModels(ctx context.Context, provider config.ProviderConfig) ([]string, error) {
 	baseURL := strings.TrimRight(strings.TrimSpace(provider.BaseURL), "/")
-	req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, baseURL+"/api/tags", nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, baseURL+"/api/tags", nil)
 	if err != nil {
 		return nil, err
 	}
