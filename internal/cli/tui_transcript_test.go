@@ -484,8 +484,31 @@ func TestExecutionToTranscriptEntriesBuildsPermissionDecisionMessages(t *testing
 	if entries[0].Subtype != transcriptSubtypeApprovalRejected {
 		t.Fatalf("expected rejected subtype, got %q", entries[0].Subtype)
 	}
-	if !strings.Contains(entries[0].Body, "Run command") || !strings.Contains(entries[0].Body, "feedback: use unit tests only") {
+	if !strings.Contains(entries[0].Body, "Rejected with feedback.") ||
+		!strings.Contains(entries[0].Body, "Command: go test ./...") ||
+		!strings.Contains(entries[0].Body, "Feedback: use unit tests only") {
 		t.Fatalf("expected command and feedback in body, got %q", entries[0].Body)
+	}
+
+	entries = executionToTranscriptEntries("/permission accept-session command-prefix", before, after, "Permission decision: accept-session")
+	if len(entries) == 0 {
+		t.Fatalf("expected permission decision entry")
+	}
+	if entries[0].Subtype != transcriptSubtypeApprovalApproved {
+		t.Fatalf("expected approved subtype, got %q", entries[0].Subtype)
+	}
+	for _, want := range []string{"Allowed during this session.", "Command: go test ./...", "Scope: command prefix"} {
+		if !strings.Contains(entries[0].Body, want) {
+			t.Fatalf("expected %q in accept-session body, got %q", want, entries[0].Body)
+		}
+	}
+
+	entries = executionToTranscriptEntries("/permission reject node", before, after, "Permission decision: reject")
+	if len(entries) == 0 {
+		t.Fatalf("expected permission decision entry")
+	}
+	if strings.TrimSpace(entries[0].Body) != "" {
+		t.Fatalf("expected no-feedback rejection to stay compact, got %q", entries[0].Body)
 	}
 }
 
