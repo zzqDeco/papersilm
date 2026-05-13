@@ -7,6 +7,11 @@ import (
 )
 
 func (m *tuiModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	if m.shouldCaptureApprovalFeedbackKey(msg) {
+		m.handleApprovalFeedbackInput(msg)
+		m.reflow()
+		return m, nil
+	}
 	action := tuiui.RouteKey(m.keyContexts(), msg.String())
 	switch action {
 	case tuiui.ActionQuit:
