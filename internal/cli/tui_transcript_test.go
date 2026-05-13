@@ -829,6 +829,42 @@ func TestApprovalFeedbackModeCapturesYNAsText(t *testing.T) {
 	}
 }
 
+func TestPermissionOptionRowDetailShowsSessionScopeTarget(t *testing.T) {
+	t.Parallel()
+
+	commandDetail := permissionOptionRowDetail(
+		protocol.PermissionOption{Value: tuiPermissionAcceptSession, Description: "Allow this command prefix for this session", Scope: "command-prefix"},
+		protocol.PermissionRequest{Preview: protocol.PermissionPreview{CommandPrefix: "go test"}},
+	)
+	if !strings.HasPrefix(commandDetail, "prefix go test") {
+		t.Fatalf("expected command prefix target in detail, got %q", commandDetail)
+	}
+
+	commandFallbackDetail := permissionOptionRowDetail(
+		protocol.PermissionOption{Value: tuiPermissionAcceptSession, Description: "Allow this command prefix for this session", Scope: "command-prefix"},
+		protocol.PermissionRequest{Command: "npm run test -- --watch"},
+	)
+	if !strings.HasPrefix(commandFallbackDetail, "prefix npm run") {
+		t.Fatalf("expected command prefix fallback in detail, got %q", commandFallbackDetail)
+	}
+
+	pathDetail := permissionOptionRowDetail(
+		protocol.PermissionOption{Value: tuiPermissionAcceptSession, Description: "Allow edits to this file for this session", Scope: "path"},
+		protocol.PermissionRequest{TargetPath: "README.md"},
+	)
+	if !strings.HasPrefix(pathDetail, "path README.md") {
+		t.Fatalf("expected path target in detail, got %q", pathDetail)
+	}
+
+	directoryDetail := permissionOptionRowDetail(
+		protocol.PermissionOption{Value: tuiPermissionAcceptSession, Description: "Allow this directory for this session", Scope: "directory"},
+		protocol.PermissionRequest{TargetPath: "docs/README.md"},
+	)
+	if !strings.HasPrefix(directoryDetail, "directory docs") || strings.Contains(directoryDetail, "docs/README.md") {
+		t.Fatalf("expected directory target in detail, got %q", directoryDetail)
+	}
+}
+
 func TestPermissionPreviewTextShowsCommandContext(t *testing.T) {
 	t.Parallel()
 
