@@ -942,6 +942,8 @@ func (m *tuiModel) appendTranscriptProjection(entry protocol.TranscriptEntry) (b
 	case message.Type == tuiui.UIMessageActivity || visibility == protocol.TranscriptVisibilityActivity || presentation == protocol.TranscriptPresentationGrouped:
 		m.upsertActivityItem(entry)
 		return true, false
+	case m.shouldRenderApprovalAsStickyPrompt(entry):
+		return false, false
 	default:
 		m.activityCount = 0
 		m.activityStarted = time.Time{}
@@ -1601,9 +1603,10 @@ func (m *tuiModel) renderTranscriptSearchBar(width int) string {
 }
 
 func (m *tuiModel) renderTimelineContent(width int) string {
-	keys := make([]string, 0, len(m.items))
-	versions := make([]string, 0, len(m.items))
-	for i, item := range m.items {
+	items := m.visibleTimelineItems()
+	keys := make([]string, 0, len(items))
+	versions := make([]string, 0, len(items))
+	for i, item := range items {
 		key := strings.TrimSpace(item.ID)
 		if key == "" {
 			key = fmt.Sprintf("%s_%d_%d", item.Kind, item.CreatedAt.UnixNano(), i)
@@ -1612,8 +1615,28 @@ func (m *tuiModel) renderTimelineContent(width int) string {
 		versions = append(versions, timelineItemVersion(item))
 	}
 	return m.messageViewport.ContentByKeyVersion(width, keys, versions, func(index int, width int) string {
-		return m.renderTimelineItem(m.items[index], width)
+		return m.renderTimelineItem(items[index], width)
 	})
+}
+
+func (m *tuiModel) visibleTimelineItems() []tuiTimelineItem {
+	if !m.approvalPanelActive() {
+		return m.items
+	}
+	out := make([]tuiTimelineItem, 0, len(m.items))
+	for _, item := range m.items {
+		if item.Kind == tuiItemApproval && item.Subtype == transcriptSubtypeApprovalRequired {
+			continue
+		}
+		out = append(out, item)
+	}
+	return out
+}
+
+func (m *tuiModel) shouldRenderApprovalAsStickyPrompt(entry protocol.TranscriptEntry) bool {
+	return m.approvalPanelActive() &&
+		entry.Type == protocol.TranscriptEntryApproval &&
+		entry.Subtype == transcriptSubtypeApprovalRequired
 }
 
 func timelineItemVersion(item tuiTimelineItem) string {

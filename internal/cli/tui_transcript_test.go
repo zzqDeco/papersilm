@@ -551,6 +551,54 @@ func TestApprovalRequiredRendersDecisionOptions(t *testing.T) {
 	}
 }
 
+func TestPendingApprovalUsesStickyPromptNotTimelineLog(t *testing.T) {
+	t.Parallel()
+
+	model := newTestTUIModel()
+	model.snapshot.Meta.State = protocol.SessionStateAwaitingApproval
+	model.snapshot.Meta.ApprovalPending = true
+	model.snapshot.Approval = &protocol.ApprovalRequest{
+		ActiveRequestID: "req_edit",
+		Requests: []protocol.PermissionRequest{
+			{
+				RequestID:  "req_edit",
+				Tool:       string(protocol.NodeKindWorkspaceEdit),
+				Operation:  "write",
+				Title:      "Edit file",
+				Subtitle:   "README.md",
+				Question:   "Do you want to make this edit?",
+				TargetPath: "README.md",
+				Preview:    protocol.PermissionPreview{Kind: "diff", Diff: "--- README.md\n+++ README.md\n+hello"},
+				Options: []protocol.PermissionOption{
+					{Value: tuiPermissionAcceptOnce, Label: "Yes", Scope: "node", Feedback: tuiPermissionFeedbackAccept},
+					{Value: tuiPermissionReject, Label: "No", Scope: "node", Feedback: tuiPermissionFeedbackReject},
+				},
+			},
+		},
+	}
+	entry, ok := pendingApprovalTranscriptEntry(model.snapshot)
+	if !ok {
+		t.Fatalf("expected pending approval entry")
+	}
+	model.appendTranscript(entry, false)
+	model.reflow()
+
+	timeline := model.renderTimelineContent(80)
+	if strings.Contains(timeline, "Approval Required") || strings.Contains(timeline, "Edit file") {
+		t.Fatalf("expected pending approval to stay out of main timeline, got:\n%s", timeline)
+	}
+	main := model.renderMainScreen()
+	for _, want := range []string{"Edit file", "README.md", "❯ Yes", "No"} {
+		if !strings.Contains(main, want) {
+			t.Fatalf("expected sticky permission prompt to contain %q, got:\n%s", want, main)
+		}
+	}
+	transcript := model.renderTranscriptContent(80)
+	if !strings.Contains(transcript, "Approval Required") || !strings.Contains(transcript, "Edit file") {
+		t.Fatalf("expected transcript to retain approval history, got:\n%s", transcript)
+	}
+}
+
 func TestApprovalContextOwnsKeyboardButPreservesDraft(t *testing.T) {
 	t.Parallel()
 
