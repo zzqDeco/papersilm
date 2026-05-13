@@ -551,6 +551,142 @@ func TestApprovalRequiredRendersDecisionOptions(t *testing.T) {
 	}
 }
 
+func TestPendingApprovalUsesStickyPromptNotTimelineLog(t *testing.T) {
+	t.Parallel()
+
+	model := newTestTUIModel()
+	model.snapshot.Meta.State = protocol.SessionStateAwaitingApproval
+	model.snapshot.Meta.ApprovalPending = true
+	model.snapshot.Approval = &protocol.ApprovalRequest{
+		ActiveRequestID: "req_edit",
+		Requests: []protocol.PermissionRequest{
+			{
+				RequestID:  "req_edit",
+				Tool:       string(protocol.NodeKindWorkspaceEdit),
+				Operation:  "write",
+				Title:      "Edit file",
+				Subtitle:   "README.md",
+				Question:   "Do you want to make this edit?",
+				TargetPath: "README.md",
+				Preview:    protocol.PermissionPreview{Kind: "diff", Diff: "--- README.md\n+++ README.md\n+hello"},
+				Options: []protocol.PermissionOption{
+					{Value: tuiPermissionAcceptOnce, Label: "Yes", Scope: "node", Feedback: tuiPermissionFeedbackAccept},
+					{Value: tuiPermissionReject, Label: "No", Scope: "node", Feedback: tuiPermissionFeedbackReject},
+				},
+			},
+		},
+	}
+	entry, ok := pendingApprovalTranscriptEntry(model.snapshot)
+	if !ok {
+		t.Fatalf("expected pending approval entry")
+	}
+	model.appendTranscript(entry, false)
+	model.reflow()
+
+	timeline := model.renderTimelineContent(80)
+	if strings.Contains(timeline, "Approval Required") || strings.Contains(timeline, "Edit file") {
+		t.Fatalf("expected pending approval to stay out of main timeline, got:\n%s", timeline)
+	}
+	main := model.renderMainScreen()
+	for _, want := range []string{"Edit file", "README.md", "❯ Yes", "No"} {
+		if !strings.Contains(main, want) {
+			t.Fatalf("expected sticky permission prompt to contain %q, got:\n%s", want, main)
+		}
+	}
+	transcript := model.renderTranscriptContent(80)
+	if !strings.Contains(transcript, "Approval Required") || !strings.Contains(transcript, "Edit file") {
+		t.Fatalf("expected transcript to retain approval history, got:\n%s", transcript)
+	}
+}
+
+func TestApprovalRequiredDoesNotReappearAfterResolution(t *testing.T) {
+	t.Parallel()
+
+	model := newTestTUIModel()
+	model.snapshot.Meta.State = protocol.SessionStateAwaitingApproval
+	model.snapshot.Meta.ApprovalPending = true
+	entry, ok := pendingApprovalTranscriptEntry(model.snapshot)
+	if !ok {
+		t.Fatalf("expected pending approval entry")
+	}
+	model.appendItem(timelineItemFromTranscriptEntry(entry))
+
+	model.snapshot.Meta.State = protocol.SessionStateCompleted
+	model.snapshot.Meta.ApprovalPending = false
+	model.snapshot.Approval = nil
+	model.appendTranscript(newTranscriptEntry(
+		model.snapshot.Meta.SessionID,
+		protocol.TranscriptEntryApproval,
+		"✓ Approved",
+		"Permission granted.",
+		withTranscriptSubtype(transcriptSubtypeApprovalApproved),
+	), false)
+	model.reflow()
+
+	timeline := model.renderTimelineContent(80)
+	if strings.Contains(timeline, "Approval Required") {
+		t.Fatalf("stale approval.required should remain hidden after resolution, got:\n%s", timeline)
+	}
+	if !strings.Contains(timeline, "✓ Approved") {
+		t.Fatalf("expected approval result to remain visible, got:\n%s", timeline)
+	}
+}
+
+func TestApprovalRequiredResetsActivityGrouping(t *testing.T) {
+	t.Parallel()
+
+	model := newTestTUIModel()
+	model.items = nil
+	model.messageViewport.Reset()
+
+	model.appendTranscript(protocol.TranscriptEntry{
+		ID:           "p1",
+		SessionID:    "sess_test",
+		Type:         protocol.TranscriptEntryProgress,
+		Subtype:      string(protocol.EventProgress),
+		Title:        "Progress",
+		Body:         "started · tool=workspace_search · node=search_readme",
+		Visibility:   protocol.TranscriptVisibilityActivity,
+		Presentation: protocol.TranscriptPresentationGrouped,
+		CreatedAt:    time.Now().UTC(),
+	}, false)
+	model.appendTranscript(protocol.TranscriptEntry{
+		ID:        "approval",
+		SessionID: "sess_test",
+		Type:      protocol.TranscriptEntryApproval,
+		Subtype:   transcriptSubtypeApprovalRequired,
+		Title:     "Approval Required",
+		Body:      "Edit file · README.md",
+		CreatedAt: time.Now().UTC(),
+	}, false)
+	model.appendTranscript(protocol.TranscriptEntry{
+		ID:           "p2",
+		SessionID:    "sess_test",
+		Type:         protocol.TranscriptEntryProgress,
+		Subtype:      string(protocol.EventProgress),
+		Title:        "Progress",
+		Body:         "started · tool=workspace_inspect · node=read_readme",
+		Visibility:   protocol.TranscriptVisibilityActivity,
+		Presentation: protocol.TranscriptPresentationGrouped,
+		CreatedAt:    time.Now().UTC(),
+	}, false)
+
+	if len(model.items) != 2 {
+		t.Fatalf("expected separate activity rows across hidden approval boundary, got %+v", model.items)
+	}
+	firstBody := model.items[0].Body
+	secondBody := model.items[1].Body
+	if !strings.Contains(firstBody, "1 search") {
+		t.Fatalf("expected pre-approval search activity to be preserved, got %q", firstBody)
+	}
+	if strings.Contains(secondBody, "search") || strings.Contains(secondBody, "2 updates") {
+		t.Fatalf("expected post-approval activity to start a fresh group, got %q", secondBody)
+	}
+	if !strings.Contains(secondBody, "1 read") {
+		t.Fatalf("expected fresh read activity after approval, got %q", secondBody)
+	}
+}
+
 func TestApprovalContextOwnsKeyboardButPreservesDraft(t *testing.T) {
 	t.Parallel()
 

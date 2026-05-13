@@ -942,16 +942,24 @@ func (m *tuiModel) appendTranscriptProjection(entry protocol.TranscriptEntry) (b
 	case message.Type == tuiui.UIMessageActivity || visibility == protocol.TranscriptVisibilityActivity || presentation == protocol.TranscriptPresentationGrouped:
 		m.upsertActivityItem(entry)
 		return true, false
+	case isApprovalRequiredTranscriptEntry(entry):
+		m.resetActivityGrouping()
+		return false, false
 	default:
-		m.activityCount = 0
-		m.activityStarted = time.Time{}
-		m.activityStats = make(map[string]int)
+		m.resetActivityGrouping()
 		m.appendItem(timelineItemFromUIMessage(message))
 		return true, true
 	}
 }
 
+func (m *tuiModel) resetActivityGrouping() {
+	m.activityCount = 0
+	m.activityStarted = time.Time{}
+	m.activityStats = make(map[string]int)
+}
+
 func (m *tuiModel) upsertActivityItem(entry protocol.TranscriptEntry) {
+	newGroup := m.activityCount == 0
 	if m.activityCount == 0 {
 		m.activityStarted = entry.CreatedAt
 		if m.activityStarted.IsZero() {
@@ -966,13 +974,13 @@ func (m *tuiModel) upsertActivityItem(entry protocol.TranscriptEntry) {
 		m.activityStats[key]++
 	}
 	item := timelineItemFromTranscriptEntry(entry)
-	item.ID = "activity.grouped"
+	item.ID = fmt.Sprintf("activity.grouped.%d", m.activityStarted.UnixNano())
 	item.Kind = tuiItemProgress
 	item.Subtype = "activity.grouped"
 	item.Title = "Activity"
 	item.Body = activitySummary(entry, m.activityStats, m.activityCount, m.activityStarted)
 	item.CreatedAt = m.activityStarted
-	if len(m.items) > 0 && m.items[len(m.items)-1].Kind == tuiItemProgress && m.items[len(m.items)-1].Subtype == "activity.grouped" {
+	if !newGroup && len(m.items) > 0 && m.items[len(m.items)-1].Kind == tuiItemProgress && m.items[len(m.items)-1].Subtype == "activity.grouped" {
 		m.replaceLastItem(item)
 		return
 	}
@@ -1601,9 +1609,10 @@ func (m *tuiModel) renderTranscriptSearchBar(width int) string {
 }
 
 func (m *tuiModel) renderTimelineContent(width int) string {
-	keys := make([]string, 0, len(m.items))
-	versions := make([]string, 0, len(m.items))
-	for i, item := range m.items {
+	items := m.visibleTimelineItems()
+	keys := make([]string, 0, len(items))
+	versions := make([]string, 0, len(items))
+	for i, item := range items {
 		key := strings.TrimSpace(item.ID)
 		if key == "" {
 			key = fmt.Sprintf("%s_%d_%d", item.Kind, item.CreatedAt.UnixNano(), i)
@@ -1612,8 +1621,24 @@ func (m *tuiModel) renderTimelineContent(width int) string {
 		versions = append(versions, timelineItemVersion(item))
 	}
 	return m.messageViewport.ContentByKeyVersion(width, keys, versions, func(index int, width int) string {
-		return m.renderTimelineItem(m.items[index], width)
+		return m.renderTimelineItem(items[index], width)
 	})
+}
+
+func (m *tuiModel) visibleTimelineItems() []tuiTimelineItem {
+	out := make([]tuiTimelineItem, 0, len(m.items))
+	for _, item := range m.items {
+		if item.Kind == tuiItemApproval && item.Subtype == transcriptSubtypeApprovalRequired {
+			continue
+		}
+		out = append(out, item)
+	}
+	return out
+}
+
+func isApprovalRequiredTranscriptEntry(entry protocol.TranscriptEntry) bool {
+	return entry.Type == protocol.TranscriptEntryApproval &&
+		entry.Subtype == transcriptSubtypeApprovalRequired
 }
 
 func timelineItemVersion(item tuiTimelineItem) string {
