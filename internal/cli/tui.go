@@ -942,7 +942,7 @@ func (m *tuiModel) appendTranscriptProjection(entry protocol.TranscriptEntry) (b
 	case message.Type == tuiui.UIMessageActivity || visibility == protocol.TranscriptVisibilityActivity || presentation == protocol.TranscriptPresentationGrouped:
 		m.upsertActivityItem(entry)
 		return true, false
-	case m.shouldRenderApprovalAsStickyPrompt(entry):
+	case isApprovalRequiredTranscriptEntry(entry):
 		return false, false
 	default:
 		m.activityCount = 0
@@ -1620,9 +1620,6 @@ func (m *tuiModel) renderTimelineContent(width int) string {
 }
 
 func (m *tuiModel) visibleTimelineItems() []tuiTimelineItem {
-	if !m.approvalPanelActive() {
-		return m.items
-	}
 	out := make([]tuiTimelineItem, 0, len(m.items))
 	for _, item := range m.items {
 		if item.Kind == tuiItemApproval && item.Subtype == transcriptSubtypeApprovalRequired {
@@ -1633,9 +1630,8 @@ func (m *tuiModel) visibleTimelineItems() []tuiTimelineItem {
 	return out
 }
 
-func (m *tuiModel) shouldRenderApprovalAsStickyPrompt(entry protocol.TranscriptEntry) bool {
-	return m.approvalPanelActive() &&
-		entry.Type == protocol.TranscriptEntryApproval &&
+func isApprovalRequiredTranscriptEntry(entry protocol.TranscriptEntry) bool {
+	return entry.Type == protocol.TranscriptEntryApproval &&
 		entry.Subtype == transcriptSubtypeApprovalRequired
 }
 

@@ -599,6 +599,39 @@ func TestPendingApprovalUsesStickyPromptNotTimelineLog(t *testing.T) {
 	}
 }
 
+func TestApprovalRequiredDoesNotReappearAfterResolution(t *testing.T) {
+	t.Parallel()
+
+	model := newTestTUIModel()
+	model.snapshot.Meta.State = protocol.SessionStateAwaitingApproval
+	model.snapshot.Meta.ApprovalPending = true
+	entry, ok := pendingApprovalTranscriptEntry(model.snapshot)
+	if !ok {
+		t.Fatalf("expected pending approval entry")
+	}
+	model.appendItem(timelineItemFromTranscriptEntry(entry))
+
+	model.snapshot.Meta.State = protocol.SessionStateCompleted
+	model.snapshot.Meta.ApprovalPending = false
+	model.snapshot.Approval = nil
+	model.appendTranscript(newTranscriptEntry(
+		model.snapshot.Meta.SessionID,
+		protocol.TranscriptEntryApproval,
+		"✓ Approved",
+		"Permission granted.",
+		withTranscriptSubtype(transcriptSubtypeApprovalApproved),
+	), false)
+	model.reflow()
+
+	timeline := model.renderTimelineContent(80)
+	if strings.Contains(timeline, "Approval Required") {
+		t.Fatalf("stale approval.required should remain hidden after resolution, got:\n%s", timeline)
+	}
+	if !strings.Contains(timeline, "✓ Approved") {
+		t.Fatalf("expected approval result to remain visible, got:\n%s", timeline)
+	}
+}
+
 func TestApprovalContextOwnsKeyboardButPreservesDraft(t *testing.T) {
 	t.Parallel()
 
