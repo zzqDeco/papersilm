@@ -864,11 +864,67 @@ func TestApprovalDetailsPaneShowsEditDiffAndDecisionOptions(t *testing.T) {
 		"Diff preview",
 		"+hello",
 		"selected: Yes, during this session",
+		"Esc/Ctrl+E close details",
 		"Shift+Tab scope",
 	} {
 		if !strings.Contains(model.paneBody, want) {
 			t.Fatalf("expected %q in permission detail pane, got:\n%s", want, model.paneBody)
 		}
+	}
+}
+
+func TestApprovalDetailsPaneRefreshesAfterSelectionChanges(t *testing.T) {
+	t.Parallel()
+
+	model := newTestTUIModel()
+	model.snapshot.Meta.State = protocol.SessionStateAwaitingApproval
+	model.snapshot.Meta.ApprovalPending = true
+	model.snapshot.Approval = &protocol.ApprovalRequest{
+		ActiveRequestID: "req_edit",
+		Requests: []protocol.PermissionRequest{
+			{
+				RequestID:  "req_edit",
+				Tool:       string(protocol.NodeKindWorkspaceEdit),
+				Operation:  "write",
+				Title:      "Edit file",
+				TargetPath: "README.md",
+				Preview: protocol.PermissionPreview{
+					Kind: "diff",
+					Diff: "+hello",
+				},
+				Options: []protocol.PermissionOption{
+					{Value: tuiPermissionAcceptOnce, Label: "Yes", Scope: "node", Feedback: tuiPermissionFeedbackAccept},
+					{Value: tuiPermissionAcceptSession, Label: "Yes, during this session", Scope: "path", Feedback: tuiPermissionFeedbackAccept},
+					{Value: tuiPermissionReject, Label: "No", Scope: "node", Feedback: tuiPermissionFeedbackReject},
+				},
+			},
+		},
+	}
+
+	model.openApprovalExplanation()
+	if !strings.Contains(model.paneBody, "selected: Yes · node") {
+		t.Fatalf("expected initial selected option in pane, got:\n%s", model.paneBody)
+	}
+	model.moveApprovalSelection(1)
+	if !strings.Contains(model.paneBody, "selected: Yes, during this session · path") {
+		t.Fatalf("expected refreshed selected option in pane, got:\n%s", model.paneBody)
+	}
+}
+
+func TestApprovalExplainTogglesPermissionDetailsPane(t *testing.T) {
+	t.Parallel()
+
+	model := newTestTUIModel()
+	model.snapshot.Meta.State = protocol.SessionStateAwaitingApproval
+	model.snapshot.Meta.ApprovalPending = true
+
+	model.toggleApprovalExplanation()
+	if !model.paneVisible {
+		t.Fatalf("expected details pane to open")
+	}
+	model.toggleApprovalExplanation()
+	if model.paneVisible {
+		t.Fatalf("expected details pane to close")
 	}
 }
 

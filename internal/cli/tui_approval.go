@@ -17,6 +17,8 @@ const (
 
 	tuiPermissionFeedbackAccept = "accept"
 	tuiPermissionFeedbackReject = "reject"
+
+	tuiPermissionDetailsPaneTitle = "Permission Details"
 )
 
 func (m *tuiModel) approvalPanelActive() bool {
@@ -88,6 +90,7 @@ func (m *tuiModel) moveApprovalSelection(delta int) {
 	}
 	m.approvalSelection = next
 	m.approvalFeedbackMode = ""
+	m.refreshApprovalExplanationPane()
 }
 
 func (m *tuiModel) syncApprovalSelection() {
@@ -153,6 +156,7 @@ func (m *tuiModel) cycleApprovalScope() {
 			if options[next].Feedback == tuiPermissionFeedbackAccept && options[next].Scope != current.Scope {
 				m.approvalSelection = next
 				m.approvalFeedbackMode = ""
+				m.refreshApprovalExplanationPane()
 				return
 			}
 		}
@@ -162,6 +166,7 @@ func (m *tuiModel) cycleApprovalScope() {
 		if options[next].Value == current.Value && options[next].Scope != current.Scope {
 			m.approvalSelection = next
 			m.approvalFeedbackMode = ""
+			m.refreshApprovalExplanationPane()
 			return
 		}
 	}
@@ -169,13 +174,35 @@ func (m *tuiModel) cycleApprovalScope() {
 }
 
 func (m *tuiModel) openApprovalExplanation() {
+	m.openPane(tuiPermissionDetailsPaneTitle, m.permissionDetailPaneBody())
+}
+
+func (m *tuiModel) toggleApprovalExplanation() {
+	if m.paneVisible && m.paneTitle == tuiPermissionDetailsPaneTitle {
+		m.paneVisible = false
+		m.focus = tuiFocusInput
+		m.setMainStatus("Permission details closed")
+		return
+	}
+	m.openApprovalExplanation()
+}
+
+func (m *tuiModel) refreshApprovalExplanationPane() {
+	if !m.paneVisible || m.paneTitle != tuiPermissionDetailsPaneTitle {
+		return
+	}
+	m.paneBody = m.permissionDetailPaneBody()
+	m.pane.SetContent(m.renderPaneBody(max(20, m.width-8)))
+}
+
+func (m *tuiModel) permissionDetailPaneBody() string {
 	request, _ := m.activePermissionRequest()
 	options := m.approvalOptions()
 	selected := 0
 	if len(options) > 0 {
 		selected = clamp(m.approvalSelection, 0, len(options)-1)
 	}
-	m.openPane("Permission Details", permissionDetailPaneText(request, options, selected))
+	return permissionDetailPaneText(request, options, selected)
 }
 
 func permissionPreviewText(request protocol.PermissionRequest) string {
@@ -245,7 +272,7 @@ func permissionDetailPaneText(request protocol.PermissionRequest, options []prot
 		lines = appendPermissionDetailSection(lines, "Decision", permissionDecisionDetail(options, selected))
 	}
 
-	lines = appendPermissionDetailSection(lines, "Keys", "Enter/Y allow · N/Esc reject · Tab feedback · Shift+Tab scope · Ctrl+E close details")
+	lines = appendPermissionDetailSection(lines, "Keys", "Esc/Ctrl+E close details · Enter/Y allow · N reject · Tab feedback · Shift+Tab scope")
 	return strings.TrimSpace(strings.Join(lines, "\n"))
 }
 

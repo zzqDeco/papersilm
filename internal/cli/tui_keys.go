@@ -102,7 +102,7 @@ func (m *tuiModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.reflow()
 		return m, nil
 	case tuiui.ActionApprovalExplain:
-		m.openApprovalExplanation()
+		m.toggleApprovalExplanation()
 		m.reflow()
 		return m, nil
 	case tuiui.ActionHistoryPrev:
