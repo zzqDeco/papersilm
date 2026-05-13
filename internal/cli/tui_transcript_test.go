@@ -771,6 +771,36 @@ func TestApprovalScopeCyclesBetweenOnceAndSession(t *testing.T) {
 	}
 }
 
+func TestApprovalFeedbackModeCapturesYNAsText(t *testing.T) {
+	t.Parallel()
+
+	model := newTestTUIModel()
+	model.snapshot.Meta.State = protocol.SessionStateAwaitingApproval
+	model.snapshot.Meta.ApprovalPending = true
+	model.approvalFeedbackMode = tuiPermissionFeedbackReject
+
+	gotModel, cmd := model.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("n")})
+	if cmd != nil {
+		t.Fatalf("did not expect text feedback to submit a command")
+	}
+	updated := gotModel.(*tuiModel)
+	if updated.busy {
+		t.Fatalf("feedback text should not trigger rejection")
+	}
+	if updated.approvalFeedback != "n" {
+		t.Fatalf("expected n to be captured as feedback text, got %q", updated.approvalFeedback)
+	}
+
+	gotModel, cmd = updated.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("y")})
+	if cmd != nil {
+		t.Fatalf("did not expect text feedback to submit a command")
+	}
+	updated = gotModel.(*tuiModel)
+	if updated.approvalFeedback != "ny" {
+		t.Fatalf("expected y to be captured as feedback text, got %q", updated.approvalFeedback)
+	}
+}
+
 func TestPermissionPreviewTextShowsCommandContext(t *testing.T) {
 	t.Parallel()
 

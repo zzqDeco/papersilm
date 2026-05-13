@@ -259,6 +259,18 @@ func (m *tuiModel) handleApprovalFeedbackInput(msg tea.KeyMsg) bool {
 	return true
 }
 
+func (m *tuiModel) shouldCaptureApprovalFeedbackKey(msg tea.KeyMsg) bool {
+	if !m.approvalKeyboardActive() || m.approvalFeedbackMode == "" {
+		return false
+	}
+	switch msg.Type {
+	case tea.KeyRunes, tea.KeySpace, tea.KeyBackspace, tea.KeyDelete, tea.KeyCtrlJ:
+		return true
+	default:
+		return false
+	}
+}
+
 func (m *tuiModel) commitApprovalSelection(key string) (tea.Model, tea.Cmd) {
 	if m.busy {
 		m.setMainStatus("A run is already in progress")
