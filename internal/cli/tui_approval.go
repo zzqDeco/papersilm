@@ -17,6 +17,8 @@ const (
 
 	tuiPermissionFeedbackAccept = "accept"
 	tuiPermissionFeedbackReject = "reject"
+
+	tuiPermissionDetailsPaneTitle = "Permission Details"
 )
 
 func (m *tuiModel) approvalPanelActive() bool {
@@ -88,6 +90,7 @@ func (m *tuiModel) moveApprovalSelection(delta int) {
 	}
 	m.approvalSelection = next
 	m.approvalFeedbackMode = ""
+	m.refreshApprovalExplanationPane()
 }
 
 func (m *tuiModel) syncApprovalSelection() {
@@ -153,6 +156,7 @@ func (m *tuiModel) cycleApprovalScope() {
 			if options[next].Feedback == tuiPermissionFeedbackAccept && options[next].Scope != current.Scope {
 				m.approvalSelection = next
 				m.approvalFeedbackMode = ""
+				m.refreshApprovalExplanationPane()
 				return
 			}
 		}
@@ -162,6 +166,7 @@ func (m *tuiModel) cycleApprovalScope() {
 		if options[next].Value == current.Value && options[next].Scope != current.Scope {
 			m.approvalSelection = next
 			m.approvalFeedbackMode = ""
+			m.refreshApprovalExplanationPane()
 			return
 		}
 	}
@@ -169,29 +174,35 @@ func (m *tuiModel) cycleApprovalScope() {
 }
 
 func (m *tuiModel) openApprovalExplanation() {
+	m.openPane(tuiPermissionDetailsPaneTitle, m.permissionDetailPaneBody())
+}
+
+func (m *tuiModel) toggleApprovalExplanation() {
+	if m.paneVisible && m.paneTitle == tuiPermissionDetailsPaneTitle {
+		m.paneVisible = false
+		m.focus = tuiFocusInput
+		m.setMainStatus("Permission details closed")
+		return
+	}
+	m.openApprovalExplanation()
+}
+
+func (m *tuiModel) refreshApprovalExplanationPane() {
+	if !m.paneVisible || m.paneTitle != tuiPermissionDetailsPaneTitle {
+		return
+	}
+	m.paneBody = m.permissionDetailPaneBody()
+	m.pane.SetContent(m.renderPaneBody(max(20, m.width-8)))
+}
+
+func (m *tuiModel) permissionDetailPaneBody() string {
 	request, _ := m.activePermissionRequest()
-	lines := []string{
-		firstNonEmpty(request.Title, "Permission request"),
+	options := m.approvalOptions()
+	selected := 0
+	if len(options) > 0 {
+		selected = clamp(m.approvalSelection, 0, len(options)-1)
 	}
-	if request.Subtitle != "" {
-		lines = append(lines, "", request.Subtitle)
-	}
-	if request.Question != "" {
-		lines = append(lines, "", request.Question)
-	}
-	if request.Summary != "" {
-		lines = append(lines, "", request.Summary)
-	}
-	if request.TargetPath != "" {
-		lines = append(lines, "", "Target: "+request.TargetPath)
-	}
-	if request.Command != "" {
-		lines = append(lines, "", "Command:", request.Command)
-	}
-	if preview := permissionPreviewText(request); preview != "" {
-		lines = append(lines, "", "Preview:", preview)
-	}
-	m.openPane("Permission Details", strings.Join(lines, "\n"))
+	return permissionDetailPaneText(request, options, selected)
 }
 
 func permissionPreviewText(request protocol.PermissionRequest) string {
@@ -229,6 +240,124 @@ func permissionPreviewText(request protocol.PermissionRequest) string {
 		return strings.TrimSpace(request.Preview.Summary)
 	}
 	return ""
+}
+
+func permissionDetailPaneText(request protocol.PermissionRequest, options []protocol.PermissionOption, selected int) string {
+	lines := []string{firstNonEmpty(request.Title, "Permission request")}
+	if text := strings.TrimSpace(request.Question); text != "" {
+		lines = append(lines, text)
+	}
+	if text := strings.TrimSpace(request.Subtitle); text != "" {
+		lines = appendPermissionDetailSection(lines, "Context", text)
+	}
+	if text := strings.TrimSpace(request.Summary); text != "" {
+		lines = appendPermissionDetailSection(lines, "Summary", text)
+	}
+
+	if tool := permissionToolLine(request); tool != "" {
+		lines = appendPermissionDetailSection(lines, "Tool", tool)
+	}
+
+	switch request.Preview.Kind {
+	case "command":
+		lines = appendCommandPermissionDetails(lines, request)
+	case "diff":
+		lines = appendEditPermissionDetails(lines, request)
+	default:
+		lines = appendGenericPermissionDetails(lines, request)
+	}
+
+	if len(options) > 0 {
+		selected = clamp(selected, 0, len(options)-1)
+		lines = appendPermissionDetailSection(lines, "Decision", permissionDecisionDetail(options, selected))
+	}
+
+	lines = appendPermissionDetailSection(lines, "Keys", "Esc/Ctrl+E close details · Enter/Y allow · N reject · Tab feedback · Shift+Tab scope")
+	return strings.TrimSpace(strings.Join(lines, "\n"))
+}
+
+func appendCommandPermissionDetails(lines []string, request protocol.PermissionRequest) []string {
+	if command := strings.TrimSpace(request.Command); command != "" {
+		lines = appendPermissionDetailSection(lines, "Command", "$ "+command)
+	}
+	if cwd := strings.TrimSpace(request.Preview.Summary); cwd != "" {
+		lines = appendPermissionDetailSection(lines, "Working directory", cwd)
+	}
+	if prefix := strings.TrimSpace(request.Preview.CommandPrefix); prefix != "" {
+		lines = appendPermissionDetailSection(lines, "Session scope", prefix)
+	}
+	return appendPermissionDetailSection(lines, "Risk", "Shell commands can read, write, or execute workspace files. Only allow commands you trust.")
+}
+
+func appendEditPermissionDetails(lines []string, request protocol.PermissionRequest) []string {
+	if target := strings.TrimSpace(request.TargetPath); target != "" {
+		lines = appendPermissionDetailSection(lines, "Target", target)
+	}
+	if diff := strings.TrimSpace(request.Preview.Diff); diff != "" {
+		return appendPermissionDetailSection(lines, "Diff preview", diff)
+	}
+	if preview := permissionPreviewText(request); preview != "" {
+		return appendPermissionDetailSection(lines, "Preview", preview)
+	}
+	return lines
+}
+
+func appendGenericPermissionDetails(lines []string, request protocol.PermissionRequest) []string {
+	if target := strings.TrimSpace(request.TargetPath); target != "" {
+		lines = appendPermissionDetailSection(lines, "Target", target)
+	}
+	if command := strings.TrimSpace(request.Command); command != "" {
+		lines = appendPermissionDetailSection(lines, "Command", "$ "+command)
+	}
+	if preview := permissionPreviewText(request); preview != "" {
+		lines = appendPermissionDetailSection(lines, "Preview", preview)
+	}
+	return lines
+}
+
+func appendPermissionDetailSection(lines []string, title string, body string) []string {
+	body = strings.TrimSpace(body)
+	if body == "" {
+		return lines
+	}
+	return append(lines, "", title, body)
+}
+
+func permissionToolLine(request protocol.PermissionRequest) string {
+	parts := make([]string, 0, 2)
+	if tool := strings.TrimSpace(request.Tool); tool != "" {
+		parts = append(parts, tool)
+	}
+	if operation := strings.TrimSpace(request.Operation); operation != "" {
+		parts = append(parts, operation)
+	}
+	return strings.Join(parts, " · ")
+}
+
+func permissionDecisionDetail(options []protocol.PermissionOption, selected int) string {
+	if len(options) == 0 {
+		return ""
+	}
+	selected = clamp(selected, 0, len(options)-1)
+	lines := []string{"selected: " + permissionOptionDetail(options[selected])}
+	for _, option := range options {
+		lines = append(lines, "  "+permissionOptionDetail(option))
+	}
+	return strings.Join(lines, "\n")
+}
+
+func permissionOptionDetail(option protocol.PermissionOption) string {
+	parts := []string{firstNonEmpty(strings.TrimSpace(option.Label), strings.TrimSpace(option.Value))}
+	if scope := strings.TrimSpace(option.Scope); scope != "" {
+		parts = append(parts, scope)
+	}
+	if feedback := strings.TrimSpace(option.Feedback); feedback != "" {
+		parts = append(parts, "feedback:"+feedback)
+	}
+	if description := strings.TrimSpace(option.Description); description != "" {
+		parts = append(parts, description)
+	}
+	return strings.Join(parts, " · ")
 }
 
 func (m *tuiModel) handleApprovalFeedbackInput(msg tea.KeyMsg) bool {
