@@ -928,6 +928,9 @@ func (m *tuiModel) appendEvent(event protocol.StreamEvent) {
 }
 
 func (m *tuiModel) appendTranscriptProjection(entry protocol.TranscriptEntry) (bool, bool) {
+	if hiddenActivityBoundary(entry) {
+		m.resetActivityGrouping()
+	}
 	message, ok := m.messagePipeline.Project(entry)
 	if !ok {
 		return false, false
@@ -956,6 +959,7 @@ func (m *tuiModel) resetActivityGrouping() {
 	m.activityCount = 0
 	m.activityStarted = time.Time{}
 	m.activityStats = make(map[string]int)
+	m.messagePipeline.ResetActivity()
 }
 
 func (m *tuiModel) upsertActivityItem(entry protocol.TranscriptEntry) {
@@ -2058,6 +2062,18 @@ func transcriptDisplayForEntry(entry protocol.TranscriptEntry) (protocol.Transcr
 	return visibility, presentation
 }
 
+func hiddenActivityBoundary(entry protocol.TranscriptEntry) bool {
+	if entry.Type != protocol.TranscriptEntrySystem {
+		return false
+	}
+	switch protocol.StreamEventType(entry.Subtype) {
+	case protocol.EventInit, protocol.EventSessionLoaded:
+		return true
+	default:
+		return false
+	}
+}
+
 func activitySummary(entry protocol.TranscriptEntry, stats map[string]int, count int, started time.Time) string {
 	verb := activityVerb(entry, stats)
 	last := strings.TrimSpace(entry.Body)
@@ -2166,6 +2182,9 @@ func activityVerb(entry protocol.TranscriptEntry, stats map[string]int) string {
 	if stats["write"] > 0 {
 		return "Editing workspace"
 	}
+	if stats["artifact"] > 0 {
+		return "Writing artifact"
+	}
 	if stats["command"] > 0 {
 		return "Running command"
 	}
@@ -2197,6 +2216,8 @@ func activityVerb(entry protocol.TranscriptEntry, stats map[string]int) string {
 func activityKey(entry protocol.TranscriptEntry) string {
 	text := strings.ToLower(strings.Join([]string{entry.Subtype, entry.Title, entry.Body}, " "))
 	switch {
+	case strings.Contains(text, "artifact_written") || strings.Contains(text, "artifact="):
+		return "artifact"
 	case strings.Contains(text, "workspace_search") || strings.Contains(text, "search"):
 		return "search"
 	case strings.Contains(text, "workspace_inspect") || strings.Contains(text, "read") || strings.Contains(text, "open"):
@@ -2227,15 +2248,17 @@ func activityStatsText(stats map[string]int) string {
 		return ""
 	}
 	ordered := []struct {
-		key   string
-		label string
+		key      string
+		singular string
+		plural   string
 	}{
-		{key: "read", label: "read"},
-		{key: "search", label: "search"},
-		{key: "write", label: "write"},
-		{key: "command", label: "command"},
-		{key: "download", label: "download"},
-		{key: "paper", label: "paper"},
+		{key: "read", singular: "read", plural: "reads"},
+		{key: "search", singular: "search", plural: "searches"},
+		{key: "write", singular: "write", plural: "writes"},
+		{key: "command", singular: "command", plural: "commands"},
+		{key: "artifact", singular: "artifact", plural: "artifacts"},
+		{key: "download", singular: "download", plural: "downloads"},
+		{key: "paper", singular: "paper", plural: "papers"},
 	}
 	parts := make([]string, 0, len(ordered))
 	for _, item := range ordered {
@@ -2243,9 +2266,9 @@ func activityStatsText(stats map[string]int) string {
 		if n <= 0 {
 			continue
 		}
-		label := item.label
+		label := item.singular
 		if n > 1 {
-			label += "s"
+			label = item.plural
 		}
 		parts = append(parts, fmt.Sprintf("%d %s", n, label))
 	}

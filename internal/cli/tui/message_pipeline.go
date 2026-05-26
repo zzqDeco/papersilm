@@ -43,6 +43,11 @@ func NewMessagePipeline() MessagePipeline {
 	return MessagePipeline{}
 }
 
+func (p *MessagePipeline) ResetActivity() {
+	p.activity = UIMessage{}
+	p.hasGroup = false
+}
+
 func (p *MessagePipeline) Project(entry protocol.TranscriptEntry) (UIMessage, bool) {
 	visibility := entry.Visibility
 	presentation := entry.Presentation
@@ -73,8 +78,7 @@ func (p *MessagePipeline) Project(entry protocol.TranscriptEntry) (UIMessage, bo
 	if visibility == protocol.TranscriptVisibilityActivity || presentation == protocol.TranscriptPresentationGrouped {
 		return p.projectActivity(msg), true
 	}
-	p.hasGroup = false
-	p.activity = UIMessage{}
+	p.ResetActivity()
 	return msg, true
 }
 
