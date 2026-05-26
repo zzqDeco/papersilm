@@ -337,6 +337,127 @@ func TestWorkspaceActivitySummarizesToolsInsteadOfUpdates(t *testing.T) {
 	}
 }
 
+func TestActivityStatsUseReadablePluralLabels(t *testing.T) {
+	t.Parallel()
+
+	model := newTestTUIModel()
+	model.items = nil
+	model.messageViewport.Reset()
+
+	for _, id := range []string{"p1", "p2"} {
+		model.appendTranscript(protocol.TranscriptEntry{
+			ID:           id,
+			SessionID:    "sess_test",
+			Type:         protocol.TranscriptEntryProgress,
+			Subtype:      string(protocol.EventProgress),
+			Title:        "Progress",
+			Body:         "started · tool=workspace_search · node=search_workspace",
+			Visibility:   protocol.TranscriptVisibilityActivity,
+			Presentation: protocol.TranscriptPresentationGrouped,
+			CreatedAt:    time.Now().UTC(),
+		}, false)
+	}
+
+	if len(model.items) != 1 {
+		t.Fatalf("expected one grouped activity item, got %+v", model.items)
+	}
+	body := model.items[0].Body
+	if !containsString(body, "2 searches") {
+		t.Fatalf("expected natural plural label, got %q", body)
+	}
+	if containsString(body, "searchs") {
+		t.Fatalf("did not expect awkward plural label, got %q", body)
+	}
+}
+
+func TestArtifactActivityUsesArtifactSemanticInsteadOfWorkspaceEdit(t *testing.T) {
+	t.Parallel()
+
+	model := newTestTUIModel()
+	model.items = nil
+	model.messageViewport.Reset()
+
+	entry, ok := transcriptEntryFromEvent(protocol.StreamEvent{
+		Type:      protocol.EventArtifactWritten,
+		SessionID: "sess_test",
+		Message:   "artifact written",
+		Payload: protocol.ArtifactManifest{
+			ArtifactID: "artifact_1",
+			Kind:       "paper_digest",
+		},
+		CreatedAt: time.Now().UTC(),
+	})
+	if !ok {
+		t.Fatalf("expected artifact event to map into transcript")
+	}
+	model.appendTranscript(entry, false)
+
+	if len(model.items) != 1 {
+		t.Fatalf("expected one grouped activity item, got %+v", model.items)
+	}
+	body := model.items[0].Body
+	if !containsString(body, "Writing artifact") || !containsString(body, "1 artifact") {
+		t.Fatalf("expected artifact-specific activity summary, got %q", body)
+	}
+	if containsString(body, "Editing workspace") || containsString(body, "1 write") {
+		t.Fatalf("artifact activity should not be presented as workspace edit, got %q", body)
+	}
+}
+
+func TestSessionBoundaryBreaksActivityGrouping(t *testing.T) {
+	t.Parallel()
+
+	model := newTestTUIModel()
+	model.items = nil
+	model.messageViewport.Reset()
+
+	model.appendTranscript(protocol.TranscriptEntry{
+		ID:           "p1",
+		SessionID:    "sess_test",
+		Type:         protocol.TranscriptEntryProgress,
+		Subtype:      string(protocol.EventProgress),
+		Title:        "Progress",
+		Body:         "started · tool=workspace_search · node=search_readme",
+		Visibility:   protocol.TranscriptVisibilityActivity,
+		Presentation: protocol.TranscriptPresentationGrouped,
+		CreatedAt:    time.Now().UTC(),
+	}, false)
+	entry, ok := transcriptEntryFromEvent(protocol.StreamEvent{
+		Type:      protocol.EventSessionLoaded,
+		SessionID: "sess_test",
+		Message:   "session loaded",
+		CreatedAt: time.Now().UTC(),
+	})
+	if !ok {
+		t.Fatalf("expected session loaded to remain in transcript")
+	}
+	model.appendTranscript(entry, false)
+	model.appendTranscript(protocol.TranscriptEntry{
+		ID:           "p2",
+		SessionID:    "sess_test",
+		Type:         protocol.TranscriptEntryProgress,
+		Subtype:      string(protocol.EventProgress),
+		Title:        "Progress",
+		Body:         "started · tool=workspace_inspect · node=read_readme",
+		Visibility:   protocol.TranscriptVisibilityActivity,
+		Presentation: protocol.TranscriptPresentationGrouped,
+		CreatedAt:    time.Now().UTC(),
+	}, false)
+
+	if len(model.items) != 2 {
+		t.Fatalf("expected separate activity rows across hidden session boundary, got %+v", model.items)
+	}
+	if !containsString(model.items[0].Body, "1 search") || !containsString(model.items[1].Body, "1 read") {
+		t.Fatalf("expected independent activity summaries, got %+v", model.items)
+	}
+	if containsString(model.renderTimelineContent(80), "session loaded") {
+		t.Fatalf("hidden session boundary should stay out of main timeline")
+	}
+	if !containsString(model.renderTranscriptContent(80), "session loaded") {
+		t.Fatalf("transcript should retain hidden session boundary")
+	}
+}
+
 func TestPlainAssistantMessageRendersWithoutLogHeader(t *testing.T) {
 	t.Parallel()
 
