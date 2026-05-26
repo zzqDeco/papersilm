@@ -111,7 +111,7 @@ func (s *Store) artifactsDir(sessionID string) string {
 }
 
 func (s *Store) checkpointsDir(sessionID string) string {
-	return filepath.Join(s.SessionDir(sessionID), "checkpoints")
+	return filepath.Join(s.SessionDir(sessionID), "eino_checkpoints")
 }
 
 func (s *Store) workspacesDir(sessionID string) string {
@@ -140,6 +140,18 @@ func (s *Store) eventsPath(sessionID string) string {
 
 func (s *Store) transcriptPath(sessionID string) string {
 	return filepath.Join(s.SessionDir(sessionID), "transcript.jsonl")
+}
+
+func (s *Store) agentEventsPath(sessionID string) string {
+	return filepath.Join(s.SessionDir(sessionID), "agent_events.jsonl")
+}
+
+func (s *Store) turnsPath(sessionID string) string {
+	return filepath.Join(s.SessionDir(sessionID), "turns.jsonl")
+}
+
+func (s *Store) toolCallsPath(sessionID string) string {
+	return filepath.Join(s.SessionDir(sessionID), "tool_calls.jsonl")
 }
 
 func (s *Store) CreateSession(meta protocol.SessionMeta) error {
@@ -596,6 +608,18 @@ func (s *Store) AppendEvent(sessionID string, event protocol.StreamEvent) error 
 
 func (s *Store) AppendTranscriptEntry(sessionID string, entry protocol.TranscriptEntry) error {
 	return s.appendJSONL(s.transcriptPath(sessionID), entry)
+}
+
+func (s *Store) AppendAgentEvent(sessionID string, event any) error {
+	return s.appendJSONL(s.agentEventsPath(sessionID), event)
+}
+
+func (s *Store) AppendTurn(sessionID string, turn any) error {
+	return s.appendJSONL(s.turnsPath(sessionID), turn)
+}
+
+func (s *Store) AppendToolCall(sessionID string, call any) error {
+	return s.appendJSONL(s.toolCallsPath(sessionID), call)
 }
 
 func (s *Store) appendJSONL(path string, value interface{}) error {

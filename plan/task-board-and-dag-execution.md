@@ -17,7 +17,7 @@
 
 当前系统已有明确执行骨架：
 
-- `internal/agent/dag.go` 能把目标编译成 `PlanDAG` 并生成 `ExecutionState`。
+- `internal/runtime/native` 能把目标编译成协议兼容的 `PlanDAG` / `ExecutionState`，并通过 TurnLoop 执行。
 - `pkg/protocol/types.go` 已有 `PlanNode`、`PlanEdge`、`ExecutionBatch`、`NodeExecutionState` 等协议结构。
 - `internal/tools/registry.go` 能根据审批与执行模式构建相关工具。
 - `internal/cli/repl.go` 已提供 `/plan`、`/run`、`/approve` 等命令。

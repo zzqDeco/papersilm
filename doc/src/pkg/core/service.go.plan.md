@@ -19,14 +19,14 @@
 - 主要类型: `EventSink`、`Service`。
 - 关键函数/方法: `New`、`NewSession`、`LoadSession`、`LatestSession`、`Execute`、`RunPlanned`、`Approve`、`RunTask`、`ApproveTask`、`RejectTask`、`ListSkills`、`RunSkill`、`LoadSkillRun`、`LoadTaskBoard`、`AttachSources`、`LoadWorkspaces`、`AddWorkspaceNote`、`AddWorkspaceAnnotation` 等。
 - `NewSession()` 负责生成 session ID、写入初始元数据并发送初始化事件。
-- `Execute()` 会在缺少 session ID 时先创建会话，再把请求交给 Agent。
-- task board / task 执行相关方法只是门面转发，真正的编排逻辑仍留在 Agent；`RejectTask()` 只是把显式 task-level reject 暴露给上层。
-- skills 相关方法同样保持门面角色：`ListSkills()` 会先读取 session language 再返回本地化 descriptor，skill 执行和 run 读取继续委托给 Agent / Store。
+- `Execute()` 会在缺少 session ID 时先创建会话，再把请求推入 TurnLoop。
+- task board / task 执行相关方法统一转成 TurnLoop input；`RejectTask()` 保留兼容入口。
+- skills 相关方法由 Eino-native runtime 和 Store 处理。
 - workspace 相关方法负责校验 paper 是否存在、生成 note/annotation 元数据，并通过存储层回写人工状态。
 - `emit()` 同时向 sink 和 session event log 写入事件。
 
 ## 5. 依赖关系
-- 内部依赖: `internal/agent`、`internal/storage`、`pkg/protocol`
+- 内部依赖: `internal/runtime/native`、`internal/runtime/turnloop`、`internal/storage`、`pkg/protocol`
 - 外部依赖: `context`、`crypto/rand`、`encoding/base32`、`fmt`、`time`
 
 ## 6. 变更影响面

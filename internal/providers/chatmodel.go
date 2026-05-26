@@ -63,7 +63,7 @@ func BuildChatModel(ctx context.Context, cfg config.ProviderConfig, timeout time
 
 func BuildAgenticModel(ctx context.Context, cfg config.ProviderConfig, timeout time.Duration) (model.AgenticModel, error) {
 	if useLocalAgentModel(cfg) {
-		return nil, fmt.Errorf("agentic runtime requires a configured provider")
+		return NewLocalAgenticModel(), nil
 	}
 	switch cfg.Provider {
 	case config.ProviderOpenAI:

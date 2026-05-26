@@ -18,11 +18,11 @@
 ## 4. 关键实现细节
 - 关键函数/方法: `NewRootCommand`、`newVersionCommand`、`buildRuntime`。
 - `NewRootCommand()` 统一处理 `--print`、`--source`、`--resume`、`--permission-mode` 等入口参数。
-- `buildRuntime()` 组装配置、存储、pipeline、tools、agent、core service 和输出 writer。
+- `buildRuntime()` 组装配置、存储、pipeline、tools、Eino-native core service 和输出 writer。
 - `newVersionCommand()` 暴露构建元数据查询子命令。
 
 ## 5. 依赖关系
-- 内部依赖: `internal/agent`、`internal/config`、`internal/pipeline`、`internal/storage`、`internal/tools`、`internal/version`、`pkg/core`、`pkg/protocol`
+- 内部依赖: `internal/config`、`internal/pipeline`、`internal/storage`、`internal/tools`、`internal/version`、`pkg/core`、`pkg/protocol`
 - 外部依赖: `context`、`errors`、`fmt`、`os`、`github.com/spf13/cobra`
 
 ## 6. 变更影响面
