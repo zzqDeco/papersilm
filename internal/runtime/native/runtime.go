@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/cloudwego/eino/components/tool"
@@ -32,6 +33,8 @@ type Runtime struct {
 	registry *tools.Registry
 	sink     EventSink
 }
+
+var assistantCheckpointSeq atomic.Uint64
 
 func New(cfg config.Config, store *storage.Store, registry *tools.Registry, sink EventSink) *Runtime {
 	return &Runtime{cfg: cfg, store: store, registry: registry, sink: sink}
@@ -499,7 +502,7 @@ func (r *Runtime) runEinoAssistant(ctx context.Context, sessionID, userMessage s
 	if err != nil {
 		return protocol.RunResult{}, err
 	}
-	checkpointID := fmt.Sprintf("turn_%s", turnID)
+	checkpointID := nextAssistantCheckpointID(turnID)
 	output, err := einoagent.Run(ctx, einoagent.RunRequest{
 		Store:       r.store,
 		Prepared:    prepared,
@@ -516,6 +519,10 @@ func (r *Runtime) runEinoAssistant(ctx context.Context, sessionID, userMessage s
 		return protocol.RunResult{}, err
 	}
 	return r.finishEinoOutput(sessionID, output)
+}
+
+func nextAssistantCheckpointID(turnID string) string {
+	return fmt.Sprintf("turn_%s_%d_%d", safeID(turnID), time.Now().UTC().UnixNano(), assistantCheckpointSeq.Add(1))
 }
 
 func (r *Runtime) finishEinoOutput(sessionID string, output einoagent.RunOutput) (protocol.RunResult, error) {

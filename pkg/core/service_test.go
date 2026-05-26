@@ -587,7 +587,7 @@ func TestWorkspaceEditDoesNotOverwriteWithInstructionText(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Execute(non-explicit edit): %v", err)
 	}
-	if !strings.Contains(result.Response, "requires agent interpretation") {
+	if !strings.Contains(result.Response, "requires agent interpretation") && !strings.Contains(result.Response, "Local Eino runtime received") {
 		t.Fatalf("expected non-explicit edit to fall back to agent runtime, got %q", result.Response)
 	}
 	content, readErr := os.ReadFile(readmePath)

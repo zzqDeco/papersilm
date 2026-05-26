@@ -1,6 +1,7 @@
 package events
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/cloudwego/eino/adk"
@@ -45,5 +46,39 @@ func TestFromAgentEventMapsInterruptToProtocolApproval(t *testing.T) {
 	}
 	if approval.Requests[0].InterruptID != "interrupt_1" {
 		t.Fatalf("expected request interrupt target to be preserved, got %+v", approval.Requests[0])
+	}
+}
+
+func TestFromAgentEventMapsStreamingMessageOutput(t *testing.T) {
+	t.Parallel()
+
+	event := &adk.TypedAgentEvent[*schema.AgenticMessage]{
+		AgentName: "papersilm",
+		Output: &adk.TypedAgentOutput[*schema.AgenticMessage]{
+			MessageOutput: &adk.TypedMessageVariant[*schema.AgenticMessage]{
+				IsStreaming: true,
+				MessageStream: schema.StreamReaderFromArray([]*schema.AgenticMessage{
+					agenticText("hello "),
+					agenticText("world"),
+				}),
+			},
+		},
+	}
+
+	mapped := FromAgentEvent("session_1", "turn_1", "checkpoint_1", event)
+	if len(mapped) != 1 || mapped[0].Type != protocol.EventAssistant {
+		t.Fatalf("expected one assistant event, got %+v", mapped)
+	}
+	if !strings.Contains(mapped[0].Message, "hello") || !strings.Contains(mapped[0].Message, "world") {
+		t.Fatalf("expected concatenated streaming text, got %q", mapped[0].Message)
+	}
+}
+
+func agenticText(text string) *schema.AgenticMessage {
+	return &schema.AgenticMessage{
+		Role: schema.AgenticRoleTypeAssistant,
+		ContentBlocks: []*schema.ContentBlock{
+			schema.NewContentBlock(&schema.AssistantGenText{Text: text}),
+		},
 	}
 }

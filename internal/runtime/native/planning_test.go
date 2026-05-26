@@ -3,6 +3,7 @@ package native
 import (
 	"errors"
 	"os"
+	"strings"
 	"testing"
 )
 
@@ -40,5 +41,18 @@ func TestExtractBacktickCommandPrefersRunnableCommand(t *testing.T) {
 	got = extractBacktickCommand("run `printf %s hello`")
 	if got != "printf %s hello" {
 		t.Fatalf("single command segment should be preserved, got %q", got)
+	}
+}
+
+func TestNextAssistantCheckpointIDIsInvocationScoped(t *testing.T) {
+	t.Parallel()
+
+	first := nextAssistantCheckpointID("edit_1")
+	second := nextAssistantCheckpointID("edit_1")
+	if first == second {
+		t.Fatalf("checkpoint IDs should be unique per invocation, got %q", first)
+	}
+	if !strings.HasPrefix(first, "turn_edit_1_") || !strings.HasPrefix(second, "turn_edit_1_") {
+		t.Fatalf("checkpoint IDs should preserve turn prefix, got %q and %q", first, second)
 	}
 }

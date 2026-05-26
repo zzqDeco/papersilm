@@ -40,7 +40,16 @@ func FromAgentEvent(sessionID, turnID, checkpointID string, event *adk.TypedAgen
 	if event.Output == nil || event.Output.MessageOutput == nil {
 		return nil
 	}
-	msg := event.Output.MessageOutput.Message
+	msg, err := event.Output.MessageOutput.GetMessage()
+	if err != nil {
+		base.Type = protocol.EventError
+		base.Message = err.Error()
+		base.Payload = map[string]any{
+			"turn_id": turnID,
+			"agent":   event.AgentName,
+		}
+		return []protocol.StreamEvent{base}
+	}
 	if msg == nil {
 		return nil
 	}
