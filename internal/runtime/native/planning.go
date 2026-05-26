@@ -281,24 +281,27 @@ func (r *Runtime) markStep(sessionID, planID, nodeID string, status protocol.Nod
 	return r.store.SavePlan(sessionID, *plan)
 }
 
-func (r *Runtime) nextPermissionRequest(ctx context.Context, sessionID string, plan protocol.PlanResult) (protocol.ApprovalRequest, bool) {
+func (r *Runtime) nextPermissionRequest(ctx context.Context, sessionID string, plan protocol.PlanResult) (protocol.ApprovalRequest, bool, error) {
 	for _, step := range plan.Steps {
 		switch step.Tool {
 		case string(protocol.NodeKindWorkspaceCommand):
 			request := commandPermissionRequest(sessionID, plan.PlanID, step.ID, extractBacktickCommand(step.Goal))
-			return approvalFromRequest(plan, request), true
+			return approvalFromRequest(plan, request), true, nil
 		case string(protocol.NodeKindWorkspaceEdit):
 			files, _ := r.registry.LoadWorkspaceFiles(r.store)
 			intent := inferWorkspaceIntent(step.Goal, files)
-			request := editPermissionRequest(r.store, sessionID, plan.PlanID, step.ID, step.Goal, intent.targetPath)
-			return approvalFromRequest(plan, request), true
+			request, err := editPermissionRequest(r.store, sessionID, plan.PlanID, step.ID, step.Goal, intent.targetPath)
+			if err != nil {
+				return protocol.ApprovalRequest{}, false, err
+			}
+			return approvalFromRequest(plan, request), true, nil
 		}
 		_ = ctx
 	}
 	if plan.ApprovalRequired {
-		return approvalFromRequest(plan, planPermissionRequest(sessionID, plan)), true
+		return approvalFromRequest(plan, planPermissionRequest(sessionID, plan)), true, nil
 	}
-	return protocol.ApprovalRequest{}, false
+	return protocol.ApprovalRequest{}, false, nil
 }
 
 func planPermissionRequest(sessionID string, plan protocol.PlanResult) protocol.PermissionRequest {
@@ -410,7 +413,10 @@ func (r *Runtime) continueAfterPermission(ctx context.Context, sessionID, turnID
 		}
 		if sideEffectTool(step.Tool) {
 			rules, _ := r.store.LoadPermissionRules(sessionID)
-			request := permissionRequestForStep(r.store, sessionID, plan.PlanID, step)
+			request, err := permissionRequestForStep(r.store, sessionID, plan.PlanID, step)
+			if err != nil {
+				return protocol.RunResult{}, err
+			}
 			if !permissionAllowedByRules(request, rules) {
 				return r.saveApproval(sessionID, *plan, approvalFromRequest(*plan, request))
 			}
@@ -545,15 +551,15 @@ func findPermissionRequest(approval *protocol.ApprovalRequest, requestID string)
 	return protocol.PermissionRequest{}, false
 }
 
-func permissionRequestForStep(store workspaceStore, sessionID, planID string, step protocol.PlanStep) protocol.PermissionRequest {
+func permissionRequestForStep(store workspaceStore, sessionID, planID string, step protocol.PlanStep) (protocol.PermissionRequest, error) {
 	switch step.Tool {
 	case string(protocol.NodeKindWorkspaceCommand):
-		return commandPermissionRequest(sessionID, planID, step.ID, extractBacktickCommand(step.Goal))
+		return commandPermissionRequest(sessionID, planID, step.ID, extractBacktickCommand(step.Goal)), nil
 	case string(protocol.NodeKindWorkspaceEdit):
 		target := extractWorkspacePathMention(step.Goal)
 		return editPermissionRequest(store, sessionID, planID, step.ID, step.Goal, target)
 	default:
-		return protocol.PermissionRequest{}
+		return protocol.PermissionRequest{}, fmt.Errorf("task %s does not require permission", step.ID)
 	}
 }
 
@@ -585,23 +591,27 @@ func commandPermissionRequest(sessionID, planID, nodeID, command string) protoco
 	}
 }
 
-func editPermissionRequest(store workspaceStore, sessionID, planID, nodeID, goal, targetPath string) protocol.PermissionRequest {
+func editPermissionRequest(store workspaceStore, sessionID, planID, nodeID, goal, targetPath string) (protocol.PermissionRequest, error) {
 	targetPath = strings.TrimSpace(targetPath)
 	if targetPath == "" {
-		targetPath = "notes.md"
+		return protocol.PermissionRequest{}, fmt.Errorf("workspace edit requires an explicit target file path")
 	}
 	old, existed, readErr := readWorkspaceFileForEditStore(store, targetPath)
-	newContent := inferEditContent(goal)
 	oldHash := ""
 	if existed {
 		oldHash = contentHash(old)
 	}
+	newContent := ""
+	contentErr := readErr
+	if contentErr == nil {
+		newContent, contentErr = inferEditContent(goal, targetPath, old, existed)
+	}
+	if contentErr != nil {
+		return protocol.PermissionRequest{}, contentErr
+	}
 	summary := "Update " + targetPath
 	if !existed {
 		summary = "Create " + targetPath
-	}
-	if readErr != nil {
-		summary = "Unable to preview " + targetPath + ": " + readErr.Error()
 	}
 	return protocol.PermissionRequest{
 		RequestID:  "edit_" + safeID(targetPath),
@@ -621,11 +631,11 @@ func editPermissionRequest(store workspaceStore, sessionID, planID, nodeID, goal
 			Diff:            agenttool.CompactUnifiedDiff(targetPath, old, newContent),
 			OldContentHash:  oldHash,
 			NewContent:      newContent,
-			ConflictMessage: errorString(readErr),
+			ConflictMessage: errorString(contentErr),
 		},
 		Options:   agenttool.PermissionOptions(protocol.NodeKindWorkspaceEdit),
 		CreatedAt: time.Now().UTC(),
-	}
+	}, nil
 }
 
 func inferWorkspaceIntent(goal string, files []protocol.WorkspaceFile) workspaceIntent {
@@ -907,6 +917,61 @@ func hasPendingApproval(store interface {
 	return err == nil && approval != nil
 }
 
+func stepDependenciesSatisfied(plan protocol.PlanResult, state *protocol.ExecutionState, nodeID string) (bool, []string) {
+	node, ok := planNodeByID(plan.DAG, nodeID)
+	if !ok {
+		return false, []string{nodeID}
+	}
+	if len(node.DependsOn) == 0 {
+		return true, nil
+	}
+	execByNodeID := map[string]protocol.NodeExecutionState{}
+	stale := map[string]struct{}{}
+	if state != nil {
+		for _, exec := range state.Nodes {
+			execByNodeID[exec.NodeID] = exec
+		}
+		for _, staleID := range state.StaleNodeIDs {
+			stale[staleID] = struct{}{}
+		}
+	}
+	blockedBy := make([]string, 0, len(node.DependsOn))
+	for _, depID := range node.DependsOn {
+		depNode, ok := planNodeByID(plan.DAG, depID)
+		if !ok {
+			blockedBy = append(blockedBy, depID)
+			continue
+		}
+		depStatus := depNode.Status
+		if exec, ok := execByNodeID[depID]; ok && exec.Status != "" {
+			depStatus = exec.Status
+		}
+		if _, ok := stale[depID]; ok {
+			blockedBy = append(blockedBy, depID)
+			continue
+		}
+		switch depStatus {
+		case protocol.NodeStatusCompleted, protocol.NodeStatusSkipped:
+			continue
+		case protocol.NodeStatusFailed:
+			if !depNode.Required {
+				continue
+			}
+		}
+		blockedBy = append(blockedBy, depID)
+	}
+	return len(blockedBy) == 0, blockedBy
+}
+
+func planNodeByID(dag protocol.PlanDAG, nodeID string) (protocol.PlanNode, bool) {
+	for _, node := range dag.Nodes {
+		if node.ID == nodeID {
+			return node, true
+		}
+	}
+	return protocol.PlanNode{}, false
+}
+
 func nodeCompleted(nodes []protocol.NodeExecutionState, nodeID string) bool {
 	for _, node := range nodes {
 		if node.NodeID == nodeID {
@@ -982,17 +1047,57 @@ func formatCommandRecord(record protocol.WorkspaceCommandRecord) string {
 	return strings.Join(parts, "\n")
 }
 
-func inferEditContent(goal string) string {
-	for _, marker := range []string{"with ", "内容为", "写入"} {
-		idx := strings.Index(strings.ToLower(goal), marker)
-		if idx >= 0 {
-			value := strings.TrimSpace(goal[idx+len(marker):])
-			if value != "" {
-				return strings.Trim(value, "\"'`") + "\n"
-			}
+func inferEditContent(goal, targetPath, oldContent string, existed bool) (string, error) {
+	if oldValue, newValue, ok := inferEditReplacement(goal); ok {
+		if !existed {
+			return "", fmt.Errorf("cannot replace text in missing file %s", targetPath)
+		}
+		if !strings.Contains(oldContent, oldValue) {
+			return "", fmt.Errorf("replacement text not found in %s", targetPath)
+		}
+		return strings.Replace(oldContent, oldValue, newValue, 1), nil
+	}
+	if content, ok := inferExplicitEditContent(goal); ok {
+		return content, nil
+	}
+	if !existed {
+		return "", fmt.Errorf("new file content is required for %s", targetPath)
+	}
+	return "", fmt.Errorf("workspace edit requires explicit content or a replacement for %s", targetPath)
+}
+
+func inferEditReplacement(goal string) (string, string, bool) {
+	lower := strings.ToLower(goal)
+	if !containsAny(lower, "replace", "替换", "改成", "更改") {
+		return "", "", false
+	}
+	segments := backtickSegments(goal)
+	values := make([]string, 0, len(segments))
+	for _, segment := range segments {
+		if !pathLooksLikeWorkspaceFile(segment) {
+			values = append(values, segment)
 		}
 	}
-	return strings.TrimSpace(goal) + "\n"
+	if len(values) < 2 {
+		return "", "", false
+	}
+	return values[0], values[1], true
+}
+
+func inferExplicitEditContent(goal string) (string, bool) {
+	lower := strings.ToLower(goal)
+	for _, marker := range []string{"with ", "内容为", "写入"} {
+		idx := strings.Index(lower, marker)
+		if idx < 0 {
+			continue
+		}
+		value := strings.TrimSpace(goal[idx+len(marker):])
+		if value == "" {
+			continue
+		}
+		return strings.Trim(value, "\"'`") + "\n", true
+	}
+	return "", false
 }
 
 func readWorkspaceFileForEdit(r *Runtime, path string) (string, bool, error) {

@@ -144,7 +144,12 @@ func (r *Runtime) Execute(ctx context.Context, req protocol.ClientRequest, turnI
 		return protocol.RunResult{Session: snapshot, Plan: snapshot.Plan}, err
 	}
 	if req.PermissionMode == protocol.PermissionModeConfirm {
-		if approval, ok := r.nextPermissionRequest(ctx, req.SessionID, plan); ok {
+		approval, ok, err := r.nextPermissionRequest(ctx, req.SessionID, plan)
+		if err != nil {
+			_ = r.markSessionFailed(req.SessionID, err)
+			return protocol.RunResult{}, err
+		}
+		if ok {
 			return r.saveApproval(req.SessionID, plan, approval)
 		}
 	}
@@ -199,12 +204,7 @@ func (r *Runtime) RunTask(ctx context.Context, sessionID, taskID, lang, style, t
 	if strings.TrimSpace(style) != "" {
 		meta.Style = style
 	}
-	meta.PermissionMode = protocol.PermissionModeAuto
-	meta.State = protocol.SessionStateRunning
-	meta.UpdatedAt = time.Now().UTC()
-	if err := r.store.SaveMeta(meta); err != nil {
-		return protocol.RunResult{}, err
-	}
+	permissionMode := meta.PermissionMode
 	plan, err := r.store.LoadPlan(sessionID)
 	if err != nil {
 		return protocol.RunResult{}, err
@@ -216,12 +216,40 @@ func (r *Runtime) RunTask(ctx context.Context, sessionID, taskID, lang, style, t
 	if !ok {
 		return protocol.RunResult{}, fmt.Errorf("task not found: %s", taskID)
 	}
-	if sideEffectTool(step.Tool) && meta.PermissionMode == protocol.PermissionModeConfirm {
-		return protocol.RunResult{}, fmt.Errorf("task %s requires approval before it can run", taskID)
+	execState, err := r.store.LoadExecutionState(sessionID)
+	if err != nil {
+		return protocol.RunResult{}, err
+	}
+	if ok, blockedBy := stepDependenciesSatisfied(*plan, execState, step.ID); !ok {
+		return protocol.RunResult{}, fmt.Errorf("task %s is blocked by unmet dependencies: %s", taskID, strings.Join(blockedBy, ", "))
+	}
+	if sideEffectTool(step.Tool) && permissionMode == protocol.PermissionModeConfirm {
+		meta.PermissionMode = permissionMode
+		meta.ActivePlanID = plan.PlanID
+		meta.UpdatedAt = time.Now().UTC()
+		if err := r.store.SaveMeta(meta); err != nil {
+			return protocol.RunResult{}, err
+		}
+		request, err := permissionRequestForStep(r.store, sessionID, plan.PlanID, step)
+		if err != nil {
+			return protocol.RunResult{}, err
+		}
+		return r.saveApproval(sessionID, *plan, approvalFromRequest(*plan, request))
+	}
+	runMode := permissionMode
+	if runMode == "" || runMode == protocol.PermissionModePlan {
+		runMode = protocol.PermissionModeAuto
+	}
+	meta.PermissionMode = runMode
+	meta.State = protocol.SessionStateRunning
+	meta.UpdatedAt = time.Now().UTC()
+	if err := r.store.SaveMeta(meta); err != nil {
+		return protocol.RunResult{}, err
 	}
 	out, err := r.executeStep(ctx, sessionID, plan.Goal, step)
 	if err != nil {
 		_ = r.markStep(sessionID, plan.PlanID, step.ID, protocol.NodeStatusFailed, err.Error(), out)
+		_ = r.markSessionFailed(sessionID, err)
 		return protocol.RunResult{}, err
 	}
 	if err := r.markStep(sessionID, plan.PlanID, step.ID, protocol.NodeStatusCompleted, "", out); err != nil {
@@ -392,6 +420,7 @@ func (r *Runtime) executePlan(ctx context.Context, sessionID string, plan protoc
 		out, err := r.executeStep(ctx, sessionID, plan.Goal, step)
 		if err != nil {
 			_ = r.markStep(sessionID, plan.PlanID, step.ID, protocol.NodeStatusFailed, err.Error(), protocol.NodeOutputRef{})
+			_ = r.markSessionFailed(sessionID, err)
 			return protocol.RunResult{}, err
 		}
 		_ = r.markStep(sessionID, plan.PlanID, step.ID, protocol.NodeStatusCompleted, "", out)
@@ -531,6 +560,8 @@ func (r *Runtime) markSessionFailed(sessionID string, runErr error) error {
 	}
 	meta.State = protocol.SessionStateFailed
 	meta.ApprovalPending = false
+	meta.ActiveCheckpointID = ""
+	meta.PendingInterruptID = ""
 	meta.UpdatedAt = time.Now().UTC()
 	return r.store.SaveMeta(meta)
 }
@@ -562,7 +593,10 @@ func (r *Runtime) executeStep(ctx context.Context, sessionID, goal string, step 
 	case string(protocol.NodeKindWorkspaceEdit):
 		files, _ := r.registry.LoadWorkspaceFiles(r.store)
 		intent := inferWorkspaceIntent(step.Goal, files)
-		request := editPermissionRequest(r.store, sessionID, "", step.ID, step.Goal, intent.targetPath)
+		request, err := editPermissionRequest(r.store, sessionID, "", step.ID, step.Goal, intent.targetPath)
+		if err != nil {
+			return protocol.NodeOutputRef{}, err
+		}
 		result, err := applyApprovedEdit(r, sessionID, request)
 		return nodeOutput(step.ID, "workspace_response", result, now), err
 	case "distill_paper":

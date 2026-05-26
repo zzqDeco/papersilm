@@ -226,6 +226,7 @@ func TestRunTaskHonorsSelectedTaskID(t *testing.T) {
 	}
 	meta.State = protocol.SessionStatePlanned
 	meta.ApprovalPending = false
+	meta.PermissionMode = protocol.PermissionModeAuto
 	if err := svc.store.SaveMeta(meta); err != nil {
 		t.Fatalf("SaveMeta: %v", err)
 	}
@@ -276,6 +277,85 @@ func TestRunTaskDoesNotBypassPendingApproval(t *testing.T) {
 	sessionID := seedCommandPlan(t, svc, []string{"printf %s first"})
 	if _, err := svc.RunTask(context.Background(), sessionID, "cmd_1", "zh", "distill"); err == nil {
 		t.Fatalf("expected /task run to respect pending approval")
+	}
+}
+
+func TestRunTaskConfirmSideEffectCreatesApproval(t *testing.T) {
+	t.Parallel()
+
+	svc, _ := newTestService(t)
+	sessionID := seedCommandPlan(t, svc, []string{"printf %s first"})
+	if err := svc.store.DeletePendingApproval(sessionID); err != nil {
+		t.Fatalf("DeletePendingApproval: %v", err)
+	}
+	meta, err := svc.store.LoadMeta(sessionID)
+	if err != nil {
+		t.Fatalf("LoadMeta: %v", err)
+	}
+	meta.State = protocol.SessionStatePlanned
+	meta.ApprovalPending = false
+	meta.PermissionMode = protocol.PermissionModeConfirm
+	if err := svc.store.SaveMeta(meta); err != nil {
+		t.Fatalf("SaveMeta: %v", err)
+	}
+	result, err := svc.RunTask(context.Background(), sessionID, "cmd_1", "zh", "distill")
+	if err != nil {
+		t.Fatalf("RunTask(confirm side effect): %v", err)
+	}
+	if result.Session.Approval == nil || result.Session.Approval.ActiveRequestID == "" {
+		t.Fatalf("expected task-scoped approval, got %+v", result.Session.Approval)
+	}
+	if result.Session.Meta.PermissionMode != protocol.PermissionModeConfirm {
+		t.Fatalf("expected confirm mode to be preserved, got %s", result.Session.Meta.PermissionMode)
+	}
+	if executionOutputContains(result.Session.Execution.Outputs, "first") {
+		t.Fatalf("confirm task run should not execute before approval, got %+v", result.Session.Execution.Outputs)
+	}
+}
+
+func TestRunTaskRejectsBlockedDependencies(t *testing.T) {
+	t.Parallel()
+
+	svc, _ := newTestService(t)
+	meta, err := svc.NewSession(protocol.PermissionModeAuto, "zh", "distill")
+	if err != nil {
+		t.Fatalf("NewSession: %v", err)
+	}
+	now := time.Now().UTC()
+	plan := protocol.PlanResult{
+		PlanID: "plan_" + meta.SessionID,
+		Goal:   "compare papers",
+		DAG: protocol.PlanDAG{Nodes: []protocol.PlanNode{
+			{ID: "distill_1", Kind: protocol.NodeKindPaperSummary, Goal: "distill", WorkerProfile: protocol.WorkerProfilePaperSummary, Required: true, Status: protocol.NodeStatusReady},
+			{ID: "compare_papers", Kind: protocol.NodeKindFinalSynthesis, Goal: "compare", WorkerProfile: protocol.WorkerProfileMethodCompare, Required: true, Status: protocol.NodeStatusPending, DependsOn: []string{"distill_1"}},
+		}},
+		Steps: []protocol.PlanStep{
+			{ID: "distill_1", Tool: "distill_paper", PaperIDs: []string{"paper_1"}, Goal: "distill", ExpectedArtifact: "paper_1"},
+			{ID: "compare_papers", Tool: "compare_papers", PaperIDs: []string{"paper_1", "paper_2"}, Goal: "compare", ExpectedArtifact: "comparison"},
+		},
+		CreatedAt: now,
+	}
+	board := protocol.TaskBoard{PlanID: plan.PlanID, Goal: plan.Goal, Tasks: []protocol.TaskCard{
+		{TaskID: "distill_1", NodeID: "distill_1", Kind: protocol.NodeKindPaperSummary, Status: protocol.TaskStatusReady},
+		{TaskID: "compare_papers", NodeID: "compare_papers", Kind: protocol.NodeKindFinalSynthesis, Status: protocol.TaskStatusBlocked, DependsOn: []string{"distill_1"}},
+	}, UpdatedAt: now}
+	plan.TaskBoard = &board
+	if err := svc.store.SavePlan(meta.SessionID, plan); err != nil {
+		t.Fatalf("SavePlan: %v", err)
+	}
+	if err := svc.store.SaveExecutionState(meta.SessionID, protocol.ExecutionState{PlanID: plan.PlanID, Nodes: []protocol.NodeExecutionState{
+		{NodeID: "distill_1", WorkerProfile: protocol.WorkerProfilePaperSummary, Status: protocol.NodeStatusReady},
+		{NodeID: "compare_papers", WorkerProfile: protocol.WorkerProfileMethodCompare, Status: protocol.NodeStatusPending},
+	}, UpdatedAt: now}); err != nil {
+		t.Fatalf("SaveExecutionState: %v", err)
+	}
+	meta.State = protocol.SessionStatePlanned
+	meta.ActivePlanID = plan.PlanID
+	if err := svc.store.SaveMeta(meta); err != nil {
+		t.Fatalf("SaveMeta: %v", err)
+	}
+	if _, err := svc.RunTask(context.Background(), meta.SessionID, "compare_papers", "zh", "distill"); err == nil || !strings.Contains(err.Error(), "blocked by unmet dependencies") {
+		t.Fatalf("expected blocked dependency error, got %v", err)
 	}
 }
 
@@ -345,6 +425,94 @@ func TestWorkspaceEditRunsInAutoMode(t *testing.T) {
 	}
 }
 
+func TestWorkspaceEditRequiresExplicitTarget(t *testing.T) {
+	t.Parallel()
+
+	svc, _ := newTestService(t)
+	_, err := svc.Execute(context.Background(), protocol.ClientRequest{
+		Task:           "create a short workspace note",
+		PermissionMode: protocol.PermissionModeAuto,
+		Language:       "zh",
+		Style:          "distill",
+	})
+	if err == nil || !strings.Contains(err.Error(), "explicit target file path") {
+		t.Fatalf("expected explicit target error, got %v", err)
+	}
+	if _, statErr := os.Stat(filepath.Join(svc.store.WorkspaceRoot(), "notes.md")); !errors.Is(statErr, os.ErrNotExist) {
+		t.Fatalf("notes.md should not be created by default target fallback, stat err=%v", statErr)
+	}
+	sessionID, loadErr := svc.store.LatestSessionID()
+	if loadErr != nil {
+		t.Fatalf("LatestSessionID: %v", loadErr)
+	}
+	meta, loadErr := svc.store.LoadMeta(sessionID)
+	if loadErr != nil {
+		t.Fatalf("LoadMeta: %v", loadErr)
+	}
+	if meta.State != protocol.SessionStateFailed {
+		t.Fatalf("expected failed session after edit target error, got %s", meta.State)
+	}
+}
+
+func TestWorkspaceEditDoesNotOverwriteWithInstructionText(t *testing.T) {
+	t.Parallel()
+
+	svc, _ := newTestService(t)
+	readmePath := filepath.Join(svc.store.WorkspaceRoot(), "README.md")
+	original := "hello typo\n"
+	if err := os.WriteFile(readmePath, []byte(original), 0o644); err != nil {
+		t.Fatalf("WriteFile(README.md): %v", err)
+	}
+	if err := svc.store.RefreshWorkspaceState(); err != nil {
+		t.Fatalf("RefreshWorkspaceState: %v", err)
+	}
+	_, err := svc.Execute(context.Background(), protocol.ClientRequest{
+		Task:           "fix typo in `README.md`",
+		PermissionMode: protocol.PermissionModeAuto,
+		Language:       "zh",
+		Style:          "distill",
+	})
+	if err == nil || !strings.Contains(err.Error(), "explicit content or a replacement") {
+		t.Fatalf("expected safe edit content error, got %v", err)
+	}
+	content, readErr := os.ReadFile(readmePath)
+	if readErr != nil {
+		t.Fatalf("ReadFile(README.md): %v", readErr)
+	}
+	if string(content) != original {
+		t.Fatalf("instruction-only edit should not overwrite file, got %q", string(content))
+	}
+}
+
+func TestWorkspaceEditReplacementUsesCurrentContent(t *testing.T) {
+	t.Parallel()
+
+	svc, _ := newTestService(t)
+	readmePath := filepath.Join(svc.store.WorkspaceRoot(), "README.md")
+	if err := os.WriteFile(readmePath, []byte("hello typo\n"), 0o644); err != nil {
+		t.Fatalf("WriteFile(README.md): %v", err)
+	}
+	if err := svc.store.RefreshWorkspaceState(); err != nil {
+		t.Fatalf("RefreshWorkspaceState: %v", err)
+	}
+	_, err := svc.Execute(context.Background(), protocol.ClientRequest{
+		Task:           "update `README.md` replace `typo` with `type`",
+		PermissionMode: protocol.PermissionModeAuto,
+		Language:       "zh",
+		Style:          "distill",
+	})
+	if err != nil {
+		t.Fatalf("Execute(replacement edit): %v", err)
+	}
+	content, readErr := os.ReadFile(readmePath)
+	if readErr != nil {
+		t.Fatalf("ReadFile(README.md): %v", readErr)
+	}
+	if string(content) != "hello type\n" {
+		t.Fatalf("expected replacement against current content, got %q", string(content))
+	}
+}
+
 func TestApprovedCommandFailureMarksNodeFailed(t *testing.T) {
 	t.Parallel()
 
@@ -366,6 +534,32 @@ func TestApprovedCommandFailureMarksNodeFailed(t *testing.T) {
 	}
 	if execState == nil || len(execState.Nodes) == 0 || execState.Nodes[0].Status != protocol.NodeStatusFailed {
 		t.Fatalf("expected failed node after command error, got %+v", execState)
+	}
+}
+
+func TestExecutePlanFailureMarksSessionFailed(t *testing.T) {
+	t.Parallel()
+
+	svc, _ := newTestService(t)
+	_, err := svc.Execute(context.Background(), protocol.ClientRequest{
+		Task:           "run command `sh -c 'exit 7'`",
+		PermissionMode: protocol.PermissionModeAuto,
+		Language:       "zh",
+		Style:          "distill",
+	})
+	if err == nil {
+		t.Fatalf("expected command failure")
+	}
+	sessionID, loadErr := svc.store.LatestSessionID()
+	if loadErr != nil {
+		t.Fatalf("LatestSessionID: %v", loadErr)
+	}
+	meta, loadErr := svc.store.LoadMeta(sessionID)
+	if loadErr != nil {
+		t.Fatalf("LoadMeta: %v", loadErr)
+	}
+	if meta.State != protocol.SessionStateFailed {
+		t.Fatalf("expected failed session state, got %s", meta.State)
 	}
 }
 

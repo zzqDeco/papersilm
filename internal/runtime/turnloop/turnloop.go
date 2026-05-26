@@ -119,7 +119,8 @@ func (l *TurnLoop) drainNext(sessionID string) TurnEnvelope {
 	if len(items) == 1 {
 		delete(l.buffer, sessionID)
 	} else {
-		l.buffer[sessionID] = append([]input.Item(nil), items[1:]...)
+		items[0] = input.Item{}
+		l.buffer[sessionID] = items[1:]
 	}
 	return TurnEnvelope{
 		TurnID:    newID("turn"),
