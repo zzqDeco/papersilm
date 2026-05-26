@@ -313,6 +313,53 @@ func TestRunTaskConfirmSideEffectCreatesApproval(t *testing.T) {
 	}
 }
 
+func TestTaskScopedApprovalDoesNotContinuePlan(t *testing.T) {
+	t.Parallel()
+
+	svc, _ := newTestService(t)
+	sessionID := seedCommandPlan(t, svc, []string{"printf %s first", "printf %s second"})
+	if err := svc.store.DeletePendingApproval(sessionID); err != nil {
+		t.Fatalf("DeletePendingApproval: %v", err)
+	}
+	meta, err := svc.store.LoadMeta(sessionID)
+	if err != nil {
+		t.Fatalf("LoadMeta: %v", err)
+	}
+	meta.State = protocol.SessionStatePlanned
+	meta.ApprovalPending = false
+	meta.PermissionMode = protocol.PermissionModeConfirm
+	if err := svc.store.SaveMeta(meta); err != nil {
+		t.Fatalf("SaveMeta: %v", err)
+	}
+	result, err := svc.RunTask(context.Background(), sessionID, "cmd_1", "zh", "distill")
+	if err != nil {
+		t.Fatalf("RunTask(confirm side effect): %v", err)
+	}
+	approval := result.Session.Approval
+	if approval == nil || approval.Mode != "task" {
+		t.Fatalf("expected task-scoped approval, got %+v", approval)
+	}
+	result, err = svc.DecidePermission(context.Background(), sessionID, protocol.PermissionDecision{
+		RequestID: approval.ActiveRequestID,
+		Value:     "accept-once",
+	})
+	if err != nil {
+		t.Fatalf("DecidePermission(task scoped): %v", err)
+	}
+	if !executionOutputContains(result.Session.Execution.Outputs, "first") {
+		t.Fatalf("expected approved task output, got %+v", result.Session.Execution.Outputs)
+	}
+	if executionOutputContains(result.Session.Execution.Outputs, "second") {
+		t.Fatalf("task-scoped approval should not continue unrelated plan steps, got %+v", result.Session.Execution.Outputs)
+	}
+	if result.Session.Approval != nil || result.Session.Meta.ApprovalPending {
+		t.Fatalf("task-scoped approval should not enqueue another approval, got approval=%+v meta=%+v", result.Session.Approval, result.Session.Meta)
+	}
+	if result.Session.Meta.State != protocol.SessionStatePlanned {
+		t.Fatalf("expected unfinished plan to return to planned, got %s", result.Session.Meta.State)
+	}
+}
+
 func TestRunTaskRejectsBlockedDependencies(t *testing.T) {
 	t.Parallel()
 
@@ -837,7 +884,7 @@ func seedCommandPlan(t *testing.T, svc *Service, commands []string) string {
 		},
 		CreatedAt: now,
 	}
-	approval := protocol.ApprovalRequest{PlanID: plan.PlanID, CheckpointID: "checkpoint_" + plan.PlanID, InterruptID: "permission_req_first", PendingNodeIDs: []string{"cmd_1"}, Summary: request.Question, RequiresInput: true, CreatedAt: now, Mode: "task", ActiveRequestID: request.RequestID, Requests: []protocol.PermissionRequest{request}}
+	approval := protocol.ApprovalRequest{PlanID: plan.PlanID, CheckpointID: "checkpoint_" + plan.PlanID, InterruptID: "permission_req_first", PendingNodeIDs: []string{"cmd_1"}, Summary: request.Question, RequiresInput: true, CreatedAt: now, Mode: "plan", ActiveRequestID: request.RequestID, Requests: []protocol.PermissionRequest{request}}
 	if err := svc.store.SavePendingApproval(meta.SessionID, approval); err != nil {
 		t.Fatalf("SavePendingApproval: %v", err)
 	}

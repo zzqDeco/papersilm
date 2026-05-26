@@ -234,7 +234,7 @@ func (r *Runtime) RunTask(ctx context.Context, sessionID, taskID, lang, style, t
 		if err != nil {
 			return protocol.RunResult{}, err
 		}
-		return r.saveApproval(sessionID, *plan, approvalFromRequest(*plan, request))
+		return r.saveApproval(sessionID, *plan, approvalFromRequest(*plan, request, "task"))
 	}
 	runMode := permissionMode
 	if runMode == "" || runMode == protocol.PermissionModePlan {
@@ -362,12 +362,12 @@ func (r *Runtime) DecidePermission(ctx context.Context, sessionID string, decisi
 		}
 	}
 	if decision.Value == agenttool.PermissionReject {
-		return r.rejectPermission(sessionID, request, decision)
+		return r.rejectPermission(sessionID, approval, request, decision)
 	}
 	if _, err := r.applyPermissionRequest(sessionID, request); err != nil {
 		return protocol.RunResult{}, err
 	}
-	return r.continueAfterPermission(ctx, sessionID, turnID)
+	return r.continueAfterPermission(ctx, sessionID, turnID, approval, request)
 }
 
 func (r *Runtime) AttachSources(ctx context.Context, sessionID string, sources []string, replace bool) (protocol.SessionSnapshot, error) {
