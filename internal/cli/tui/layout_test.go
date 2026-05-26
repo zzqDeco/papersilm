@@ -13,7 +13,9 @@ func TestRenderBottomDrawerUsesSingleDivider(t *testing.T) {
 	rendered := RenderBottomDrawer(Drawer{
 		Width:   32,
 		Title:   "Command Palette",
-		Message: "Filter commands",
+		Message: "Filter commands\nKeep typing",
+		Filter:  "› /he",
+		Hint:    "Esc close",
 		Rows: []ListRow{
 			{Label: "/help", Detail: "Show slash commands", Selected: true},
 		},
@@ -30,6 +32,29 @@ func TestRenderBottomDrawerUsesSingleDivider(t *testing.T) {
 	}
 	if !strings.Contains(rendered, " – Show") {
 		t.Fatalf("expected Claude-style row separator, got %q", rendered)
+	}
+	for _, want := range []string{"Filter commands", "Keep typing", "› /he", "Esc close"} {
+		if !strings.Contains(rendered, want) {
+			t.Fatalf("expected drawer text %q, got %q", want, rendered)
+		}
+	}
+}
+
+func TestRenderBottomDrawerEmptyStateUsesMutedRow(t *testing.T) {
+	t.Parallel()
+
+	rendered := RenderBottomDrawer(Drawer{
+		Width:        40,
+		Title:        "Model Picker",
+		EmptyMessage: "No discovered models",
+		Hint:         "Enter uses typed model",
+	})
+
+	if !strings.Contains(rendered, "No discovered models") {
+		t.Fatalf("expected empty state row, got %q", rendered)
+	}
+	if !strings.Contains(rendered, "Enter uses typed model") {
+		t.Fatalf("expected drawer hint, got %q", rendered)
 	}
 }
 

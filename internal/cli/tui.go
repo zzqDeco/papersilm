@@ -1357,7 +1357,7 @@ func (m *tuiModel) renderSuggestions() string {
 	if len(m.suggestions) == 0 {
 		return ""
 	}
-	width := clamp(m.width-4, 24, 96)
+	width := min(max(16, m.width-4), min(96, m.width))
 	visible, start := windowSuggestions(m.suggestions, m.sel, 5)
 	rows := make([]tuiui.ListRow, 0, len(visible))
 	for i, suggestion := range visible {
@@ -1521,25 +1521,25 @@ func (m *tuiModel) renderModalBox() string {
 	if m.modal.Kind == tuiModalNone {
 		return ""
 	}
-	width := max(40, m.width)
+	width := max(20, m.width)
 	bodyWidth := max(20, width-4)
-	filter := m.modalIn.View()
+	filter := "› " + m.modalIn.View()
+	messageParts := make([]string, 0, 4)
+	if message := strings.TrimSpace(m.modal.Message); message != "" {
+		messageParts = append(messageParts, message)
+	}
 	if m.modal.Kind == tuiModalModels && m.modal.Provider != "" {
-		filter = m.styles.modalHint.Render("profile "+m.modal.Provider) + "\n  " + filter
+		messageParts = append(messageParts, "profile "+m.modal.Provider)
 	}
-	message := strings.TrimSpace(m.modal.Message)
 	if m.modal.Loading {
-		if message != "" {
-			message += " · "
-		}
-		message += "Loading models..."
+		messageParts = append(messageParts, "Loading models...")
 	}
-	if len(m.modal.Visible) == 0 && !m.modal.Loading && strings.TrimSpace(m.modalIn.Value()) != "" {
-		if message != "" {
-			message += " · "
-		}
-		message += "Press Enter to use the typed value."
+	emptyMessage := "No matches"
+	if m.modal.Kind == tuiModalModels && len(m.modal.Visible) == 0 && !m.modal.Loading && strings.TrimSpace(m.modalIn.Value()) != "" {
+		messageParts = append(messageParts, "Enter uses typed model")
+		emptyMessage = "No discovered models"
 	}
+	message := strings.Join(messageParts, " · ")
 	choiceLimit := clamp(m.height/4, 5, 7)
 	visible, start := windowChoices(m.modal.Visible, m.modal.Selection, choiceLimit)
 	rows := make([]tuiui.ListRow, 0, len(visible))
@@ -1562,7 +1562,7 @@ func (m *tuiModel) renderModalBox() string {
 			Detail:         choice.Detail,
 			Selected:       selected,
 			Disabled:       choice.Disabled,
-			SelectedPrefix: "❯ ",
+			SelectedPrefix: "› ",
 			IdlePrefix:     "  ",
 			MarkerStyle:    m.styles.suggestionMarker,
 			LabelStyle:     labelStyle,
@@ -1570,11 +1570,13 @@ func (m *tuiModel) renderModalBox() string {
 		})
 	}
 	return tuiui.RenderDrawerOverlay(tuiui.DrawerOverlay{
-		Kind:    modalOverlayKind(m.modal.Kind),
-		Title:   m.modal.Title,
-		Message: truncateRight(message, bodyWidth),
-		Filter:  filter,
-		Rows:    rows,
+		Kind:         modalOverlayKind(m.modal.Kind),
+		Title:        m.modal.Title,
+		Message:      truncateRight(message, bodyWidth),
+		Filter:       filter,
+		EmptyMessage: emptyMessage,
+		Hint:         modalDrawerHint(m.modal.Kind),
+		Rows:         rows,
 	}, tuiui.Drawer{
 		Width:        width,
 		DividerStyle: m.styles.paneDivider,
@@ -1582,6 +1584,19 @@ func (m *tuiModel) renderModalBox() string {
 		MutedStyle:   m.styles.modalMessage,
 		BodyStyle:    m.styles.body,
 	})
+}
+
+func modalDrawerHint(kind tuiModalKind) string {
+	switch kind {
+	case tuiModalCommands:
+		return "↑/↓ select · Enter insert · Esc close"
+	case tuiModalProviders:
+		return "↑/↓ select · Enter choose profile · Esc close"
+	case tuiModalModels:
+		return "↑/↓ select · Enter switch model · Esc close"
+	default:
+		return "↑/↓ select · Enter apply · Esc close"
+	}
 }
 
 func modalOverlayKind(kind tuiModalKind) tuiui.OverlayKind {
