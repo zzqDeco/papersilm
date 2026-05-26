@@ -637,6 +637,33 @@ func TestExecuteValidationFailureDoesNotLeaveSessionRunning(t *testing.T) {
 	}
 }
 
+func TestExecutePlanningFailureDoesNotLeaveSessionRunning(t *testing.T) {
+	t.Parallel()
+
+	svc, _ := newTestService(t)
+	meta, err := svc.NewSession(protocol.PermissionModeAuto, "zh", "distill")
+	if err != nil {
+		t.Fatalf("NewSession: %v", err)
+	}
+	_, err = svc.Execute(context.Background(), protocol.ClientRequest{
+		SessionID:      meta.SessionID,
+		Task:           "summarize paper https://example.com/not-a-pdf",
+		PermissionMode: protocol.PermissionModeAuto,
+		Language:       "zh",
+		Style:          "distill",
+	})
+	if err == nil {
+		t.Fatalf("expected planning failure")
+	}
+	loaded, err := svc.store.LoadMeta(meta.SessionID)
+	if err != nil {
+		t.Fatalf("LoadMeta: %v", err)
+	}
+	if loaded.State != protocol.SessionStateFailed {
+		t.Fatalf("expected failed session state after planning failure, got %s", loaded.State)
+	}
+}
+
 func TestTurnLoopReceivesServiceInputs(t *testing.T) {
 	t.Parallel()
 

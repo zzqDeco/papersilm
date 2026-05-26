@@ -111,22 +111,20 @@ func (r *Runtime) Execute(ctx context.Context, req protocol.ClientRequest, turnI
 		return protocol.RunResult{}, err
 	}
 	meta = syncMeta(meta, req)
-	meta.State = protocol.SessionStateRunning
 	meta.ApprovalPending = false
 	meta.ActiveCheckpointID = ""
 	meta.PendingInterruptID = ""
 	meta.LastTask = goal
 	meta.PermissionMode = req.PermissionMode
 	meta.UpdatedAt = time.Now().UTC()
-	if err := r.store.SaveMeta(meta); err != nil {
-		return protocol.RunResult{}, err
-	}
 
 	plan, err := r.BuildPlan(ctx, req.SessionID, goal, req.PermissionMode == protocol.PermissionModeConfirm)
 	if err != nil {
+		_ = r.markSessionFailed(req.SessionID, err)
 		return protocol.RunResult{}, err
 	}
 	if err := r.savePlanState(req.SessionID, plan); err != nil {
+		_ = r.markSessionFailed(req.SessionID, err)
 		return protocol.RunResult{}, err
 	}
 	if err := r.emit(req.SessionID, protocol.EventPlan, "plan created", plan); err != nil {
@@ -142,6 +140,14 @@ func (r *Runtime) Execute(ctx context.Context, req protocol.ClientRequest, turnI
 		}
 		snapshot, err := r.store.Snapshot(req.SessionID)
 		return protocol.RunResult{Session: snapshot, Plan: snapshot.Plan}, err
+	}
+	meta.State = protocol.SessionStateRunning
+	meta.ApprovalPending = false
+	meta.ActiveCheckpointID = ""
+	meta.PendingInterruptID = ""
+	meta.UpdatedAt = time.Now().UTC()
+	if err := r.store.SaveMeta(meta); err != nil {
+		return protocol.RunResult{}, err
 	}
 	if req.PermissionMode == protocol.PermissionModeConfirm {
 		approval, ok, err := r.nextPermissionRequest(ctx, req.SessionID, plan)
