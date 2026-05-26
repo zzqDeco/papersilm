@@ -187,6 +187,53 @@ func (r *Runtime) savePlanState(sessionID string, plan protocol.PlanResult) erro
 	})
 }
 
+func findPlanStepForTask(plan protocol.PlanResult, taskID string) (protocol.PlanStep, bool) {
+	taskID = strings.TrimSpace(taskID)
+	if taskID == "" {
+		return protocol.PlanStep{}, false
+	}
+	stepIDs := map[string]struct{}{taskID: {}}
+	if plan.TaskBoard != nil {
+		for _, task := range plan.TaskBoard.Tasks {
+			if task.TaskID == taskID || task.NodeID == taskID {
+				stepIDs[task.NodeID] = struct{}{}
+				stepIDs[task.TaskID] = struct{}{}
+			}
+		}
+	}
+	for _, step := range plan.Steps {
+		if _, ok := stepIDs[step.ID]; ok {
+			return step, true
+		}
+	}
+	return protocol.PlanStep{}, false
+}
+
+func (r *Runtime) permissionRequestIDForTask(sessionID, taskID string) (string, error) {
+	taskID = strings.TrimSpace(taskID)
+	if taskID == "" {
+		return "", fmt.Errorf("task id is required")
+	}
+	approval, err := r.store.LoadPendingApproval(sessionID)
+	if err != nil {
+		return "", err
+	}
+	if approval == nil {
+		return "", fmt.Errorf("session has no pending approval")
+	}
+	for _, request := range approval.Requests {
+		if request.NodeID == taskID || request.RequestID == taskID {
+			return request.RequestID, nil
+		}
+	}
+	for _, pendingID := range approval.PendingNodeIDs {
+		if pendingID == taskID && len(approval.Requests) == 1 {
+			return approval.Requests[0].RequestID, nil
+		}
+	}
+	return "", fmt.Errorf("pending approval does not target task: %s", taskID)
+}
+
 func (r *Runtime) markStep(sessionID, planID, nodeID string, status protocol.NodeStatus, errText string, output protocol.NodeOutputRef) error {
 	execState, err := r.store.LoadExecutionState(sessionID)
 	if err != nil {
@@ -352,18 +399,29 @@ func (r *Runtime) applyPermissionRequest(sessionID string, request protocol.Perm
 	switch request.Tool {
 	case string(protocol.NodeKindWorkspaceEdit):
 		result, err := applyApprovedEdit(r, sessionID, request)
-		return nodeOutput(request.NodeID, "workspace_response", result, time.Now().UTC()), err
+		out := nodeOutput(request.NodeID, "workspace_response", result, time.Now().UTC())
+		if err != nil {
+			_ = r.markStep(sessionID, "", request.NodeID, protocol.NodeStatusFailed, err.Error(), out)
+			return out, err
+		}
+		_ = r.markStep(sessionID, "", request.NodeID, protocol.NodeStatusCompleted, "", out)
+		return out, nil
 	case string(protocol.NodeKindWorkspaceCommand):
 		record, err := r.registry.RunWorkspaceCommand(r.store, request.Command)
 		text := formatCommandRecord(record)
-		_ = r.markStep(sessionID, "", request.NodeID, protocol.NodeStatusCompleted, "", nodeOutput(request.NodeID, "workspace_response", text, time.Now().UTC()))
-		return nodeOutput(request.NodeID, "workspace_response", text, time.Now().UTC()), err
+		out := nodeOutput(request.NodeID, "workspace_response", text, time.Now().UTC())
+		if err != nil {
+			_ = r.markStep(sessionID, "", request.NodeID, protocol.NodeStatusFailed, err.Error(), out)
+			return out, err
+		}
+		_ = r.markStep(sessionID, "", request.NodeID, protocol.NodeStatusCompleted, "", out)
+		return out, nil
 	default:
 		return nodeOutput(request.NodeID, "permission", "approved", time.Now().UTC()), nil
 	}
 }
 
-func applyApprovedEdit(r *Runtime, sessionID string, request protocol.PermissionRequest) (string, error) {
+func applyApprovedEdit(r *Runtime, _ string, request protocol.PermissionRequest) (string, error) {
 	if request.TargetPath == "" || request.Preview.Kind != "diff" {
 		return "", fmt.Errorf("approved edit preview is missing")
 	}
@@ -382,7 +440,6 @@ func applyApprovedEdit(r *Runtime, sessionID string, request protocol.Permission
 		return "", err
 	}
 	output := firstNonEmpty(request.Preview.Summary, "Updated "+request.TargetPath)
-	_ = r.markStep(sessionID, "", request.NodeID, protocol.NodeStatusCompleted, "", nodeOutput(request.NodeID, "workspace_response", output, time.Now().UTC()))
 	return output, nil
 }
 

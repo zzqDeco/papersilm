@@ -144,6 +144,129 @@ func TestAcceptSessionAllowsMatchingCommandPrefix(t *testing.T) {
 	}
 }
 
+func TestRunTaskHonorsSelectedTaskID(t *testing.T) {
+	t.Parallel()
+
+	svc, _ := newTestService(t)
+	sessionID := seedCommandPlan(t, svc, []string{"printf %s first", "printf %s second"})
+	if err := svc.store.DeletePendingApproval(sessionID); err != nil {
+		t.Fatalf("DeletePendingApproval: %v", err)
+	}
+	meta, err := svc.store.LoadMeta(sessionID)
+	if err != nil {
+		t.Fatalf("LoadMeta: %v", err)
+	}
+	meta.State = protocol.SessionStatePlanned
+	meta.ApprovalPending = false
+	if err := svc.store.SaveMeta(meta); err != nil {
+		t.Fatalf("SaveMeta: %v", err)
+	}
+
+	result, err := svc.RunTask(context.Background(), sessionID, "cmd_2", "zh", "distill")
+	if err != nil {
+		t.Fatalf("RunTask(cmd_2): %v", err)
+	}
+	if executionOutputContains(result.Session.Execution.Outputs, "first") {
+		t.Fatalf("selected task run should not execute cmd_1, got %+v", result.Session.Execution.Outputs)
+	}
+	if !executionOutputContains(result.Session.Execution.Outputs, "second") {
+		t.Fatalf("selected task run should execute cmd_2, got %+v", result.Session.Execution.Outputs)
+	}
+}
+
+func TestApproveTaskValidatesTaskTarget(t *testing.T) {
+	t.Parallel()
+
+	svc, _ := newTestService(t)
+	sessionID := seedCommandPlan(t, svc, []string{"printf %s first", "printf %s second"})
+	if _, err := svc.ApproveTask(context.Background(), sessionID, "cmd_2", true, ""); err == nil {
+		t.Fatalf("expected approve of non-pending task to fail")
+	}
+	result, err := svc.ApproveTask(context.Background(), sessionID, "cmd_1", true, "")
+	if err != nil {
+		t.Fatalf("ApproveTask(cmd_1): %v", err)
+	}
+	if !executionOutputContains(result.Session.Execution.Outputs, "first") {
+		t.Fatalf("expected cmd_1 to run after targeted approval, got %+v", result.Session.Execution.Outputs)
+	}
+}
+
+func TestWorkspaceEditRunsInAutoMode(t *testing.T) {
+	t.Parallel()
+
+	svc, _ := newTestService(t)
+	result, err := svc.Execute(context.Background(), protocol.ClientRequest{
+		Task:           "create `notes.md` with a short workspace note",
+		PermissionMode: protocol.PermissionModeAuto,
+		Language:       "zh",
+		Style:          "distill",
+	})
+	if err != nil {
+		t.Fatalf("Execute(auto edit): %v", err)
+	}
+	content, err := os.ReadFile(filepath.Join(svc.store.WorkspaceRoot(), "notes.md"))
+	if err != nil {
+		t.Fatalf("ReadFile(notes.md): %v", err)
+	}
+	if !strings.Contains(string(content), "workspace note") {
+		t.Fatalf("expected generated edit content, got %q", string(content))
+	}
+	if !executionOutputContains(result.Session.Execution.Outputs, "notes.md") {
+		t.Fatalf("expected edit output in execution state, got %+v", result.Session.Execution.Outputs)
+	}
+}
+
+func TestApprovedCommandFailureMarksNodeFailed(t *testing.T) {
+	t.Parallel()
+
+	svc, _ := newTestService(t)
+	sessionID := seedCommandPlan(t, svc, []string{"sh -c 'exit 7'"})
+	approval, err := svc.store.LoadPendingApproval(sessionID)
+	if err != nil {
+		t.Fatalf("LoadPendingApproval: %v", err)
+	}
+	if _, err := svc.DecidePermission(context.Background(), sessionID, protocol.PermissionDecision{
+		RequestID: approval.ActiveRequestID,
+		Value:     "accept-once",
+	}); err == nil {
+		t.Fatalf("expected command failure")
+	}
+	execState, err := svc.store.LoadExecutionState(sessionID)
+	if err != nil {
+		t.Fatalf("LoadExecutionState: %v", err)
+	}
+	if execState == nil || len(execState.Nodes) == 0 || execState.Nodes[0].Status != protocol.NodeStatusFailed {
+		t.Fatalf("expected failed node after command error, got %+v", execState)
+	}
+}
+
+func TestExecuteValidationFailureDoesNotLeaveSessionRunning(t *testing.T) {
+	t.Parallel()
+
+	svc, _ := newTestService(t)
+	meta, err := svc.NewSession(protocol.PermissionModePlan, "zh", "distill")
+	if err != nil {
+		t.Fatalf("NewSession: %v", err)
+	}
+	if _, err := svc.Execute(context.Background(), protocol.ClientRequest{
+		SessionID:      meta.SessionID,
+		Task:           "   ",
+		PermissionMode: protocol.PermissionModePlan,
+		Sources:        []string{filepath.Join(svc.store.WorkspaceRoot(), "missing.pdf")},
+		Language:       "zh",
+		Style:          "distill",
+	}); err == nil {
+		t.Fatalf("expected attach/validation failure")
+	}
+	loaded, err := svc.store.LoadMeta(meta.SessionID)
+	if err != nil {
+		t.Fatalf("LoadMeta: %v", err)
+	}
+	if loaded.State == protocol.SessionStateRunning {
+		t.Fatalf("session should not remain running after validation failure")
+	}
+}
+
 func TestTurnLoopReceivesServiceInputs(t *testing.T) {
 	t.Parallel()
 
@@ -226,6 +349,42 @@ func TestListAndRunSkillsUseNativeRuntime(t *testing.T) {
 	}
 	if result.Run.Status != protocol.SkillRunStatusCompleted || result.Artifact == nil {
 		t.Fatalf("expected completed skill artifact, got %+v", result)
+	}
+}
+
+func TestComparisonSkillRequiresComparisonAndPersistsPaperIDs(t *testing.T) {
+	t.Parallel()
+
+	svc, _ := newTestService(t)
+	meta, err := svc.NewSession(protocol.PermissionModePlan, "zh", "distill")
+	if err != nil {
+		t.Fatalf("NewSession: %v", err)
+	}
+	if _, err := svc.RunSkill(context.Background(), meta.SessionID, string(protocol.SkillNameCompareRefinement), "comparison"); err == nil {
+		t.Fatalf("expected comparison skill without comparison to fail")
+	}
+	if err := svc.store.SaveSources(meta.SessionID, []protocol.PaperRef{
+		{PaperID: "paper_1", URI: "/tmp/paper1.pdf", LocalPath: "/tmp/paper1.pdf", SourceType: protocol.SourceTypeLocalPDF, Status: protocol.SourceStatusAttached},
+		{PaperID: "paper_2", URI: "/tmp/paper2.pdf", LocalPath: "/tmp/paper2.pdf", SourceType: protocol.SourceTypeLocalPDF, Status: protocol.SourceStatusAttached},
+	}); err != nil {
+		t.Fatalf("SaveSources: %v", err)
+	}
+	if err := svc.store.SaveComparison(meta.SessionID, protocol.ComparisonDigest{PaperIDs: []string{"paper_1", "paper_2"}, Goal: "compare", GeneratedAt: time.Now().UTC()}); err != nil {
+		t.Fatalf("SaveComparison: %v", err)
+	}
+	result, err := svc.RunSkill(context.Background(), meta.SessionID, string(protocol.SkillNameCompareRefinement), "comparison")
+	if err != nil {
+		t.Fatalf("RunSkill(comparison): %v", err)
+	}
+	if strings.Join(result.Run.PaperIDs, ",") != "paper_1,paper_2" {
+		t.Fatalf("expected comparison paper IDs on run, got %+v", result.Run.PaperIDs)
+	}
+	raw, err := os.ReadFile(result.Artifact.Paths["json"])
+	if err != nil {
+		t.Fatalf("ReadFile(skill json): %v", err)
+	}
+	if !strings.Contains(string(raw), "paper_1") || !strings.Contains(string(raw), "paper_2") {
+		t.Fatalf("expected paper_ids in artifact json, got %s", string(raw))
 	}
 }
 

@@ -114,6 +114,10 @@ func (s *Store) checkpointsDir(sessionID string) string {
 	return filepath.Join(s.SessionDir(sessionID), "eino_checkpoints")
 }
 
+func (s *Store) legacyCheckpointsDir(sessionID string) string {
+	return filepath.Join(s.SessionDir(sessionID), "checkpoints")
+}
+
 func (s *Store) workspacesDir(sessionID string) string {
 	return filepath.Join(s.SessionDir(sessionID), "workspaces")
 }
@@ -779,6 +783,9 @@ func (s *Store) InvalidatePlanState(sessionID string) error {
 	if err := os.RemoveAll(s.checkpointsDir(sessionID)); err != nil && !errors.Is(err, os.ErrNotExist) {
 		return err
 	}
+	if err := os.RemoveAll(s.legacyCheckpointsDir(sessionID)); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
 	if err := s.DeletePendingApproval(sessionID); err != nil {
 		return err
 	}
@@ -819,7 +826,7 @@ func permissionRuleEquivalent(a, b protocol.PermissionRule) bool {
 }
 
 func (s *Store) CheckPointStore(sessionID string) adk.CheckPointStore {
-	return &fileCheckpointStore{dir: s.checkpointsDir(sessionID)}
+	return &fileCheckpointStore{dir: s.checkpointsDir(sessionID), fallbackDir: s.legacyCheckpointsDir(sessionID)}
 }
 
 func (s *Store) LatestSessionID() (string, error) {
@@ -870,17 +877,36 @@ func (s *Store) loadJSON(path string, v interface{}) error {
 }
 
 type fileCheckpointStore struct {
-	dir string
+	dir         string
+	fallbackDir string
 }
 
 func (s *fileCheckpointStore) checkpointPath(checkPointID string) string {
 	return filepath.Join(s.dir, checkPointID+".bin")
 }
 
+func (s *fileCheckpointStore) fallbackCheckpointPath(checkPointID string) string {
+	if strings.TrimSpace(s.fallbackDir) == "" {
+		return ""
+	}
+	return filepath.Join(s.fallbackDir, checkPointID+".bin")
+}
+
 func (s *fileCheckpointStore) Get(_ context.Context, checkPointID string) ([]byte, bool, error) {
 	raw, err := os.ReadFile(s.checkpointPath(checkPointID))
 	if errors.Is(err, os.ErrNotExist) {
-		return nil, false, nil
+		fallbackPath := s.fallbackCheckpointPath(checkPointID)
+		if fallbackPath == "" {
+			return nil, false, nil
+		}
+		raw, err = os.ReadFile(fallbackPath)
+		if errors.Is(err, os.ErrNotExist) {
+			return nil, false, nil
+		}
+		if err != nil {
+			return nil, false, err
+		}
+		return raw, true, nil
 	}
 	if err != nil {
 		return nil, false, err

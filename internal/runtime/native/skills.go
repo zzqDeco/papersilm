@@ -35,6 +35,16 @@ func (r *Runtime) RunSkill(ctx context.Context, sessionID, skillName, targetID s
 	if strings.TrimSpace(targetID) == "" {
 		return protocol.SkillRunResult{}, fmt.Errorf("skill target is required")
 	}
+	paperIDs := []string{targetID}
+	if descriptor.TargetKind == protocol.SkillTargetKindComparison {
+		if snapshot.Compare == nil || len(snapshot.Compare.PaperIDs) == 0 {
+			return protocol.SkillRunResult{}, fmt.Errorf("comparison skill requires an existing comparison")
+		}
+		if targetID != "comparison" {
+			return protocol.SkillRunResult{}, fmt.Errorf("comparison skill target must be comparison")
+		}
+		paperIDs = append([]string(nil), snapshot.Compare.PaperIDs...)
+	}
 	now := time.Now().UTC()
 	run := protocol.SkillRunRecord{
 		RunID:      fmt.Sprintf("skill_%d", now.UnixNano()),
@@ -42,23 +52,21 @@ func (r *Runtime) RunSkill(ctx context.Context, sessionID, skillName, targetID s
 		SkillName:  descriptor.Name,
 		TargetKind: descriptor.TargetKind,
 		TargetID:   targetID,
-		PaperIDs:   []string{targetID},
+		PaperIDs:   paperIDs,
 		Status:     protocol.SkillRunStatusRunning,
 		Title:      descriptor.Title,
 		CreatedAt:  now,
 		UpdatedAt:  now,
-	}
-	if descriptor.TargetKind == protocol.SkillTargetKindComparison {
-		run.PaperIDs = nil
 	}
 	if err := r.store.SaveSkillRun(sessionID, run); err != nil {
 		return protocol.SkillRunResult{}, err
 	}
 	markdown := skillMarkdown(descriptor, snapshot, targetID)
 	manifest, err := r.writeSkillArtifact(sessionID, run.RunID, string(descriptor.Name), descriptor.Title, snapshot.Meta.Language, markdown, map[string]any{
-		"skill":    descriptor.Name,
-		"target":   targetID,
-		"markdown": markdown,
+		"skill":     descriptor.Name,
+		"target":    targetID,
+		"paper_ids": paperIDs,
+		"markdown":  markdown,
 	})
 	if err != nil {
 		run.Status = protocol.SkillRunStatusFailed
@@ -177,6 +185,11 @@ func (r *Runtime) writeSkillArtifact(sessionID, artifactID, kind, title, lang, m
 			"json":     jsonPath,
 		},
 		CreatedAt: time.Now().UTC(),
+	}
+	if payloadMap, ok := payload.(map[string]any); ok {
+		if paperIDs, ok := payloadMap["paper_ids"]; ok {
+			manifest.Metadata = map[string]interface{}{"paper_ids": paperIDs}
+		}
 	}
 	if err := r.store.SaveSkillArtifactManifest(sessionID, manifest); err != nil {
 		return protocol.ArtifactManifest{}, err

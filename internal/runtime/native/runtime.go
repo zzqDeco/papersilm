@@ -75,17 +75,15 @@ func (r *Runtime) Execute(ctx context.Context, req protocol.ClientRequest, turnI
 		return protocol.RunResult{}, err
 	}
 	meta = syncMeta(meta, req)
-	meta.State = protocol.SessionStateRunning
-	meta.ApprovalPending = false
-	meta.ActiveCheckpointID = ""
-	meta.PendingInterruptID = ""
-	if err := r.store.SaveMeta(meta); err != nil {
-		return protocol.RunResult{}, err
-	}
 	if len(req.Sources) > 0 {
 		if _, err := r.AttachSources(ctx, req.SessionID, req.Sources, false); err != nil {
 			return protocol.RunResult{}, err
 		}
+		meta, err = r.store.LoadMeta(req.SessionID)
+		if err != nil {
+			return protocol.RunResult{}, err
+		}
+		meta = syncMeta(meta, req)
 	}
 	goal := strings.TrimSpace(req.Task)
 	if goal == "" {
@@ -94,6 +92,10 @@ func (r *Runtime) Execute(ctx context.Context, req protocol.ClientRequest, turnI
 	if goal == "" {
 		return protocol.RunResult{}, fmt.Errorf("task is required")
 	}
+	meta.State = protocol.SessionStateRunning
+	meta.ApprovalPending = false
+	meta.ActiveCheckpointID = ""
+	meta.PendingInterruptID = ""
 	meta.LastTask = goal
 	meta.PermissionMode = req.PermissionMode
 	meta.UpdatedAt = time.Now().UTC()
@@ -157,14 +159,89 @@ func (r *Runtime) RunPlanned(ctx context.Context, sessionID, lang, style, turnID
 	return r.executePlan(ctx, sessionID, *plan, turnID)
 }
 
+func (r *Runtime) RunTask(ctx context.Context, sessionID, taskID, lang, style, turnID string) (protocol.RunResult, error) {
+	taskID = strings.TrimSpace(taskID)
+	if taskID == "" {
+		return protocol.RunResult{}, fmt.Errorf("task id is required")
+	}
+	meta, err := r.store.LoadMeta(sessionID)
+	if err != nil {
+		return protocol.RunResult{}, err
+	}
+	if strings.TrimSpace(lang) != "" {
+		meta.Language = lang
+	}
+	if strings.TrimSpace(style) != "" {
+		meta.Style = style
+	}
+	meta.PermissionMode = protocol.PermissionModeAuto
+	meta.State = protocol.SessionStateRunning
+	meta.UpdatedAt = time.Now().UTC()
+	if err := r.store.SaveMeta(meta); err != nil {
+		return protocol.RunResult{}, err
+	}
+	plan, err := r.store.LoadPlan(sessionID)
+	if err != nil {
+		return protocol.RunResult{}, err
+	}
+	if plan == nil {
+		return protocol.RunResult{}, fmt.Errorf("no saved plan available")
+	}
+	step, ok := findPlanStepForTask(*plan, taskID)
+	if !ok {
+		return protocol.RunResult{}, fmt.Errorf("task not found: %s", taskID)
+	}
+	out, err := r.executeStep(ctx, sessionID, plan.Goal, step)
+	if err != nil {
+		_ = r.markStep(sessionID, plan.PlanID, step.ID, protocol.NodeStatusFailed, err.Error(), out)
+		return protocol.RunResult{}, err
+	}
+	if err := r.markStep(sessionID, plan.PlanID, step.ID, protocol.NodeStatusCompleted, "", out); err != nil {
+		return protocol.RunResult{}, err
+	}
+	state, _ := r.store.LoadExecutionState(sessionID)
+	if state != nil && executionFinalized(state.Nodes) {
+		meta.State = protocol.SessionStateCompleted
+	} else {
+		meta.State = protocol.SessionStatePlanned
+	}
+	meta.UpdatedAt = time.Now().UTC()
+	if err := r.store.SaveMeta(meta); err != nil {
+		return protocol.RunResult{}, err
+	}
+	snapshot, err := r.store.Snapshot(sessionID)
+	if err != nil {
+		return protocol.RunResult{}, err
+	}
+	response := fmt.Sprintf("Task %s completed.", step.ID)
+	if text, ok := out.Data["response"].(string); ok && strings.TrimSpace(text) != "" {
+		response = text
+	}
+	result := protocol.RunResult{Session: snapshot, Plan: snapshot.Plan, Digests: snapshot.Digests, Comparison: snapshot.Compare, Artifacts: snapshot.Artifacts, Response: response}
+	_ = r.emit(sessionID, protocol.EventResult, "task completed", map[string]any{
+		"turn_id":  turnID,
+		"task_id":  step.ID,
+		"response": response,
+	})
+	return result, nil
+}
+
 func (r *Runtime) HandleTaskAction(ctx context.Context, sessionID string, payload runtimeinput.TaskActionPayload, turnID string) (protocol.RunResult, error) {
 	switch payload.Action {
 	case "approve":
-		return r.DecidePermission(ctx, sessionID, protocol.PermissionDecision{Value: agenttool.PermissionAcceptOnce, Feedback: payload.Comment}, turnID)
+		requestID, err := r.permissionRequestIDForTask(sessionID, payload.TaskID)
+		if err != nil {
+			return protocol.RunResult{}, err
+		}
+		return r.DecidePermission(ctx, sessionID, protocol.PermissionDecision{RequestID: requestID, Value: agenttool.PermissionAcceptOnce, Feedback: payload.Comment}, turnID)
 	case "reject":
-		return r.DecidePermission(ctx, sessionID, protocol.PermissionDecision{Value: agenttool.PermissionReject, Feedback: payload.Comment}, turnID)
+		requestID, err := r.permissionRequestIDForTask(sessionID, payload.TaskID)
+		if err != nil {
+			return protocol.RunResult{}, err
+		}
+		return r.DecidePermission(ctx, sessionID, protocol.PermissionDecision{RequestID: requestID, Value: agenttool.PermissionReject, Feedback: payload.Comment}, turnID)
 	case "run":
-		return r.RunPlanned(ctx, sessionID, payload.Language, payload.Style, turnID)
+		return r.RunTask(ctx, sessionID, payload.TaskID, payload.Language, payload.Style, turnID)
 	default:
 		return protocol.RunResult{}, fmt.Errorf("unknown task action: %s", payload.Action)
 	}
@@ -187,8 +264,11 @@ func (r *Runtime) DecidePermission(ctx context.Context, sessionID string, decisi
 	}
 	if approval.Mode == "tool" && approval.CheckpointID != "" && approval.InterruptID != "" {
 		if decision.Value == agenttool.PermissionAcceptSession {
-			_ = agenttool.AddPermissionRule(r.store, sessionID, request, decision)
+			if err := agenttool.AddPermissionRule(r.store, sessionID, request, decision); err != nil {
+				return protocol.RunResult{}, err
+			}
 		}
+		interruptID := firstNonEmpty(request.InterruptID, approval.InterruptID)
 		prepared, err := prepare.Agent(ctx, prepare.Request{
 			Config:         r.cfg,
 			Store:          r.store,
@@ -206,7 +286,7 @@ func (r *Runtime) DecidePermission(ctx context.Context, sessionID string, decisi
 			TurnID:     turnID,
 			Checkpoint: approval.CheckpointID,
 			Targets: map[string]any{
-				approval.InterruptID: decision,
+				interruptID: decision,
 			},
 		})
 		if err != nil {
@@ -419,7 +499,11 @@ func (r *Runtime) executeStep(ctx context.Context, sessionID, goal string, step 
 		}
 		return nodeOutput(step.ID, "workspace_response", text, now), nil
 	case string(protocol.NodeKindWorkspaceEdit):
-		return protocol.NodeOutputRef{}, fmt.Errorf("workspace edit requires permission-gated tool execution")
+		files, _ := r.registry.LoadWorkspaceFiles(r.store)
+		intent := inferWorkspaceIntent(step.Goal, files)
+		request := editPermissionRequest(r.store, sessionID, "", step.ID, step.Goal, intent.targetPath)
+		result, err := applyApprovedEdit(r, sessionID, request)
+		return nodeOutput(step.ID, "workspace_response", result, now), err
 	case "distill_paper":
 		out, err := r.invokeExecutionTool(ctx, sessionID, "distill_paper", tools.DistillToolInput{
 			PaperID: step.PaperIDs[0],

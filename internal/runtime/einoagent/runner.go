@@ -137,6 +137,7 @@ func ApprovalFromInterrupt(sessionID, checkpointID string, info *adk.InterruptIn
 		if request.RequestID == "" {
 			request.RequestID = ctx.ID
 		}
+		request.InterruptID = ctx.ID
 		if request.SessionID == "" {
 			request.SessionID = sessionID
 		}
