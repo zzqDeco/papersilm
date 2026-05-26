@@ -53,10 +53,16 @@ func Agent(ctx context.Context, req Request) (PreparedAgent, error) {
 	}
 	allTools := append(execTools, workspaceTools...)
 	workspaceAgent, err := adk.NewTypedChatModelAgent(ctx, &adk.TypedChatModelAgentConfig[*schema.AgenticMessage]{
-		Name:          "workspace_agent",
-		Description:   "Sub-agent for reading, searching, and explaining the current workspace.",
-		Instruction:   "You are a focused workspace sub-agent. Use the provided context and answer concisely.",
-		Model:         model,
+		Name:        "workspace_agent",
+		Description: "Sub-agent for reading, searching, and explaining the current workspace.",
+		Instruction: "You are a focused workspace sub-agent. Use the provided context and answer concisely.",
+		Model:       model,
+		ToolsConfig: adk.ToolsConfig{
+			ToolsNodeConfig: compose.ToolsNodeConfig{
+				Tools: workspaceTools,
+			},
+			EmitInternalEvents: true,
+		},
 		MaxIterations: 4,
 	})
 	if err != nil {

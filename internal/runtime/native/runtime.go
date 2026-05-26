@@ -371,7 +371,7 @@ func (r *Runtime) DecidePermission(ctx context.Context, sessionID string, decisi
 		return r.rejectPermission(sessionID, approval, request, decision)
 	}
 	if _, err := r.applyPermissionRequest(sessionID, request); err != nil {
-		return protocol.RunResult{}, err
+		return protocol.RunResult{}, r.failApprovedPermission(sessionID, err)
 	}
 	return r.continueAfterPermission(ctx, sessionID, turnID, approval, request)
 }
@@ -570,6 +570,16 @@ func (r *Runtime) markSessionFailed(sessionID string, runErr error) error {
 	meta.PendingInterruptID = ""
 	meta.UpdatedAt = time.Now().UTC()
 	return r.store.SaveMeta(meta)
+}
+
+func (r *Runtime) failApprovedPermission(sessionID string, runErr error) error {
+	if err := r.store.DeletePendingApproval(sessionID); err != nil {
+		return fmt.Errorf("%w; failed to clear pending approval: %v", runErr, err)
+	}
+	if err := r.markSessionFailed(sessionID, runErr); err != nil {
+		return fmt.Errorf("%w; failed to mark session failed: %v", runErr, err)
+	}
+	return runErr
 }
 
 func (r *Runtime) executeStep(ctx context.Context, sessionID, goal string, step protocol.PlanStep) (protocol.NodeOutputRef, error) {

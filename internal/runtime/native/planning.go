@@ -399,15 +399,12 @@ func (r *Runtime) saveApproval(sessionID string, plan protocol.PlanResult, appro
 }
 
 func (r *Runtime) continueAfterPermission(ctx context.Context, sessionID, turnID string, approval *protocol.ApprovalRequest, approvedRequest protocol.PermissionRequest) (protocol.RunResult, error) {
-	if err := r.store.DeletePendingApproval(sessionID); err != nil {
-		return protocol.RunResult{}, err
-	}
 	plan, err := r.store.LoadPlan(sessionID)
 	if err != nil {
-		return protocol.RunResult{}, err
+		return protocol.RunResult{}, r.failApprovedPermission(sessionID, err)
 	}
 	if plan == nil {
-		return protocol.RunResult{}, fmt.Errorf("no saved plan available")
+		return protocol.RunResult{}, r.failApprovedPermission(sessionID, fmt.Errorf("no saved plan available"))
 	}
 	if approval != nil && approval.Mode == "task" {
 		return r.finishTaskAfterPermission(sessionID, turnID, *plan, approvedRequest)
@@ -421,27 +418,33 @@ func (r *Runtime) continueAfterPermission(ctx context.Context, sessionID, turnID
 			rules, _ := r.store.LoadPermissionRules(sessionID)
 			request, err := permissionRequestForStep(r.store, sessionID, plan.PlanID, step)
 			if err != nil {
-				return protocol.RunResult{}, err
+				return protocol.RunResult{}, r.failApprovedPermission(sessionID, err)
 			}
 			if !permissionAllowedByRules(request, rules) {
 				return r.saveApproval(sessionID, *plan, approvalFromRequest(*plan, request, "plan"))
 			}
 			if _, err := r.applyPermissionRequest(sessionID, request); err != nil {
-				return protocol.RunResult{}, err
+				return protocol.RunResult{}, r.failApprovedPermission(sessionID, err)
 			}
 			continue
 		}
 		output, err := r.executeStep(ctx, sessionID, plan.Goal, step)
 		if err != nil {
 			_ = r.markStep(sessionID, plan.PlanID, step.ID, protocol.NodeStatusFailed, err.Error(), output)
-			return protocol.RunResult{}, err
+			return protocol.RunResult{}, r.failApprovedPermission(sessionID, err)
 		}
 		_ = r.markStep(sessionID, plan.PlanID, step.ID, protocol.NodeStatusCompleted, "", output)
+	}
+	if err := r.store.DeletePendingApproval(sessionID); err != nil {
+		return protocol.RunResult{}, err
 	}
 	return r.finishCompleted(sessionID, turnID)
 }
 
 func (r *Runtime) finishTaskAfterPermission(sessionID, turnID string, plan protocol.PlanResult, request protocol.PermissionRequest) (protocol.RunResult, error) {
+	if err := r.store.DeletePendingApproval(sessionID); err != nil {
+		return protocol.RunResult{}, err
+	}
 	meta, err := r.store.LoadMeta(sessionID)
 	if err != nil {
 		return protocol.RunResult{}, err
@@ -499,7 +502,11 @@ func (r *Runtime) finishCompleted(sessionID, turnID string) (protocol.RunResult,
 	if err != nil {
 		return protocol.RunResult{}, err
 	}
-	result := protocol.RunResult{Session: snapshot, Plan: snapshot.Plan, Digests: snapshot.Digests, Comparison: snapshot.Compare, Artifacts: snapshot.Artifacts, Response: summarizeResult(protocol.RunResult{Session: snapshot, Digests: snapshot.Digests, Comparison: snapshot.Compare})}
+	response := executionResponse(snapshot.Execution)
+	if response == "" {
+		response = summarizeResult(protocol.RunResult{Session: snapshot, Digests: snapshot.Digests, Comparison: snapshot.Compare})
+	}
+	result := protocol.RunResult{Session: snapshot, Plan: snapshot.Plan, Digests: snapshot.Digests, Comparison: snapshot.Compare, Artifacts: snapshot.Artifacts, Response: response}
 	if err := r.emit(sessionID, protocol.EventResult, "run completed", map[string]any{"turn_id": turnID, "response": result.Response}); err != nil {
 		return protocol.RunResult{}, err
 	}
@@ -578,7 +585,7 @@ func (r *Runtime) rejectPermission(sessionID string, approval *protocol.Approval
 			meta.State = protocol.SessionStatePlanned
 		}
 	} else {
-		meta.State = protocol.SessionStateCompleted
+		meta.State = protocol.SessionStatePlanned
 	}
 	meta.ApprovalPending = false
 	meta.ActiveCheckpointID = ""
@@ -601,14 +608,32 @@ func outputResponseForNode(outputs []protocol.NodeOutputRef, nodeID string) stri
 		if output.NodeID != nodeID {
 			continue
 		}
-		if text, ok := output.Data["response"].(string); ok && strings.TrimSpace(text) != "" {
+		if text := outputResponse(output); text != "" {
 			return text
 		}
-		for _, value := range output.Data {
-			text := strings.TrimSpace(fmt.Sprint(value))
-			if text != "" {
-				return text
-			}
+	}
+	return ""
+}
+
+func executionResponse(state *protocol.ExecutionState) string {
+	if state == nil {
+		return ""
+	}
+	response := ""
+	for _, output := range state.Outputs {
+		response = appendText(response, outputResponse(output))
+	}
+	return response
+}
+
+func outputResponse(output protocol.NodeOutputRef) string {
+	if text, ok := output.Data["response"].(string); ok && strings.TrimSpace(text) != "" {
+		return strings.TrimSpace(text)
+	}
+	for _, value := range output.Data {
+		text := strings.TrimSpace(fmt.Sprint(value))
+		if text != "" {
+			return text
 		}
 	}
 	return ""

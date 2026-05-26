@@ -120,6 +120,9 @@ func TestConfirmCommandCreatesToolScopedPermissionAndAcceptRuns(t *testing.T) {
 	if result.Session.Meta.State != protocol.SessionStateCompleted {
 		t.Fatalf("expected completed session, got %s", result.Session.Meta.State)
 	}
+	if !strings.Contains(result.Response, "command-smoke") {
+		t.Fatalf("expected command output in response, got %q", result.Response)
+	}
 	execState, err := svc.store.LoadExecutionState(result.Session.Meta.SessionID)
 	if err != nil {
 		t.Fatalf("LoadExecutionState: %v", err)
@@ -582,6 +585,20 @@ func TestApprovedCommandFailureMarksNodeFailed(t *testing.T) {
 	if execState == nil || len(execState.Nodes) == 0 || execState.Nodes[0].Status != protocol.NodeStatusFailed {
 		t.Fatalf("expected failed node after command error, got %+v", execState)
 	}
+	approval, err = svc.store.LoadPendingApproval(sessionID)
+	if err != nil {
+		t.Fatalf("LoadPendingApproval(after failure): %v", err)
+	}
+	if approval != nil {
+		t.Fatalf("expected consumed approval to be cleared after approved command failure, got %+v", approval)
+	}
+	meta, err := svc.store.LoadMeta(sessionID)
+	if err != nil {
+		t.Fatalf("LoadMeta: %v", err)
+	}
+	if meta.State != protocol.SessionStateFailed || meta.ApprovalPending {
+		t.Fatalf("expected failed session without pending approval, got %+v", meta)
+	}
 }
 
 func TestExecutePlanFailureMarksSessionFailed(t *testing.T) {
@@ -661,6 +678,64 @@ func TestExecutePlanningFailureDoesNotLeaveSessionRunning(t *testing.T) {
 	}
 	if loaded.State != protocol.SessionStateFailed {
 		t.Fatalf("expected failed session state after planning failure, got %s", loaded.State)
+	}
+}
+
+func TestApprovedPlanContinuationFailureClearsApprovalState(t *testing.T) {
+	t.Parallel()
+
+	svc, _ := newTestService(t)
+	sessionID := seedCommandPlan(t, svc, []string{"printf %s first"})
+	approval, err := svc.store.LoadPendingApproval(sessionID)
+	if err != nil {
+		t.Fatalf("LoadPendingApproval: %v", err)
+	}
+	if err := svc.store.DeletePlan(sessionID); err != nil {
+		t.Fatalf("DeletePlan: %v", err)
+	}
+	if _, err := svc.DecidePermission(context.Background(), sessionID, protocol.PermissionDecision{
+		RequestID: approval.ActiveRequestID,
+		Value:     "accept-once",
+	}); err == nil {
+		t.Fatalf("expected continuation failure")
+	}
+	approval, err = svc.store.LoadPendingApproval(sessionID)
+	if err != nil {
+		t.Fatalf("LoadPendingApproval(after failure): %v", err)
+	}
+	if approval != nil {
+		t.Fatalf("expected approval cleared after failed continuation, got %+v", approval)
+	}
+	meta, err := svc.store.LoadMeta(sessionID)
+	if err != nil {
+		t.Fatalf("LoadMeta: %v", err)
+	}
+	if meta.State != protocol.SessionStateFailed || meta.ApprovalPending {
+		t.Fatalf("expected failed session without pending approval, got %+v", meta)
+	}
+}
+
+func TestRejectPlanApprovalReturnsPlanned(t *testing.T) {
+	t.Parallel()
+
+	svc, _ := newTestService(t)
+	sessionID := seedCommandPlan(t, svc, []string{"printf %s first"})
+	approval, err := svc.store.LoadPendingApproval(sessionID)
+	if err != nil {
+		t.Fatalf("LoadPendingApproval: %v", err)
+	}
+	result, err := svc.DecidePermission(context.Background(), sessionID, protocol.PermissionDecision{
+		RequestID: approval.ActiveRequestID,
+		Value:     "reject",
+	})
+	if err != nil {
+		t.Fatalf("DecidePermission(reject): %v", err)
+	}
+	if result.Session.Meta.State != protocol.SessionStatePlanned || result.Session.Meta.ApprovalPending {
+		t.Fatalf("expected rejected plan approval to return to planned, got %+v", result.Session.Meta)
+	}
+	if result.Session.Approval != nil {
+		t.Fatalf("expected rejected approval cleared, got %+v", result.Session.Approval)
 	}
 }
 
