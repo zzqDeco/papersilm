@@ -38,6 +38,9 @@ provider:
 	if cfg.Theme != ThemeAuto {
 		t.Fatalf("expected missing theme to default to auto, got %q", cfg.Theme)
 	}
+	if cfg.Runtime != RuntimeLegacy {
+		t.Fatalf("expected missing runtime to default to legacy, got %q", cfg.Runtime)
+	}
 	profile, ok := cfg.Providers[DefaultProviderProfile]
 	if !ok {
 		t.Fatalf("expected default profile in %+v", cfg.Providers)
@@ -97,7 +100,7 @@ func TestSaveWritesActiveProviderAndLegacyMirror(t *testing.T) {
 		t.Fatalf("ReadFile(saved): %v", err)
 	}
 	text := string(raw)
-	for _, want := range []string{"theme: light", "active_provider: local-openai", "providers:", "provider:"} {
+	for _, want := range []string{"runtime: legacy", "theme: light", "active_provider: local-openai", "providers:", "provider:"} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("expected %q in saved config:\n%s", want, text)
 		}
@@ -116,5 +119,27 @@ func TestSetThemeValidatesValues(t *testing.T) {
 	}
 	if err := cfg.SetTheme("sepia"); err == nil {
 		t.Fatalf("expected invalid theme error")
+	}
+}
+
+func TestRuntimeSettingUsesEnvOverrideWithoutPersisting(t *testing.T) {
+	t.Setenv("PAPERSILM_RUNTIME", string(RuntimeEino))
+	cfg := Default()
+	if cfg.RuntimeSetting() != RuntimeEino {
+		t.Fatalf("expected env runtime override, got %q", cfg.RuntimeSetting())
+	}
+	if cfg.Runtime != RuntimeLegacy {
+		t.Fatalf("expected config runtime to remain legacy, got %q", cfg.Runtime)
+	}
+}
+
+func TestRuntimeSettingRejectsInvalidValues(t *testing.T) {
+	t.Parallel()
+
+	cfg := Default()
+	cfg.Runtime = "experimental"
+	cfg.Normalize()
+	if cfg.Runtime != RuntimeLegacy {
+		t.Fatalf("expected invalid runtime to normalize to legacy, got %q", cfg.Runtime)
 	}
 }

@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 
+	agenticopenaimodel "github.com/cloudwego/eino-ext/components/model/agenticopenai"
 	arkmodel "github.com/cloudwego/eino-ext/components/model/ark"
 	deepseekmodel "github.com/cloudwego/eino-ext/components/model/deepseek"
 	ollamamodel "github.com/cloudwego/eino-ext/components/model/ollama"
@@ -57,6 +58,27 @@ func BuildChatModel(ctx context.Context, cfg config.ProviderConfig, timeout time
 		})
 	default:
 		return nil, fmt.Errorf("unsupported provider: %s", cfg.Provider)
+	}
+}
+
+func BuildAgenticModel(ctx context.Context, cfg config.ProviderConfig, timeout time.Duration) (model.AgenticModel, error) {
+	if useLocalAgentModel(cfg) {
+		return nil, fmt.Errorf("agentic runtime requires a configured provider")
+	}
+	switch cfg.Provider {
+	case config.ProviderOpenAI:
+		var timeoutPtr *time.Duration
+		if timeout > 0 {
+			timeoutPtr = &timeout
+		}
+		return agenticopenaimodel.New(ctx, &agenticopenaimodel.Config{
+			APIKey:  cfg.APIKey,
+			Model:   cfg.Model,
+			BaseURL: cfg.BaseURL,
+			Timeout: timeoutPtr,
+		})
+	default:
+		return nil, fmt.Errorf("agentic runtime does not support provider %q yet", cfg.Provider)
 	}
 }
 
