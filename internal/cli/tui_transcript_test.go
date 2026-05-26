@@ -1439,6 +1439,57 @@ func TestModalDrawerLimitsRowsOnShortTerminal(t *testing.T) {
 	}
 }
 
+func TestModalDrawerUsesUnifiedListRowsAndHint(t *testing.T) {
+	t.Parallel()
+
+	model := newTestTUIModel()
+	model.width = 72
+	model.height = 24
+	model.modal = tuiModalState{
+		Kind:      tuiModalCommands,
+		Title:     "Command Palette",
+		Selection: 0,
+		Visible: []tuiChoice{
+			{Label: "/help", Detail: "Show slash commands", Value: "/help"},
+			{Label: "/model", Detail: "Open provider/model picker", Value: "/model"},
+		},
+	}
+	model.modalIn.SetValue("/h")
+
+	drawer := model.renderModalBox()
+	for _, want := range []string{"Command Palette", "› /h", "› /help", " – Show slash commands", "↑/↓ select · Enter insert · Esc close"} {
+		if !containsString(drawer, want) {
+			t.Fatalf("expected %q in modal drawer, got %q", want, drawer)
+		}
+	}
+	if containsString(drawer, "❯") || containsString(drawer, "┌") || containsString(drawer, "└") {
+		t.Fatalf("expected neutral drawer row styling, got %q", drawer)
+	}
+}
+
+func TestModelDrawerEmptyStateExplainsTypedModelFallback(t *testing.T) {
+	t.Parallel()
+
+	model := newTestTUIModel()
+	model.width = 72
+	model.height = 24
+	model.modal = tuiModalState{
+		Kind:     tuiModalModels,
+		Title:    "Model Picker",
+		Provider: "local-openai",
+		Visible:  nil,
+		Loading:  false,
+	}
+	model.modalIn.SetValue("gpt-local")
+
+	drawer := model.renderModalBox()
+	for _, want := range []string{"Model Picker", "profile local-openai", "› gpt-local", "No discovered models", "Enter uses typed model"} {
+		if !containsString(drawer, want) {
+			t.Fatalf("expected %q in model drawer, got %q", want, drawer)
+		}
+	}
+}
+
 func TestHistorySearchAcceptRestoresSelectedPrompt(t *testing.T) {
 	t.Parallel()
 
@@ -1827,6 +1878,23 @@ func TestSuggestionsUsePromptOverlayRows(t *testing.T) {
 	}
 	if containsString(rendered, "┌") || containsString(rendered, "└") {
 		t.Fatalf("did not expect boxed suggestion overlay, got %q", rendered)
+	}
+}
+
+func TestSuggestionOverlayNeverExceedsTerminalWidth(t *testing.T) {
+	t.Parallel()
+
+	model := newTestTUIModel()
+	model.width = 18
+	model.suggestions = []tuiSuggestion{
+		{Label: "/commands", Detail: "Open the command palette with a long description"},
+	}
+
+	rendered := model.renderSuggestions()
+	for _, line := range strings.Split(rendered, "\n") {
+		if lipgloss.Width(line) > model.width {
+			t.Fatalf("expected suggestion overlay to fit width %d, got line width %d: %q", model.width, lipgloss.Width(line), rendered)
+		}
 	}
 }
 

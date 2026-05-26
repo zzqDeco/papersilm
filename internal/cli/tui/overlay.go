@@ -22,11 +22,13 @@ type PromptOverlay struct {
 }
 
 type DrawerOverlay struct {
-	Kind    OverlayKind
-	Title   string
-	Message string
-	Filter  string
-	Rows    []ListRow
+	Kind         OverlayKind
+	Title        string
+	Message      string
+	Filter       string
+	EmptyMessage string
+	Hint         string
+	Rows         []ListRow
 }
 
 type OverlayManager struct {
@@ -74,6 +76,8 @@ func RenderDrawerOverlay(overlay DrawerOverlay, drawer Drawer) string {
 	drawer.Title = overlay.Title
 	drawer.Message = overlay.Message
 	drawer.Filter = overlay.Filter
+	drawer.EmptyMessage = overlay.EmptyMessage
+	drawer.Hint = overlay.Hint
 	drawer.Rows = overlay.Rows
 	return RenderBottomDrawer(drawer)
 }

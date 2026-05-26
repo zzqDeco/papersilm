@@ -14,6 +14,8 @@ type Drawer struct {
 	Title        string
 	Message      string
 	Filter       string
+	EmptyMessage string
+	Hint         string
 	Rows         []ListRow
 	DividerStyle lipgloss.Style
 	TitleStyle   lipgloss.Style
@@ -96,15 +98,33 @@ func RenderBottomDrawer(drawer Drawer) string {
 		lines = append(lines, "  "+drawer.TitleStyle.Render(truncateRight(drawer.Title, bodyWidth)))
 	}
 	if strings.TrimSpace(drawer.Message) != "" {
-		lines = append(lines, "  "+drawer.MutedStyle.Render(truncateRight(drawer.Message, bodyWidth)))
+		lines = append(lines, drawerTextLines(drawer.Message, bodyWidth, drawer.MutedStyle)...)
 	}
 	if strings.TrimSpace(drawer.Filter) != "" {
-		lines = append(lines, "  "+drawer.BodyStyle.Render(truncateRight(drawer.Filter, bodyWidth)))
+		lines = append(lines, drawerTextLines(drawer.Filter, bodyWidth, drawer.BodyStyle)...)
 	}
 	if len(drawer.Rows) > 0 {
 		lines = append(lines, RenderListRows(drawer.Rows, bodyWidth)...)
+	} else if strings.TrimSpace(drawer.EmptyMessage) != "" {
+		lines = append(lines, "  "+drawer.MutedStyle.Render(truncateRight(drawer.EmptyMessage, bodyWidth)))
+	}
+	if strings.TrimSpace(drawer.Hint) != "" {
+		lines = append(lines, "  "+drawer.MutedStyle.Render(truncateRight(drawer.Hint, bodyWidth)))
 	}
 	return strings.Join(lines, "\n")
+}
+
+func drawerTextLines(text string, width int, style lipgloss.Style) []string {
+	parts := strings.Split(strings.TrimSpace(text), "\n")
+	lines := make([]string, 0, len(parts))
+	for _, part := range parts {
+		part = strings.TrimSpace(part)
+		if part == "" {
+			continue
+		}
+		lines = append(lines, "  "+style.Render(truncateRight(part, width)))
+	}
+	return lines
 }
 
 func RenderListRows(rows []ListRow, width int) []string {
