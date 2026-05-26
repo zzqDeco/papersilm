@@ -3,6 +3,7 @@ package core
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -12,6 +13,8 @@ import (
 	"github.com/zzqDeco/papersilm/internal/agent"
 	"github.com/zzqDeco/papersilm/internal/config"
 	"github.com/zzqDeco/papersilm/internal/pipeline"
+	runtimeinput "github.com/zzqDeco/papersilm/internal/runtime/input"
+	"github.com/zzqDeco/papersilm/internal/runtime/turnloop"
 	"github.com/zzqDeco/papersilm/internal/storage"
 	"github.com/zzqDeco/papersilm/internal/tools"
 	"github.com/zzqDeco/papersilm/pkg/protocol"
@@ -819,6 +822,60 @@ func TestNewSessionCopiesActiveProviderProfileAndModel(t *testing.T) {
 	}
 	if meta.ProviderProfile != "local-openai" || meta.Model != "gpt-5.4" {
 		t.Fatalf("expected provider/model copied from config, got %+v", meta)
+	}
+}
+
+func TestEinoRuntimeExecutePushesIntoTurnLoop(t *testing.T) {
+	t.Parallel()
+
+	svc, _ := newTestService(t)
+	svc.cfg.Runtime = config.RuntimeEino
+
+	_, err := svc.Execute(context.Background(), protocol.ClientRequest{
+		Task:           "inspect the workspace",
+		PermissionMode: protocol.PermissionModePlan,
+		Language:       "zh",
+		Style:          "distill",
+	})
+	if !errors.Is(err, turnloop.ErrRuntimeNotReady) {
+		t.Fatalf("expected turnloop not ready error, got %v", err)
+	}
+	snapshot, err := svc.LatestSession()
+	if err != nil {
+		t.Fatalf("LatestSession: %v", err)
+	}
+	buffered := svc.loop.Buffered(snapshot.Meta.SessionID)
+	if len(buffered) != 1 {
+		t.Fatalf("expected one buffered input, got %+v", buffered)
+	}
+	if buffered[0].Kind != runtimeinput.KindUserMessage || buffered[0].Text != "inspect the workspace" {
+		t.Fatalf("unexpected buffered input: %+v", buffered[0])
+	}
+}
+
+func TestEinoRuntimeDecidePermissionPushesCriticalInput(t *testing.T) {
+	t.Parallel()
+
+	svc, _ := newTestService(t)
+	svc.cfg.Runtime = config.RuntimeEino
+	meta, err := svc.NewSession(protocol.PermissionModeConfirm, "zh", "distill")
+	if err != nil {
+		t.Fatalf("NewSession: %v", err)
+	}
+
+	_, err = svc.DecidePermission(context.Background(), meta.SessionID, protocol.PermissionDecision{
+		RequestID: "req_1",
+		Value:     "accept-once",
+	})
+	if !errors.Is(err, turnloop.ErrRuntimeNotReady) {
+		t.Fatalf("expected turnloop not ready error, got %v", err)
+	}
+	buffered := svc.loop.Buffered(meta.SessionID)
+	if len(buffered) != 1 {
+		t.Fatalf("expected one buffered input, got %+v", buffered)
+	}
+	if buffered[0].Kind != runtimeinput.KindPermissionDecision || buffered[0].Priority != runtimeinput.PriorityCritical {
+		t.Fatalf("unexpected permission input: %+v", buffered[0])
 	}
 }
 
