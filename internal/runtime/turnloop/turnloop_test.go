@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -130,4 +131,39 @@ func TestConcurrentPushNeverDispatchesEmptyTurn(t *testing.T) {
 	if totalItems != 32 {
 		t.Fatalf("expected all inputs to dispatch once, got %d", totalItems)
 	}
+}
+
+func TestConcurrentPushSerializesHandlerDispatch(t *testing.T) {
+	t.Parallel()
+
+	var active int32
+	loop := New(Config{
+		Handler: func(_ context.Context, envelope TurnEnvelope) (protocol.RunResult, error) {
+			if len(envelope.Items) == 0 {
+				t.Fatalf("empty turn dispatched")
+			}
+			if n := atomic.AddInt32(&active, 1); n != 1 {
+				t.Fatalf("handler ran concurrently, active=%d", n)
+			}
+			time.Sleep(5 * time.Millisecond)
+			atomic.AddInt32(&active, -1)
+			return protocol.RunResult{}, nil
+		},
+	})
+
+	var wg sync.WaitGroup
+	for i := 0; i < 16; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			if _, err := loop.Push(context.Background(), input.Item{
+				SessionID: "sess_1",
+				Kind:      input.KindUserMessage,
+				Text:      fmt.Sprintf("message %d", i),
+			}); err != nil {
+				t.Errorf("Push(%d): %v", i, err)
+			}
+		}(i)
+	}
+	wg.Wait()
 }

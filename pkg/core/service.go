@@ -130,33 +130,40 @@ func (s *Service) LoadTaskBoard(sessionID string) (*protocol.TaskBoard, error) {
 
 func (s *Service) RunTask(ctx context.Context, sessionID, taskID, lang, style string) (protocol.RunResult, error) {
 	if s.useEinoRuntime() {
-		return s.loop.Push(ctx, runtimeinput.FromSlashCommand(sessionID, fmt.Sprintf("/task run %s", taskID), runtimeinput.PriorityHigh))
+		return s.loop.Push(ctx, runtimeinput.FromTaskAction(sessionID, runtimeinput.TaskActionPayload{
+			Action:   "run",
+			TaskID:   taskID,
+			Language: lang,
+			Style:    style,
+		}))
 	}
 	return s.agent.RunTask(ctx, s.store, s.sink, sessionID, taskID, lang, style)
 }
 
 func (s *Service) ApproveTask(ctx context.Context, sessionID, taskID string, approved bool, comment string) (protocol.RunResult, error) {
 	if s.useEinoRuntime() {
-		value := "accept-once"
+		action := "approve"
 		if !approved {
-			value = "reject"
+			action = "reject"
 		}
-		return s.DecidePermission(ctx, sessionID, protocol.PermissionDecision{
-			RequestID: taskID,
-			Value:     value,
-			Feedback:  comment,
-		})
+		return s.loop.Push(ctx, runtimeinput.FromTaskAction(sessionID, runtimeinput.TaskActionPayload{
+			Action:   action,
+			TaskID:   taskID,
+			Approved: approved,
+			Comment:  comment,
+		}))
 	}
 	return s.agent.ApproveTask(ctx, s.store, s.sink, sessionID, taskID, approved, comment)
 }
 
 func (s *Service) RejectTask(ctx context.Context, sessionID, taskID, comment string) (protocol.RunResult, error) {
 	if s.useEinoRuntime() {
-		return s.DecidePermission(ctx, sessionID, protocol.PermissionDecision{
-			RequestID: taskID,
-			Value:     "reject",
-			Feedback:  comment,
-		})
+		return s.loop.Push(ctx, runtimeinput.FromTaskAction(sessionID, runtimeinput.TaskActionPayload{
+			Action:   "reject",
+			TaskID:   taskID,
+			Approved: false,
+			Comment:  comment,
+		}))
 	}
 	return s.agent.RejectTask(ctx, s.store, s.sink, sessionID, taskID, comment)
 }

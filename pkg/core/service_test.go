@@ -879,6 +879,47 @@ func TestEinoRuntimeDecidePermissionPushesCriticalInput(t *testing.T) {
 	}
 }
 
+func TestEinoRuntimeTaskActionsPreserveTaskContext(t *testing.T) {
+	t.Parallel()
+
+	svc, _ := newTestService(t)
+	svc.cfg.Runtime = config.RuntimeEino
+	meta, err := svc.NewSession(protocol.PermissionModeConfirm, "zh", "distill")
+	if err != nil {
+		t.Fatalf("NewSession: %v", err)
+	}
+
+	_, err = svc.RunTask(context.Background(), meta.SessionID, "task_1", "en", "reviewer")
+	if !errors.Is(err, turnloop.ErrRuntimeNotReady) {
+		t.Fatalf("expected turnloop not ready error, got %v", err)
+	}
+	_, err = svc.ApproveTask(context.Background(), meta.SessionID, "task_2", true, "looks good")
+	if !errors.Is(err, turnloop.ErrRuntimeNotReady) {
+		t.Fatalf("expected turnloop not ready error, got %v", err)
+	}
+	_, err = svc.RejectTask(context.Background(), meta.SessionID, "task_3", "too risky")
+	if !errors.Is(err, turnloop.ErrRuntimeNotReady) {
+		t.Fatalf("expected turnloop not ready error, got %v", err)
+	}
+
+	buffered := svc.loop.Buffered(meta.SessionID)
+	if len(buffered) != 3 {
+		t.Fatalf("expected three buffered task actions, got %+v", buffered)
+	}
+	run, ok := buffered[0].Payload.(runtimeinput.TaskActionPayload)
+	if !ok || run.Action != "run" || run.TaskID != "task_1" || run.Language != "en" || run.Style != "reviewer" {
+		t.Fatalf("unexpected run task payload: %#v", buffered[0].Payload)
+	}
+	approve, ok := buffered[1].Payload.(runtimeinput.TaskActionPayload)
+	if !ok || approve.Action != "approve" || approve.TaskID != "task_2" || !approve.Approved || approve.Comment != "looks good" {
+		t.Fatalf("unexpected approve task payload: %#v", buffered[1].Payload)
+	}
+	reject, ok := buffered[2].Payload.(runtimeinput.TaskActionPayload)
+	if !ok || reject.Action != "reject" || reject.TaskID != "task_3" || reject.Approved || reject.Comment != "too risky" {
+		t.Fatalf("unexpected reject task payload: %#v", buffered[2].Payload)
+	}
+}
+
 func TestListSkillsLocalizesDescriptorsBySessionLanguage(t *testing.T) {
 	t.Parallel()
 

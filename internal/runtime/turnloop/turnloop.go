@@ -30,10 +30,11 @@ type TurnEnvelope struct {
 }
 
 type TurnLoop struct {
-	mu      sync.Mutex
-	handler Handler
-	clock   func() time.Time
-	buffer  map[string][]input.Item
+	dispatchMu sync.Mutex
+	mu         sync.Mutex
+	handler    Handler
+	clock      func() time.Time
+	buffer     map[string][]input.Item
 }
 
 func New(cfg Config) *TurnLoop {
@@ -53,6 +54,9 @@ func (l *TurnLoop) Push(ctx context.Context, item input.Item) (protocol.RunResul
 		l.enqueue(item)
 		return protocol.RunResult{}, ErrRuntimeNotReady
 	}
+	l.dispatchMu.Lock()
+	defer l.dispatchMu.Unlock()
+
 	envelope := l.enqueueAndDrain(item)
 	result, err := l.handler(ctx, envelope)
 	if err != nil {

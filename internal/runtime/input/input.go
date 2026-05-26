@@ -54,6 +54,15 @@ type RunPlannedPayload struct {
 	Style    string
 }
 
+type TaskActionPayload struct {
+	Action   string
+	TaskID   string
+	Language string
+	Style    string
+	Approved bool
+	Comment  string
+}
+
 func FromClientRequest(req protocol.ClientRequest) Item {
 	return Item{
 		SessionID: req.SessionID,
@@ -75,6 +84,16 @@ func FromRunPlanned(sessionID, lang, style string) Item {
 			Style:    style,
 		},
 		Priority: PriorityHigh,
+	}
+}
+
+func FromTaskAction(sessionID string, payload TaskActionPayload) Item {
+	return Item{
+		SessionID: sessionID,
+		Source:    SourceCLI,
+		Kind:      KindTaskAction,
+		Payload:   payload,
+		Priority:  PriorityHigh,
 	}
 }
 
