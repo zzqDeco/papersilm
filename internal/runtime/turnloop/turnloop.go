@@ -49,12 +49,17 @@ func New(cfg Config) *TurnLoop {
 }
 
 func (l *TurnLoop) Push(ctx context.Context, item input.Item) (protocol.RunResult, error) {
-	l.enqueue(item)
 	if l.handler == nil {
+		l.enqueue(item)
 		return protocol.RunResult{}, ErrRuntimeNotReady
 	}
-	envelope := l.drain(item.SessionID)
-	return l.handler(ctx, envelope)
+	envelope := l.enqueueAndDrain(item)
+	result, err := l.handler(ctx, envelope)
+	if err != nil {
+		l.restore(envelope)
+		return protocol.RunResult{}, err
+	}
+	return result, nil
 }
 
 func (l *TurnLoop) Buffered(sessionID string) []input.Item {
@@ -69,6 +74,20 @@ func (l *TurnLoop) enqueue(item input.Item) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 
+	item = l.normalizeItemLocked(item)
+	l.buffer[item.SessionID] = append(l.buffer[item.SessionID], item)
+}
+
+func (l *TurnLoop) enqueueAndDrain(item input.Item) TurnEnvelope {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+
+	item = l.normalizeItemLocked(item)
+	l.buffer[item.SessionID] = append(l.buffer[item.SessionID], item)
+	return l.drainLocked(item.SessionID)
+}
+
+func (l *TurnLoop) normalizeItemLocked(item input.Item) input.Item {
 	now := l.clock()
 	if item.ID == "" {
 		item.ID = newID("input")
@@ -76,22 +95,38 @@ func (l *TurnLoop) enqueue(item input.Item) {
 	if item.CreatedAt.IsZero() {
 		item.CreatedAt = now
 	}
-	l.buffer[item.SessionID] = append(l.buffer[item.SessionID], item)
+	return item
 }
 
 func (l *TurnLoop) drain(sessionID string) TurnEnvelope {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 
+	return l.drainLocked(sessionID)
+}
+
+func (l *TurnLoop) drainLocked(sessionID string) TurnEnvelope {
 	now := l.clock()
 	items := append([]input.Item(nil), l.buffer[sessionID]...)
-	l.buffer[sessionID] = nil
+	delete(l.buffer, sessionID)
 	return TurnEnvelope{
 		TurnID:    newID("turn"),
 		SessionID: sessionID,
 		Items:     items,
 		CreatedAt: now,
 	}
+}
+
+func (l *TurnLoop) restore(envelope TurnEnvelope) {
+	if len(envelope.Items) == 0 {
+		return
+	}
+	l.mu.Lock()
+	defer l.mu.Unlock()
+
+	existing := append([]input.Item(nil), l.buffer[envelope.SessionID]...)
+	restored := append([]input.Item(nil), envelope.Items...)
+	l.buffer[envelope.SessionID] = append(restored, existing...)
 }
 
 func newID(prefix string) string {
