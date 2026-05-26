@@ -53,6 +53,7 @@ If no external provider is configured, `papersilm` falls back to a local determi
 Provider config now supports named profiles plus one active profile:
 
 ```yaml
+runtime: legacy
 active_provider: local-openai
 providers:
   local-openai:
@@ -70,6 +71,8 @@ provider:
 ```
 
 Older single-provider configs still load and are migrated in memory to `providers.default`.
+
+`runtime` defaults to `legacy`. `PAPERSILM_RUNTIME=eino` can be used to opt into the Eino-native runtime while it is being developed.
 
 ## CLI Modes
 
