@@ -51,7 +51,6 @@ func New(cfg Config) *TurnLoop {
 
 func (l *TurnLoop) Push(ctx context.Context, item input.Item) (protocol.RunResult, error) {
 	if l.handler == nil {
-		l.enqueue(item)
 		return protocol.RunResult{}, ErrRuntimeNotReady
 	}
 	l.dispatchMu.Lock()
@@ -72,14 +71,6 @@ func (l *TurnLoop) Buffered(sessionID string) []input.Item {
 
 	items := l.buffer[sessionID]
 	return append([]input.Item(nil), items...)
-}
-
-func (l *TurnLoop) enqueue(item input.Item) {
-	l.mu.Lock()
-	defer l.mu.Unlock()
-
-	item = l.normalizeItemLocked(item)
-	l.buffer[item.SessionID] = append(l.buffer[item.SessionID], item)
 }
 
 func (l *TurnLoop) enqueueAndDrain(item input.Item) TurnEnvelope {

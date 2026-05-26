@@ -13,7 +13,7 @@ import (
 	"github.com/zzqDeco/papersilm/pkg/protocol"
 )
 
-func TestPushBuffersWhenRuntimeNotReady(t *testing.T) {
+func TestPushReturnsNotReadyWithoutBuffering(t *testing.T) {
 	t.Parallel()
 
 	loop := New(Config{})
@@ -26,11 +26,8 @@ func TestPushBuffersWhenRuntimeNotReady(t *testing.T) {
 		t.Fatalf("expected ErrRuntimeNotReady, got %v", err)
 	}
 	buffered := loop.Buffered("sess_1")
-	if len(buffered) != 1 {
-		t.Fatalf("expected buffered input, got %+v", buffered)
-	}
-	if buffered[0].ID == "" || buffered[0].CreatedAt.IsZero() {
-		t.Fatalf("expected normalized input metadata, got %+v", buffered[0])
+	if len(buffered) != 0 {
+		t.Fatalf("not-ready runtime should not buffer inputs, got %+v", buffered)
 	}
 }
 

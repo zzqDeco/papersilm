@@ -3,7 +3,6 @@ package core
 import (
 	"bytes"
 	"context"
-	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -830,6 +829,13 @@ func TestEinoRuntimeExecutePushesIntoTurnLoop(t *testing.T) {
 
 	svc, _ := newTestService(t)
 	svc.cfg.Runtime = config.RuntimeEino
+	var got turnloop.TurnEnvelope
+	svc.loop = turnloop.New(turnloop.Config{
+		Handler: func(_ context.Context, envelope turnloop.TurnEnvelope) (protocol.RunResult, error) {
+			got = envelope
+			return protocol.RunResult{}, nil
+		},
+	})
 
 	_, err := svc.Execute(context.Background(), protocol.ClientRequest{
 		Task:           "inspect the workspace",
@@ -837,19 +843,14 @@ func TestEinoRuntimeExecutePushesIntoTurnLoop(t *testing.T) {
 		Language:       "zh",
 		Style:          "distill",
 	})
-	if !errors.Is(err, turnloop.ErrRuntimeNotReady) {
-		t.Fatalf("expected turnloop not ready error, got %v", err)
-	}
-	snapshot, err := svc.LatestSession()
 	if err != nil {
-		t.Fatalf("LatestSession: %v", err)
+		t.Fatalf("Execute(eino): %v", err)
 	}
-	buffered := svc.loop.Buffered(snapshot.Meta.SessionID)
-	if len(buffered) != 1 {
-		t.Fatalf("expected one buffered input, got %+v", buffered)
+	if got.SessionID == "" || len(got.Items) != 1 {
+		t.Fatalf("expected turn envelope, got %+v", got)
 	}
-	if buffered[0].Kind != runtimeinput.KindUserMessage || buffered[0].Text != "inspect the workspace" {
-		t.Fatalf("unexpected buffered input: %+v", buffered[0])
+	if got.Items[0].Kind != runtimeinput.KindUserMessage || got.Items[0].Text != "inspect the workspace" {
+		t.Fatalf("unexpected turn input: %+v", got.Items[0])
 	}
 }
 
@@ -858,6 +859,13 @@ func TestEinoRuntimeDecidePermissionPushesCriticalInput(t *testing.T) {
 
 	svc, _ := newTestService(t)
 	svc.cfg.Runtime = config.RuntimeEino
+	var got turnloop.TurnEnvelope
+	svc.loop = turnloop.New(turnloop.Config{
+		Handler: func(_ context.Context, envelope turnloop.TurnEnvelope) (protocol.RunResult, error) {
+			got = envelope
+			return protocol.RunResult{}, nil
+		},
+	})
 	meta, err := svc.NewSession(protocol.PermissionModeConfirm, "zh", "distill")
 	if err != nil {
 		t.Fatalf("NewSession: %v", err)
@@ -867,15 +875,14 @@ func TestEinoRuntimeDecidePermissionPushesCriticalInput(t *testing.T) {
 		RequestID: "req_1",
 		Value:     "accept-once",
 	})
-	if !errors.Is(err, turnloop.ErrRuntimeNotReady) {
-		t.Fatalf("expected turnloop not ready error, got %v", err)
+	if err != nil {
+		t.Fatalf("DecidePermission(eino): %v", err)
 	}
-	buffered := svc.loop.Buffered(meta.SessionID)
-	if len(buffered) != 1 {
-		t.Fatalf("expected one buffered input, got %+v", buffered)
+	if len(got.Items) != 1 {
+		t.Fatalf("expected one turn input, got %+v", got)
 	}
-	if buffered[0].Kind != runtimeinput.KindPermissionDecision || buffered[0].Priority != runtimeinput.PriorityCritical {
-		t.Fatalf("unexpected permission input: %+v", buffered[0])
+	if got.Items[0].Kind != runtimeinput.KindPermissionDecision || got.Items[0].Priority != runtimeinput.PriorityCritical {
+		t.Fatalf("unexpected permission input: %+v", got.Items[0])
 	}
 }
 
@@ -884,39 +891,45 @@ func TestEinoRuntimeTaskActionsPreserveTaskContext(t *testing.T) {
 
 	svc, _ := newTestService(t)
 	svc.cfg.Runtime = config.RuntimeEino
+	var pushed []runtimeinput.Item
+	svc.loop = turnloop.New(turnloop.Config{
+		Handler: func(_ context.Context, envelope turnloop.TurnEnvelope) (protocol.RunResult, error) {
+			pushed = append(pushed, envelope.Items...)
+			return protocol.RunResult{}, nil
+		},
+	})
 	meta, err := svc.NewSession(protocol.PermissionModeConfirm, "zh", "distill")
 	if err != nil {
 		t.Fatalf("NewSession: %v", err)
 	}
 
 	_, err = svc.RunTask(context.Background(), meta.SessionID, "task_1", "en", "reviewer")
-	if !errors.Is(err, turnloop.ErrRuntimeNotReady) {
-		t.Fatalf("expected turnloop not ready error, got %v", err)
+	if err != nil {
+		t.Fatalf("RunTask(eino): %v", err)
 	}
 	_, err = svc.ApproveTask(context.Background(), meta.SessionID, "task_2", true, "looks good")
-	if !errors.Is(err, turnloop.ErrRuntimeNotReady) {
-		t.Fatalf("expected turnloop not ready error, got %v", err)
+	if err != nil {
+		t.Fatalf("ApproveTask(eino): %v", err)
 	}
 	_, err = svc.RejectTask(context.Background(), meta.SessionID, "task_3", "too risky")
-	if !errors.Is(err, turnloop.ErrRuntimeNotReady) {
-		t.Fatalf("expected turnloop not ready error, got %v", err)
+	if err != nil {
+		t.Fatalf("RejectTask(eino): %v", err)
 	}
 
-	buffered := svc.loop.Buffered(meta.SessionID)
-	if len(buffered) != 3 {
-		t.Fatalf("expected three buffered task actions, got %+v", buffered)
+	if len(pushed) != 3 {
+		t.Fatalf("expected three pushed task actions, got %+v", pushed)
 	}
-	run, ok := buffered[0].Payload.(runtimeinput.TaskActionPayload)
+	run, ok := pushed[0].Payload.(runtimeinput.TaskActionPayload)
 	if !ok || run.Action != "run" || run.TaskID != "task_1" || run.Language != "en" || run.Style != "reviewer" {
-		t.Fatalf("unexpected run task payload: %#v", buffered[0].Payload)
+		t.Fatalf("unexpected run task payload: %#v", pushed[0].Payload)
 	}
-	approve, ok := buffered[1].Payload.(runtimeinput.TaskActionPayload)
+	approve, ok := pushed[1].Payload.(runtimeinput.TaskActionPayload)
 	if !ok || approve.Action != "approve" || approve.TaskID != "task_2" || !approve.Approved || approve.Comment != "looks good" {
-		t.Fatalf("unexpected approve task payload: %#v", buffered[1].Payload)
+		t.Fatalf("unexpected approve task payload: %#v", pushed[1].Payload)
 	}
-	reject, ok := buffered[2].Payload.(runtimeinput.TaskActionPayload)
+	reject, ok := pushed[2].Payload.(runtimeinput.TaskActionPayload)
 	if !ok || reject.Action != "reject" || reject.TaskID != "task_3" || reject.Approved || reject.Comment != "too risky" {
-		t.Fatalf("unexpected reject task payload: %#v", buffered[2].Payload)
+		t.Fatalf("unexpected reject task payload: %#v", pushed[2].Payload)
 	}
 }
 
