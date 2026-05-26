@@ -191,6 +191,26 @@ func TestApproveTaskValidatesTaskTarget(t *testing.T) {
 	}
 }
 
+func TestRunPlannedDoesNotBypassPendingApproval(t *testing.T) {
+	t.Parallel()
+
+	svc, _ := newTestService(t)
+	sessionID := seedCommandPlan(t, svc, []string{"printf %s first"})
+	if _, err := svc.RunPlanned(context.Background(), sessionID, "zh", "distill"); err == nil {
+		t.Fatalf("expected /run to respect pending approval")
+	}
+}
+
+func TestRunTaskDoesNotBypassPendingApproval(t *testing.T) {
+	t.Parallel()
+
+	svc, _ := newTestService(t)
+	sessionID := seedCommandPlan(t, svc, []string{"printf %s first"})
+	if _, err := svc.RunTask(context.Background(), sessionID, "cmd_1", "zh", "distill"); err == nil {
+		t.Fatalf("expected /task run to respect pending approval")
+	}
+}
+
 func TestWorkspaceEditRunsInAutoMode(t *testing.T) {
 	t.Parallel()
 

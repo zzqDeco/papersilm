@@ -78,7 +78,11 @@ func BuildAgenticModel(ctx context.Context, cfg config.ProviderConfig, timeout t
 			Timeout: timeoutPtr,
 		})
 	default:
-		return nil, fmt.Errorf("agentic runtime does not support provider %q yet", cfg.Provider)
+		chatModel, err := BuildChatModel(ctx, cfg, timeout)
+		if err != nil {
+			return nil, err
+		}
+		return newChatAgenticAdapter(chatModel), nil
 	}
 }
 

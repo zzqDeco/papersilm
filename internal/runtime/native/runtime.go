@@ -148,6 +148,9 @@ func (r *Runtime) RunPlanned(ctx context.Context, sessionID, lang, style, turnID
 	if err != nil {
 		return protocol.RunResult{}, err
 	}
+	if hasPendingApproval(r.store, sessionID, meta) {
+		return protocol.RunResult{}, fmt.Errorf("session is awaiting approval; approve or reject the pending request before running")
+	}
 	if strings.TrimSpace(lang) != "" {
 		meta.Language = lang
 	}
@@ -179,6 +182,9 @@ func (r *Runtime) RunTask(ctx context.Context, sessionID, taskID, lang, style, t
 	if err != nil {
 		return protocol.RunResult{}, err
 	}
+	if hasPendingApproval(r.store, sessionID, meta) {
+		return protocol.RunResult{}, fmt.Errorf("session is awaiting approval; approve or reject the pending request before running a task")
+	}
 	if strings.TrimSpace(lang) != "" {
 		meta.Language = lang
 	}
@@ -201,6 +207,9 @@ func (r *Runtime) RunTask(ctx context.Context, sessionID, taskID, lang, style, t
 	step, ok := findPlanStepForTask(*plan, taskID)
 	if !ok {
 		return protocol.RunResult{}, fmt.Errorf("task not found: %s", taskID)
+	}
+	if sideEffectTool(step.Tool) && meta.PermissionMode == protocol.PermissionModeConfirm {
+		return protocol.RunResult{}, fmt.Errorf("task %s requires approval before it can run", taskID)
 	}
 	out, err := r.executeStep(ctx, sessionID, plan.Goal, step)
 	if err != nil {

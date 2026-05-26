@@ -823,6 +823,16 @@ func permissionAllowedByRules(request protocol.PermissionRequest, rules []protoc
 	return false
 }
 
+func hasPendingApproval(store interface {
+	LoadPendingApproval(string) (*protocol.ApprovalRequest, error)
+}, sessionID string, meta protocol.SessionMeta) bool {
+	if meta.State == protocol.SessionStateAwaitingApproval || meta.ApprovalPending {
+		return true
+	}
+	approval, err := store.LoadPendingApproval(sessionID)
+	return err == nil && approval != nil
+}
+
 func nodeCompleted(nodes []protocol.NodeExecutionState, nodeID string) bool {
 	for _, node := range nodes {
 		if node.NodeID == nodeID {
