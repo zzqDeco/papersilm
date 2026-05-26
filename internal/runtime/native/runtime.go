@@ -103,6 +103,14 @@ func (r *Runtime) Execute(ctx context.Context, req protocol.ClientRequest, turnI
 	if goal == "" {
 		return protocol.RunResult{}, fmt.Errorf("task is required")
 	}
+	if err := r.store.InvalidatePlanState(req.SessionID); err != nil {
+		return protocol.RunResult{}, err
+	}
+	meta, err = r.store.LoadMeta(req.SessionID)
+	if err != nil {
+		return protocol.RunResult{}, err
+	}
+	meta = syncMeta(meta, req)
 	meta.State = protocol.SessionStateRunning
 	meta.ApprovalPending = false
 	meta.ActiveCheckpointID = ""
@@ -289,12 +297,18 @@ func (r *Runtime) DecidePermission(ctx context.Context, sessionID string, decisi
 			}
 		}
 		interruptID := firstNonEmpty(request.InterruptID, approval.InterruptID)
+		meta, err := r.store.LoadMeta(sessionID)
+		if err != nil {
+			return protocol.RunResult{}, err
+		}
 		prepared, err := prepare.Agent(ctx, prepare.Request{
 			Config:         r.cfg,
 			Store:          r.store,
 			Registry:       r.registry,
 			SessionID:      sessionID,
 			PermissionMode: protocol.PermissionModeConfirm,
+			Language:       meta.Language,
+			Style:          meta.Style,
 		})
 		if err != nil {
 			return protocol.RunResult{}, err
@@ -354,13 +368,17 @@ func (r *Runtime) AttachSources(ctx context.Context, sessionID string, sources [
 }
 
 func (r *Runtime) BuildPlan(ctx context.Context, sessionID, goal string, approvalRequired bool) (protocol.PlanResult, error) {
+	files, _ := r.registry.LoadWorkspaceFiles(r.store)
+	intent := inferWorkspaceIntent(goal, files)
+	if preferWorkspacePlan(goal, intent) {
+		return buildWorkspacePlan(goal, approvalRequired, intent), nil
+	}
 	refs, err := r.ensurePaperContext(ctx, sessionID, goal)
 	if err != nil {
 		return protocol.PlanResult{}, err
 	}
-	files, _ := r.registry.LoadWorkspaceFiles(r.store)
 	if len(refs) == 0 {
-		return buildWorkspacePlan(goal, approvalRequired, inferWorkspaceIntent(goal, files)), nil
+		return buildWorkspacePlan(goal, approvalRequired, intent), nil
 	}
 	return buildPaperPlan(goal, refs, approvalRequired), nil
 }

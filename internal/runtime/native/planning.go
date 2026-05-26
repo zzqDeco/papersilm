@@ -80,7 +80,7 @@ func buildWorkspacePlan(goal string, approvalRequired bool, intent workspaceInte
 		DAG:              protocol.PlanDAG{Nodes: []protocol.PlanNode{node}},
 		Steps:            []protocol.PlanStep{step},
 		Risks:            []string{"workspace tools may read files, edit files, or run commands depending on permission mode"},
-		ApprovalRequired: approvalRequired && sideEffectKind(intent.kind),
+		ApprovalRequired: approvalRequired,
 		CreatedAt:        now,
 	}
 	board := taskBoardForPlan(plan)
@@ -295,7 +295,62 @@ func (r *Runtime) nextPermissionRequest(ctx context.Context, sessionID string, p
 		}
 		_ = ctx
 	}
+	if plan.ApprovalRequired {
+		return approvalFromRequest(plan, planPermissionRequest(sessionID, plan)), true
+	}
 	return protocol.ApprovalRequest{}, false
+}
+
+func planPermissionRequest(sessionID string, plan protocol.PlanResult) protocol.PermissionRequest {
+	nodeID := "plan"
+	if len(plan.Steps) > 0 && strings.TrimSpace(plan.Steps[0].ID) != "" {
+		nodeID = plan.Steps[0].ID
+	}
+	summary := strings.TrimSpace(plan.Goal)
+	if summary == "" {
+		summary = "Run the planned work"
+	}
+	return protocol.PermissionRequest{
+		RequestID: fmt.Sprintf("plan_%s", safeID(plan.PlanID)),
+		SessionID: sessionID,
+		PlanID:    plan.PlanID,
+		NodeID:    nodeID,
+		Tool:      "plan_checkpoint",
+		Operation: "plan",
+		Title:     "Run plan",
+		Question:  "Do you want to run this plan?",
+		Summary:   summary,
+		Preview: protocol.PermissionPreview{
+			Kind:    "plan",
+			Summary: summarizePlanSteps(plan),
+		},
+		Options: []protocol.PermissionOption{
+			{Value: agenttool.PermissionAcceptOnce, Label: "Yes", Description: "Run this plan once", Scope: agenttool.PermissionScopeNode, Feedback: "accept"},
+			{Value: agenttool.PermissionReject, Label: "No", Description: "Do not run this plan", Scope: agenttool.PermissionScopeNode, Feedback: "reject"},
+		},
+		CreatedAt: time.Now().UTC(),
+	}
+}
+
+func summarizePlanSteps(plan protocol.PlanResult) string {
+	if len(plan.Steps) == 0 {
+		return "No planned steps."
+	}
+	parts := make([]string, 0, min(4, len(plan.Steps)))
+	for _, step := range plan.Steps {
+		label := strings.TrimSpace(step.Goal)
+		if label == "" {
+			label = step.Tool
+		}
+		parts = append(parts, label)
+		if len(parts) == 4 {
+			break
+		}
+	}
+	if len(plan.Steps) > len(parts) {
+		parts = append(parts, fmt.Sprintf("%d more step(s)", len(plan.Steps)-len(parts)))
+	}
+	return strings.Join(parts, "\n")
 }
 
 func approvalFromRequest(plan protocol.PlanResult, request protocol.PermissionRequest) protocol.ApprovalRequest {
@@ -392,7 +447,9 @@ func (r *Runtime) finishCompleted(sessionID, turnID string) (protocol.RunResult,
 		return protocol.RunResult{}, err
 	}
 	result := protocol.RunResult{Session: snapshot, Plan: snapshot.Plan, Digests: snapshot.Digests, Comparison: snapshot.Compare, Artifacts: snapshot.Artifacts, Response: summarizeResult(protocol.RunResult{Session: snapshot, Digests: snapshot.Digests, Comparison: snapshot.Compare})}
-	_ = r.emit(sessionID, protocol.EventResult, "run completed", map[string]any{"turn_id": turnID, "response": result.Response})
+	if err := r.emit(sessionID, protocol.EventResult, "run completed", map[string]any{"turn_id": turnID, "response": result.Response}); err != nil {
+		return protocol.RunResult{}, err
+	}
 	return result, nil
 }
 
@@ -812,6 +869,23 @@ func sideEffectKind(kind protocol.NodeKind) bool {
 
 func sideEffectTool(toolName string) bool {
 	return toolName == string(protocol.NodeKindWorkspaceEdit) || toolName == string(protocol.NodeKindWorkspaceCommand)
+}
+
+func preferWorkspacePlan(goal string, intent workspaceIntent) bool {
+	lower := strings.ToLower(strings.TrimSpace(goal))
+	if intent.kind == protocol.NodeKindWorkspaceCommand || intent.kind == protocol.NodeKindWorkspaceEdit {
+		return true
+	}
+	if containsAny(lower, "workspace", "current directory", "current repo", "repository", "repo", "readme", "工作区", "当前目录", "仓库", "代码", "文件") {
+		return true
+	}
+	if extractWorkspacePathMention(goal) != "" {
+		return true
+	}
+	if intent.kind == protocol.NodeKindWorkspaceSearch && !goalNeedsPaperContext(goal) {
+		return true
+	}
+	return false
 }
 
 func permissionAllowedByRules(request protocol.PermissionRequest, rules []protocol.PermissionRule) bool {

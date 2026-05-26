@@ -2,6 +2,7 @@ package core
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -24,6 +25,15 @@ type testSink struct {
 
 func (s *testSink) Emit(event protocol.StreamEvent) error {
 	s.events = append(s.events, event)
+	return nil
+}
+
+type failingResultSink struct{}
+
+func (s failingResultSink) Emit(event protocol.StreamEvent) error {
+	if event.Type == protocol.EventResult {
+		return errors.New("sink result failure")
+	}
 	return nil
 }
 
@@ -119,6 +129,64 @@ func TestConfirmCommandCreatesToolScopedPermissionAndAcceptRuns(t *testing.T) {
 	}
 }
 
+func TestConfirmWorkspaceInspectRequiresPlanApproval(t *testing.T) {
+	t.Parallel()
+
+	svc, _ := newTestService(t)
+	result, err := svc.Execute(context.Background(), protocol.ClientRequest{
+		Task:           "总结当前工作区",
+		PermissionMode: protocol.PermissionModeConfirm,
+		Language:       "zh",
+		Style:          "distill",
+	})
+	if err != nil {
+		t.Fatalf("Execute(confirm workspace inspect): %v", err)
+	}
+	if result.Approval == nil || result.Approval.ActiveRequestID == "" {
+		t.Fatalf("expected plan approval before confirm-mode inspect, got %+v", result.Approval)
+	}
+	if len(result.Approval.Requests) != 1 || result.Approval.Requests[0].Tool != "plan_checkpoint" {
+		t.Fatalf("expected plan checkpoint request, got %+v", result.Approval.Requests)
+	}
+}
+
+func TestWorkspaceIntentWinsWithAttachedSources(t *testing.T) {
+	t.Parallel()
+
+	svc, _ := newTestService(t)
+	meta, err := svc.NewSession(protocol.PermissionModePlan, "zh", "distill")
+	if err != nil {
+		t.Fatalf("NewSession: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(svc.store.WorkspaceRoot(), "README.md"), []byte("workspace readme"), 0o644); err != nil {
+		t.Fatalf("WriteFile(README.md): %v", err)
+	}
+	if err := svc.store.RefreshWorkspaceState(); err != nil {
+		t.Fatalf("RefreshWorkspaceState: %v", err)
+	}
+	if err := svc.store.SaveSources(meta.SessionID, []protocol.PaperRef{
+		{PaperID: "paper_a", URI: "/tmp/paper-a.pdf", LocalPath: "/tmp/paper-a.pdf", SourceType: protocol.SourceTypeLocalPDF, Status: protocol.SourceStatusAttached},
+	}); err != nil {
+		t.Fatalf("SaveSources: %v", err)
+	}
+	result, err := svc.Execute(context.Background(), protocol.ClientRequest{
+		SessionID:      meta.SessionID,
+		Task:           "search README for workspace",
+		PermissionMode: protocol.PermissionModePlan,
+		Language:       "zh",
+		Style:          "distill",
+	})
+	if err != nil {
+		t.Fatalf("Execute(workspace intent with sources): %v", err)
+	}
+	if result.Plan == nil || len(result.Plan.DAG.Nodes) != 1 {
+		t.Fatalf("expected one workspace plan node, got %+v", result.Plan)
+	}
+	if got := result.Plan.DAG.Nodes[0].Kind; got != protocol.NodeKindWorkspaceSearch {
+		t.Fatalf("expected workspace search despite attached sources, got %s", got)
+	}
+}
+
 func TestAcceptSessionAllowsMatchingCommandPrefix(t *testing.T) {
 	t.Parallel()
 
@@ -208,6 +276,47 @@ func TestRunTaskDoesNotBypassPendingApproval(t *testing.T) {
 	sessionID := seedCommandPlan(t, svc, []string{"printf %s first"})
 	if _, err := svc.RunTask(context.Background(), sessionID, "cmd_1", "zh", "distill"); err == nil {
 		t.Fatalf("expected /task run to respect pending approval")
+	}
+}
+
+func TestExecuteInvalidatesStalePendingApproval(t *testing.T) {
+	t.Parallel()
+
+	svc, _ := newTestService(t)
+	sessionID := seedCommandPlan(t, svc, []string{"printf %s stale"})
+	result, err := svc.Execute(context.Background(), protocol.ClientRequest{
+		SessionID:      sessionID,
+		Task:           "总结当前工作区",
+		PermissionMode: protocol.PermissionModeAuto,
+		Language:       "zh",
+		Style:          "distill",
+	})
+	if err != nil {
+		t.Fatalf("Execute(new task): %v", err)
+	}
+	if result.Session.Approval != nil || result.Session.Meta.ApprovalPending {
+		t.Fatalf("expected stale approval cleared, got approval=%+v meta=%+v", result.Session.Approval, result.Session.Meta)
+	}
+	if approval, err := svc.store.LoadPendingApproval(sessionID); err != nil || approval != nil {
+		t.Fatalf("expected pending approval file removed, approval=%+v err=%v", approval, err)
+	}
+}
+
+func TestFinishCompletedPropagatesResultEmitFailure(t *testing.T) {
+	t.Parallel()
+
+	svc := newTestServiceWithSink(t, failingResultSink{})
+	sessionID := seedCommandPlan(t, svc, []string{"printf %s first"})
+	approval, err := svc.store.LoadPendingApproval(sessionID)
+	if err != nil {
+		t.Fatalf("LoadPendingApproval: %v", err)
+	}
+	_, err = svc.DecidePermission(context.Background(), sessionID, protocol.PermissionDecision{
+		RequestID: approval.ActiveRequestID,
+		Value:     "accept-once",
+	})
+	if err == nil || !strings.Contains(err.Error(), "sink result failure") {
+		t.Fatalf("expected final result emit failure, got %v", err)
 	}
 }
 
@@ -465,15 +574,20 @@ func TestComparisonSkillRequiresComparisonAndPersistsPaperIDs(t *testing.T) {
 
 func newTestService(t *testing.T) (*Service, *testSink) {
 	t.Helper()
+	sink := &testSink{}
+	return newTestServiceWithSink(t, sink), sink
+}
+
+func newTestServiceWithSink(t *testing.T, sink EventSink) *Service {
+	t.Helper()
 	cfg := config.Default()
 	cfg.BaseDir = t.TempDir()
 	store := storage.New(cfg.BaseDir)
 	if err := store.Ensure(); err != nil {
 		t.Fatalf("Ensure: %v", err)
 	}
-	sink := &testSink{}
 	registry := tools.New(pipeline.New(cfg))
-	return New(cfg, store, registry, sink), sink
+	return New(cfg, store, registry, sink)
 }
 
 func seedCommandPlan(t *testing.T, svc *Service, commands []string) string {
