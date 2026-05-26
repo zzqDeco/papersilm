@@ -29,7 +29,7 @@ func TestFromAgentEventMapsInterruptToProtocolApproval(t *testing.T) {
 		},
 	}
 
-	mapped := FromAgentEvent("session_1", "turn_1", event)
+	mapped := FromAgentEvent("session_1", "turn_1", "checkpoint_1", event)
 	if len(mapped) != 1 || mapped[0].Type != protocol.EventApprovalRequired {
 		t.Fatalf("expected one approval event, got %+v", mapped)
 	}
@@ -39,6 +39,9 @@ func TestFromAgentEventMapsInterruptToProtocolApproval(t *testing.T) {
 	}
 	if approval.ActiveRequestID != "req_1" || approval.InterruptID != "interrupt_1" || len(approval.Requests) != 1 {
 		t.Fatalf("unexpected approval payload: %+v", approval)
+	}
+	if approval.CheckpointID != "checkpoint_1" {
+		t.Fatalf("expected checkpoint from runner, got %q", approval.CheckpointID)
 	}
 	if approval.Requests[0].InterruptID != "interrupt_1" {
 		t.Fatalf("expected request interrupt target to be preserved, got %+v", approval.Requests[0])

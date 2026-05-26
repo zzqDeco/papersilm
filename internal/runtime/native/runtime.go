@@ -3,6 +3,7 @@ package native
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"sort"
 	"strings"
@@ -238,7 +239,11 @@ func (r *Runtime) RunTask(ctx context.Context, sessionID, taskID, lang, style, t
 		}
 		request, err := permissionRequestForStep(r.store, sessionID, plan.PlanID, step)
 		if err != nil {
-			return protocol.RunResult{}, err
+			if errors.Is(err, errAmbiguousWorkspaceEdit) {
+				request = planPermissionRequest(sessionID, *plan)
+			} else {
+				return protocol.RunResult{}, err
+			}
 		}
 		return r.saveApproval(sessionID, *plan, approvalFromRequest(*plan, request, "task"))
 	}
@@ -611,6 +616,14 @@ func (r *Runtime) executeStep(ctx context.Context, sessionID, goal string, step 
 		intent := inferWorkspaceIntent(step.Goal, files)
 		request, err := editPermissionRequest(r.store, sessionID, "", step.ID, step.Goal, intent.targetPath)
 		if err != nil {
+			if errors.Is(err, errAmbiguousWorkspaceEdit) {
+				result, runErr := r.runEinoAssistant(ctx, sessionID, step.Goal, protocol.PermissionModeAuto, step.ID)
+				response := strings.TrimSpace(result.Response)
+				if response == "" {
+					response = fmt.Sprintf("Workspace edit for %s requires agent interpretation. Configure an OpenAI-compatible provider for full tool-calling execution.", intent.targetPath)
+				}
+				return nodeOutput(step.ID, "assistant_response", response, now), runErr
+			}
 			return protocol.NodeOutputRef{}, err
 		}
 		result, err := applyApprovedEdit(r, sessionID, request)

@@ -80,7 +80,7 @@ func drain(ctx context.Context, store *storage.Store, sessionID, turnID, checkpo
 			"error":       eventErrorString(event),
 			"recorded_at": nowUTC(),
 		})
-		mapped := events.FromAgentEvent(sessionID, turnID, event)
+		mapped := events.FromAgentEvent(sessionID, turnID, checkpointID, event)
 		out.Events = append(out.Events, mapped...)
 		for _, streamEvent := range mapped {
 			if streamEvent.Type == protocol.EventAssistant {

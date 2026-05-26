@@ -12,7 +12,7 @@ import (
 	"github.com/zzqDeco/papersilm/pkg/protocol"
 )
 
-func FromAgentEvent(sessionID, turnID string, event *adk.TypedAgentEvent[*schema.AgenticMessage]) []protocol.StreamEvent {
+func FromAgentEvent(sessionID, turnID, checkpointID string, event *adk.TypedAgentEvent[*schema.AgenticMessage]) []protocol.StreamEvent {
 	if event == nil {
 		return nil
 	}
@@ -31,7 +31,7 @@ func FromAgentEvent(sessionID, turnID string, event *adk.TypedAgentEvent[*schema
 		return []protocol.StreamEvent{base}
 	}
 	if event.Action != nil && event.Action.Interrupted != nil {
-		approval := approvalFromInterrupt(sessionID, turnID, event.Action.Interrupted)
+		approval := approvalFromInterrupt(sessionID, turnID, checkpointID, event.Action.Interrupted)
 		base.Type = protocol.EventApprovalRequired
 		base.Message = "permission required"
 		base.Payload = approval
@@ -62,9 +62,12 @@ func FromAgentEvent(sessionID, turnID string, event *adk.TypedAgentEvent[*schema
 	return []protocol.StreamEvent{base}
 }
 
-func approvalFromInterrupt(sessionID, turnID string, info *adk.InterruptInfo) protocol.ApprovalRequest {
+func approvalFromInterrupt(sessionID, turnID, checkpointID string, info *adk.InterruptInfo) protocol.ApprovalRequest {
+	if strings.TrimSpace(checkpointID) == "" {
+		checkpointID = "turn_" + turnID
+	}
 	approval := protocol.ApprovalRequest{
-		CheckpointID:  "turn_" + turnID,
+		CheckpointID:  checkpointID,
 		Summary:       "Permission required",
 		RequiresInput: true,
 		CreatedAt:     time.Now().UTC(),

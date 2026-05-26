@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"os"
 	"path"
@@ -35,6 +36,8 @@ type workspaceIntent struct {
 var (
 	arxivIDPattern = regexp.MustCompile(`\b(?:\d{4}\.\d{4,5}|[a-z\-]+(?:\.[A-Za-z\-]+)?/\d{7})(?:v\d+)?\b`)
 	urlPattern     = regexp.MustCompile(`https?://[^\s]+`)
+
+	errAmbiguousWorkspaceEdit = errors.New("workspace edit needs agent interpretation")
 )
 
 func (r *Runtime) ensurePaperContext(ctx context.Context, sessionID, goal string) ([]protocol.PaperRef, error) {
@@ -292,6 +295,9 @@ func (r *Runtime) nextPermissionRequest(ctx context.Context, sessionID string, p
 			intent := inferWorkspaceIntent(step.Goal, files)
 			request, err := editPermissionRequest(r.store, sessionID, plan.PlanID, step.ID, step.Goal, intent.targetPath)
 			if err != nil {
+				if errors.Is(err, errAmbiguousWorkspaceEdit) {
+					continue
+				}
 				return protocol.ApprovalRequest{}, false, err
 			}
 			return approvalFromRequest(plan, request, "plan"), true, nil
@@ -418,6 +424,15 @@ func (r *Runtime) continueAfterPermission(ctx context.Context, sessionID, turnID
 			rules, _ := r.store.LoadPermissionRules(sessionID)
 			request, err := permissionRequestForStep(r.store, sessionID, plan.PlanID, step)
 			if err != nil {
+				if errors.Is(err, errAmbiguousWorkspaceEdit) {
+					output, stepErr := r.executeStep(ctx, sessionID, plan.Goal, step)
+					if stepErr != nil {
+						_ = r.markStep(sessionID, plan.PlanID, step.ID, protocol.NodeStatusFailed, stepErr.Error(), output)
+						return protocol.RunResult{}, r.failApprovedPermission(sessionID, stepErr)
+					}
+					_ = r.markStep(sessionID, plan.PlanID, step.ID, protocol.NodeStatusCompleted, "", output)
+					continue
+				}
 				return protocol.RunResult{}, r.failApprovedPermission(sessionID, err)
 			}
 			if !permissionAllowedByRules(request, rules) {
@@ -1166,7 +1181,7 @@ func inferEditContent(goal, targetPath, oldContent string, existed bool) (string
 	if !existed {
 		return "", fmt.Errorf("new file content is required for %s", targetPath)
 	}
-	return "", fmt.Errorf("workspace edit requires explicit content or a replacement for %s", targetPath)
+	return "", fmt.Errorf("%w for %s", errAmbiguousWorkspaceEdit, targetPath)
 }
 
 func inferEditReplacement(goal string) (string, string, bool) {

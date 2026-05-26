@@ -516,14 +516,17 @@ func TestWorkspaceEditDoesNotOverwriteWithInstructionText(t *testing.T) {
 	if err := svc.store.RefreshWorkspaceState(); err != nil {
 		t.Fatalf("RefreshWorkspaceState: %v", err)
 	}
-	_, err := svc.Execute(context.Background(), protocol.ClientRequest{
+	result, err := svc.Execute(context.Background(), protocol.ClientRequest{
 		Task:           "fix typo in `README.md`",
 		PermissionMode: protocol.PermissionModeAuto,
 		Language:       "zh",
 		Style:          "distill",
 	})
-	if err == nil || !strings.Contains(err.Error(), "explicit content or a replacement") {
-		t.Fatalf("expected safe edit content error, got %v", err)
+	if err != nil {
+		t.Fatalf("Execute(non-explicit edit): %v", err)
+	}
+	if !strings.Contains(result.Response, "requires agent interpretation") {
+		t.Fatalf("expected non-explicit edit to fall back to agent runtime, got %q", result.Response)
 	}
 	content, readErr := os.ReadFile(readmePath)
 	if readErr != nil {
