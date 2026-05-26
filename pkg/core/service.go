@@ -10,6 +10,8 @@ import (
 
 	"github.com/zzqDeco/papersilm/internal/agent"
 	"github.com/zzqDeco/papersilm/internal/config"
+	runtimeinput "github.com/zzqDeco/papersilm/internal/runtime/input"
+	"github.com/zzqDeco/papersilm/internal/runtime/turnloop"
 	"github.com/zzqDeco/papersilm/internal/storage"
 	"github.com/zzqDeco/papersilm/pkg/protocol"
 )
@@ -22,6 +24,7 @@ type Service struct {
 	cfg   config.Config
 	store *storage.Store
 	agent *agent.Agent
+	loop  *turnloop.TurnLoop
 	sink  EventSink
 }
 
@@ -30,6 +33,7 @@ func New(cfg config.Config, store *storage.Store, ag *agent.Agent, sink EventSin
 		cfg:   cfg,
 		store: store,
 		agent: ag,
+		loop:  turnloop.New(turnloop.Config{}),
 		sink:  sink,
 	}
 }
@@ -89,14 +93,30 @@ func (s *Service) Execute(ctx context.Context, req protocol.ClientRequest) (prot
 		}
 		req.SessionID = meta.SessionID
 	}
+	if s.useEinoRuntime() {
+		return s.loop.Push(ctx, runtimeinput.FromClientRequest(req))
+	}
 	return s.agent.Execute(ctx, s.store, s.sink, req)
 }
 
 func (s *Service) RunPlanned(ctx context.Context, sessionID, lang, style string) (protocol.RunResult, error) {
+	if s.useEinoRuntime() {
+		return s.loop.Push(ctx, runtimeinput.FromRunPlanned(sessionID, lang, style))
+	}
 	return s.agent.RunPlanned(ctx, s.store, s.sink, sessionID, lang, style)
 }
 
 func (s *Service) Approve(ctx context.Context, sessionID string, approved bool, comment string) (protocol.RunResult, error) {
+	if s.useEinoRuntime() {
+		value := "accept-once"
+		if !approved {
+			value = "reject"
+		}
+		return s.DecidePermission(ctx, sessionID, protocol.PermissionDecision{
+			Value:    value,
+			Feedback: comment,
+		})
+	}
 	return s.agent.Approve(ctx, s.store, s.sink, sessionID, approved, comment)
 }
 
@@ -109,18 +129,49 @@ func (s *Service) LoadTaskBoard(sessionID string) (*protocol.TaskBoard, error) {
 }
 
 func (s *Service) RunTask(ctx context.Context, sessionID, taskID, lang, style string) (protocol.RunResult, error) {
+	if s.useEinoRuntime() {
+		return s.loop.Push(ctx, runtimeinput.FromTaskAction(sessionID, runtimeinput.TaskActionPayload{
+			Action:   "run",
+			TaskID:   taskID,
+			Language: lang,
+			Style:    style,
+		}))
+	}
 	return s.agent.RunTask(ctx, s.store, s.sink, sessionID, taskID, lang, style)
 }
 
 func (s *Service) ApproveTask(ctx context.Context, sessionID, taskID string, approved bool, comment string) (protocol.RunResult, error) {
+	if s.useEinoRuntime() {
+		action := "approve"
+		if !approved {
+			action = "reject"
+		}
+		return s.loop.Push(ctx, runtimeinput.FromTaskAction(sessionID, runtimeinput.TaskActionPayload{
+			Action:   action,
+			TaskID:   taskID,
+			Approved: approved,
+			Comment:  comment,
+		}))
+	}
 	return s.agent.ApproveTask(ctx, s.store, s.sink, sessionID, taskID, approved, comment)
 }
 
 func (s *Service) RejectTask(ctx context.Context, sessionID, taskID, comment string) (protocol.RunResult, error) {
+	if s.useEinoRuntime() {
+		return s.loop.Push(ctx, runtimeinput.FromTaskAction(sessionID, runtimeinput.TaskActionPayload{
+			Action:   "reject",
+			TaskID:   taskID,
+			Approved: false,
+			Comment:  comment,
+		}))
+	}
 	return s.agent.RejectTask(ctx, s.store, s.sink, sessionID, taskID, comment)
 }
 
 func (s *Service) DecidePermission(ctx context.Context, sessionID string, decision protocol.PermissionDecision) (protocol.RunResult, error) {
+	if s.useEinoRuntime() {
+		return s.loop.Push(ctx, runtimeinput.FromPermissionDecision(sessionID, decision))
+	}
 	return s.agent.DecidePermission(ctx, s.store, s.sink, sessionID, decision)
 }
 
@@ -252,6 +303,10 @@ func (s *Service) emit(sessionID string, eventType protocol.StreamEventType, mes
 		}
 	}
 	return s.store.AppendEvent(sessionID, event)
+}
+
+func (s *Service) useEinoRuntime() bool {
+	return s.cfg.RuntimeSetting() == config.RuntimeEino
 }
 
 func newSessionID() string {

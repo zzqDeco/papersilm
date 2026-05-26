@@ -12,6 +12,8 @@ import (
 	"github.com/zzqDeco/papersilm/internal/agent"
 	"github.com/zzqDeco/papersilm/internal/config"
 	"github.com/zzqDeco/papersilm/internal/pipeline"
+	runtimeinput "github.com/zzqDeco/papersilm/internal/runtime/input"
+	"github.com/zzqDeco/papersilm/internal/runtime/turnloop"
 	"github.com/zzqDeco/papersilm/internal/storage"
 	"github.com/zzqDeco/papersilm/internal/tools"
 	"github.com/zzqDeco/papersilm/pkg/protocol"
@@ -819,6 +821,115 @@ func TestNewSessionCopiesActiveProviderProfileAndModel(t *testing.T) {
 	}
 	if meta.ProviderProfile != "local-openai" || meta.Model != "gpt-5.4" {
 		t.Fatalf("expected provider/model copied from config, got %+v", meta)
+	}
+}
+
+func TestEinoRuntimeExecutePushesIntoTurnLoop(t *testing.T) {
+	t.Parallel()
+
+	svc, _ := newTestService(t)
+	svc.cfg.Runtime = config.RuntimeEino
+	var got turnloop.TurnEnvelope
+	svc.loop = turnloop.New(turnloop.Config{
+		Handler: func(_ context.Context, envelope turnloop.TurnEnvelope) (protocol.RunResult, error) {
+			got = envelope
+			return protocol.RunResult{}, nil
+		},
+	})
+
+	_, err := svc.Execute(context.Background(), protocol.ClientRequest{
+		Task:           "inspect the workspace",
+		PermissionMode: protocol.PermissionModePlan,
+		Language:       "zh",
+		Style:          "distill",
+	})
+	if err != nil {
+		t.Fatalf("Execute(eino): %v", err)
+	}
+	if got.SessionID == "" || len(got.Items) != 1 {
+		t.Fatalf("expected turn envelope, got %+v", got)
+	}
+	if got.Items[0].Kind != runtimeinput.KindUserMessage || got.Items[0].Text != "inspect the workspace" {
+		t.Fatalf("unexpected turn input: %+v", got.Items[0])
+	}
+}
+
+func TestEinoRuntimeDecidePermissionPushesCriticalInput(t *testing.T) {
+	t.Parallel()
+
+	svc, _ := newTestService(t)
+	svc.cfg.Runtime = config.RuntimeEino
+	var got turnloop.TurnEnvelope
+	svc.loop = turnloop.New(turnloop.Config{
+		Handler: func(_ context.Context, envelope turnloop.TurnEnvelope) (protocol.RunResult, error) {
+			got = envelope
+			return protocol.RunResult{}, nil
+		},
+	})
+	meta, err := svc.NewSession(protocol.PermissionModeConfirm, "zh", "distill")
+	if err != nil {
+		t.Fatalf("NewSession: %v", err)
+	}
+
+	_, err = svc.DecidePermission(context.Background(), meta.SessionID, protocol.PermissionDecision{
+		RequestID: "req_1",
+		Value:     "accept-once",
+	})
+	if err != nil {
+		t.Fatalf("DecidePermission(eino): %v", err)
+	}
+	if len(got.Items) != 1 {
+		t.Fatalf("expected one turn input, got %+v", got)
+	}
+	if got.Items[0].Kind != runtimeinput.KindPermissionDecision || got.Items[0].Priority != runtimeinput.PriorityCritical {
+		t.Fatalf("unexpected permission input: %+v", got.Items[0])
+	}
+}
+
+func TestEinoRuntimeTaskActionsPreserveTaskContext(t *testing.T) {
+	t.Parallel()
+
+	svc, _ := newTestService(t)
+	svc.cfg.Runtime = config.RuntimeEino
+	var pushed []runtimeinput.Item
+	svc.loop = turnloop.New(turnloop.Config{
+		Handler: func(_ context.Context, envelope turnloop.TurnEnvelope) (protocol.RunResult, error) {
+			pushed = append(pushed, envelope.Items...)
+			return protocol.RunResult{}, nil
+		},
+	})
+	meta, err := svc.NewSession(protocol.PermissionModeConfirm, "zh", "distill")
+	if err != nil {
+		t.Fatalf("NewSession: %v", err)
+	}
+
+	_, err = svc.RunTask(context.Background(), meta.SessionID, "task_1", "en", "reviewer")
+	if err != nil {
+		t.Fatalf("RunTask(eino): %v", err)
+	}
+	_, err = svc.ApproveTask(context.Background(), meta.SessionID, "task_2", true, "looks good")
+	if err != nil {
+		t.Fatalf("ApproveTask(eino): %v", err)
+	}
+	_, err = svc.RejectTask(context.Background(), meta.SessionID, "task_3", "too risky")
+	if err != nil {
+		t.Fatalf("RejectTask(eino): %v", err)
+	}
+
+	if len(pushed) != 3 {
+		t.Fatalf("expected three pushed task actions, got %+v", pushed)
+	}
+	run, ok := pushed[0].Payload.(runtimeinput.TaskActionPayload)
+	if !ok || run.Action != "run" || run.TaskID != "task_1" || run.Language != "en" || run.Style != "reviewer" {
+		t.Fatalf("unexpected run task payload: %#v", pushed[0].Payload)
+	}
+	approve, ok := pushed[1].Payload.(runtimeinput.TaskActionPayload)
+	if !ok || approve.Action != "approve" || approve.TaskID != "task_2" || !approve.Approved || approve.Comment != "looks good" {
+		t.Fatalf("unexpected approve task payload: %#v", pushed[1].Payload)
+	}
+	reject, ok := pushed[2].Payload.(runtimeinput.TaskActionPayload)
+	if !ok || reject.Action != "reject" || reject.TaskID != "task_3" || reject.Approved || reject.Comment != "too risky" {
+		t.Fatalf("unexpected reject task payload: %#v", pushed[2].Payload)
 	}
 }
 
