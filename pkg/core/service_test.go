@@ -406,6 +406,27 @@ func TestListAndRunSkillsUseNativeRuntime(t *testing.T) {
 	}
 }
 
+func TestPaperSkillRequiresSessionPaperTarget(t *testing.T) {
+	t.Parallel()
+
+	svc, _ := newTestService(t)
+	meta, err := svc.NewSession(protocol.PermissionModePlan, "zh", "distill")
+	if err != nil {
+		t.Fatalf("NewSession: %v", err)
+	}
+	if _, err := svc.RunSkill(context.Background(), meta.SessionID, string(protocol.SkillNameReviewer), "missing_paper"); err == nil {
+		t.Fatalf("expected paper skill with unknown target to fail")
+	}
+	if err := svc.store.SaveSources(meta.SessionID, []protocol.PaperRef{
+		{PaperID: "paper_a", URI: "/tmp/paper-a.pdf", LocalPath: "/tmp/paper-a.pdf", SourceType: protocol.SourceTypeLocalPDF, Status: protocol.SourceStatusAttached},
+	}); err != nil {
+		t.Fatalf("SaveSources: %v", err)
+	}
+	if _, err := svc.RunSkill(context.Background(), meta.SessionID, string(protocol.SkillNameReviewer), "paper_b"); err == nil {
+		t.Fatalf("expected paper skill with non-session target to fail")
+	}
+}
+
 func TestComparisonSkillRequiresComparisonAndPersistsPaperIDs(t *testing.T) {
 	t.Parallel()
 

@@ -36,7 +36,12 @@ func (r *Runtime) RunSkill(ctx context.Context, sessionID, skillName, targetID s
 		return protocol.SkillRunResult{}, fmt.Errorf("skill target is required")
 	}
 	paperIDs := []string{targetID}
-	if descriptor.TargetKind == protocol.SkillTargetKindComparison {
+	switch descriptor.TargetKind {
+	case protocol.SkillTargetKindPaper:
+		if !paperSkillTargetExists(snapshot, targetID) {
+			return protocol.SkillRunResult{}, fmt.Errorf("paper skill target not found in session: %s", targetID)
+		}
+	case protocol.SkillTargetKindComparison:
 		if snapshot.Compare == nil || len(snapshot.Compare.PaperIDs) == 0 {
 			return protocol.SkillRunResult{}, fmt.Errorf("comparison skill requires an existing comparison")
 		}
@@ -134,6 +139,24 @@ func defaultSkillTarget(descriptor protocol.SkillDescriptor, snapshot protocol.S
 		return snapshot.Digests[0].PaperID
 	}
 	return ""
+}
+
+func paperSkillTargetExists(snapshot protocol.SessionSnapshot, targetID string) bool {
+	targetID = strings.TrimSpace(targetID)
+	if targetID == "" {
+		return false
+	}
+	for _, source := range snapshot.Sources {
+		if source.PaperID == targetID {
+			return true
+		}
+	}
+	for _, digest := range snapshot.Digests {
+		if digest.PaperID == targetID {
+			return true
+		}
+	}
+	return false
 }
 
 func skillMarkdown(descriptor protocol.SkillDescriptor, snapshot protocol.SessionSnapshot, targetID string) string {

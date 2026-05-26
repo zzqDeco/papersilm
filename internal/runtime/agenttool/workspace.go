@@ -147,8 +147,8 @@ func BuildWorkspaceTools(cfg WorkspaceToolsConfig) ([]tool.BaseTool, error) {
 					if !hasData || data.Value == PermissionReject {
 						return &ToolResult{Status: "rejected", Summary: strings.TrimSpace(data.Feedback)}, nil
 					}
-					if data.Value == PermissionAcceptSession {
-						_ = AddPermissionRule(cfg.Store, cfg.SessionID, state.Request, data)
+					if err := persistAcceptSessionRule(cfg, state.Request, data); err != nil {
+						return nil, err
 					}
 					return applyWrite(cfg, state.Request)
 				}
@@ -174,8 +174,8 @@ func BuildWorkspaceTools(cfg WorkspaceToolsConfig) ([]tool.BaseTool, error) {
 					if !hasData || data.Value == PermissionReject {
 						return &ToolResult{Status: "rejected", Summary: strings.TrimSpace(data.Feedback)}, nil
 					}
-					if data.Value == PermissionAcceptSession {
-						_ = AddPermissionRule(cfg.Store, cfg.SessionID, state.Request, data)
+					if err := persistAcceptSessionRule(cfg, state.Request, data); err != nil {
+						return nil, err
 					}
 					return applyCommand(cfg, state.Request)
 				}
@@ -308,6 +308,16 @@ func requestAllowedByRules(store *storage.Store, sessionID string, request proto
 		}
 	}
 	return false
+}
+
+func persistAcceptSessionRule(cfg WorkspaceToolsConfig, request protocol.PermissionRequest, decision protocol.PermissionDecision) error {
+	if decision.Value != PermissionAcceptSession {
+		return nil
+	}
+	if err := AddPermissionRule(cfg.Store, cfg.SessionID, request, decision); err != nil {
+		return fmt.Errorf("save session permission rule: %w", err)
+	}
+	return nil
 }
 
 func AddPermissionRule(store *storage.Store, sessionID string, request protocol.PermissionRequest, decision protocol.PermissionDecision) error {
