@@ -82,6 +82,38 @@ func TestPushRestoresDrainedItemsWhenHandlerFails(t *testing.T) {
 	}
 }
 
+func TestPushProcessesRestoredAndNewInputsInOrder(t *testing.T) {
+	t.Parallel()
+
+	handlerErr := errors.New("handler failed")
+	var seen []string
+	failFirst := true
+	loop := New(Config{
+		Handler: func(_ context.Context, envelope TurnEnvelope) (protocol.RunResult, error) {
+			if len(envelope.Items) != 1 {
+				t.Fatalf("expected one item per dispatch, got %+v", envelope.Items)
+			}
+			seen = append(seen, envelope.Items[0].Text)
+			if failFirst {
+				failFirst = false
+				return protocol.RunResult{}, handlerErr
+			}
+			return protocol.RunResult{}, nil
+		},
+	})
+	_, err := loop.Push(context.Background(), input.Item{SessionID: "sess_1", Text: "first"})
+	if !errors.Is(err, handlerErr) {
+		t.Fatalf("expected first push failure, got %v", err)
+	}
+	if _, err := loop.Push(context.Background(), input.Item{SessionID: "sess_1", Text: "second"}); err != nil {
+		t.Fatalf("second push: %v", err)
+	}
+	want := []string{"first", "first", "second"}
+	if fmt.Sprint(seen) != fmt.Sprint(want) {
+		t.Fatalf("expected restored input before new input, got %v", seen)
+	}
+}
+
 func TestConcurrentPushNeverDispatchesEmptyTurn(t *testing.T) {
 	t.Parallel()
 

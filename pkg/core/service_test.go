@@ -179,10 +179,10 @@ func TestApproveTaskValidatesTaskTarget(t *testing.T) {
 
 	svc, _ := newTestService(t)
 	sessionID := seedCommandPlan(t, svc, []string{"printf %s first", "printf %s second"})
-	if _, err := svc.ApproveTask(context.Background(), sessionID, "cmd_2", true, ""); err == nil {
+	if _, err := svc.runtime.HandleTaskAction(context.Background(), sessionID, runtimeinput.TaskActionPayload{Action: "approve", TaskID: "cmd_2", Approved: true}, "turn_bad_approval"); err == nil {
 		t.Fatalf("expected approve of non-pending task to fail")
 	}
-	result, err := svc.ApproveTask(context.Background(), sessionID, "cmd_1", true, "")
+	result, err := svc.runtime.HandleTaskAction(context.Background(), sessionID, runtimeinput.TaskActionPayload{Action: "approve", TaskID: "cmd_1", Approved: true}, "turn_good_approval")
 	if err != nil {
 		t.Fatalf("ApproveTask(cmd_1): %v", err)
 	}
@@ -292,6 +292,37 @@ func TestTurnLoopReceivesServiceInputs(t *testing.T) {
 	}
 }
 
+func TestNativeHandleTurnProcessesAllBufferedItems(t *testing.T) {
+	t.Parallel()
+
+	svc, sink := newTestService(t)
+	meta, err := svc.NewSession(protocol.PermissionModePlan, "zh", "distill")
+	if err != nil {
+		t.Fatalf("NewSession: %v", err)
+	}
+	_, err = svc.runtime.HandleTurn(context.Background(), turnloop.TurnEnvelope{
+		TurnID:    "turn_multi",
+		SessionID: meta.SessionID,
+		Items: []runtimeinput.Item{
+			runtimeinput.FromClientRequest(protocol.ClientRequest{SessionID: meta.SessionID, Task: "总结当前工作区", PermissionMode: protocol.PermissionModePlan, Language: "zh", Style: "distill"}),
+			runtimeinput.FromClientRequest(protocol.ClientRequest{SessionID: meta.SessionID, Task: "搜索 workspace", PermissionMode: protocol.PermissionModePlan, Language: "zh", Style: "distill"}),
+		},
+		CreatedAt: time.Now().UTC(),
+	})
+	if err != nil {
+		t.Fatalf("HandleTurn(multi): %v", err)
+	}
+	planEvents := 0
+	for _, event := range sink.events {
+		if event.Type == protocol.EventPlan {
+			planEvents++
+		}
+	}
+	if planEvents != 2 {
+		t.Fatalf("expected both buffered inputs to execute, saw %d plan events: %+v", planEvents, sink.events)
+	}
+}
+
 func TestNewSessionCopiesActiveProviderProfileAndModel(t *testing.T) {
 	t.Parallel()
 
@@ -349,6 +380,9 @@ func TestListAndRunSkillsUseNativeRuntime(t *testing.T) {
 	}
 	if result.Run.Status != protocol.SkillRunStatusCompleted || result.Artifact == nil {
 		t.Fatalf("expected completed skill artifact, got %+v", result)
+	}
+	if result.Artifact.Kind != "reviewer_skill" {
+		t.Fatalf("expected descriptor artifact kind, got %q", result.Artifact.Kind)
 	}
 }
 

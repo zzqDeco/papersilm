@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
+	"os"
 	"path"
 	"path/filepath"
 	"regexp"
@@ -425,6 +426,9 @@ func applyApprovedEdit(r *Runtime, _ string, request protocol.PermissionRequest)
 	if request.TargetPath == "" || request.Preview.Kind != "diff" {
 		return "", fmt.Errorf("approved edit preview is missing")
 	}
+	if strings.TrimSpace(request.Preview.ConflictMessage) != "" {
+		return "", fmt.Errorf("approved edit preview is invalid: %s", request.Preview.ConflictMessage)
+	}
 	current, existed, err := readWorkspaceFileForEdit(r, request.TargetPath)
 	if err != nil {
 		return "", err
@@ -529,7 +533,7 @@ func editPermissionRequest(store workspaceStore, sessionID, planID, nodeID, goal
 	if targetPath == "" {
 		targetPath = "notes.md"
 	}
-	old, existed, _ := readWorkspaceFileForEditStore(store, targetPath)
+	old, existed, readErr := readWorkspaceFileForEditStore(store, targetPath)
 	newContent := inferEditContent(goal)
 	oldHash := ""
 	if existed {
@@ -538,6 +542,9 @@ func editPermissionRequest(store workspaceStore, sessionID, planID, nodeID, goal
 	summary := "Update " + targetPath
 	if !existed {
 		summary = "Create " + targetPath
+	}
+	if readErr != nil {
+		summary = "Unable to preview " + targetPath + ": " + readErr.Error()
 	}
 	return protocol.PermissionRequest{
 		RequestID:  "edit_" + safeID(targetPath),
@@ -552,11 +559,12 @@ func editPermissionRequest(store workspaceStore, sessionID, planID, nodeID, goal
 		Summary:    summary,
 		TargetPath: targetPath,
 		Preview: protocol.PermissionPreview{
-			Kind:           "diff",
-			Summary:        summary,
-			Diff:           agenttool.CompactUnifiedDiff(targetPath, old, newContent),
-			OldContentHash: oldHash,
-			NewContent:     newContent,
+			Kind:            "diff",
+			Summary:         summary,
+			Diff:            agenttool.CompactUnifiedDiff(targetPath, old, newContent),
+			OldContentHash:  oldHash,
+			NewContent:      newContent,
+			ConflictMessage: errorString(readErr),
 		},
 		Options:   agenttool.PermissionOptions(protocol.NodeKindWorkspaceEdit),
 		CreatedAt: time.Now().UTC(),
@@ -912,7 +920,17 @@ func readWorkspaceFileForEditStore(store interface{ ReadWorkspaceFile(string) (s
 	if err == nil {
 		return content, true, nil
 	}
-	return "", false, nil
+	if os.IsNotExist(err) {
+		return "", false, nil
+	}
+	return "", false, err
+}
+
+func errorString(err error) string {
+	if err == nil {
+		return ""
+	}
+	return err.Error()
 }
 
 func contentHash(content string) string {

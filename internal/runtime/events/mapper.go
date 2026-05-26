@@ -2,6 +2,7 @@ package events
 
 import (
 	"encoding/json"
+	"fmt"
 	"strings"
 	"time"
 
@@ -30,9 +31,10 @@ func FromAgentEvent(sessionID, turnID string, event *adk.TypedAgentEvent[*schema
 		return []protocol.StreamEvent{base}
 	}
 	if event.Action != nil && event.Action.Interrupted != nil {
+		approval := approvalFromInterrupt(sessionID, turnID, event.Action.Interrupted)
 		base.Type = protocol.EventApprovalRequired
 		base.Message = "permission required"
-		base.Payload = event.Action.Interrupted
+		base.Payload = approval
 		return []protocol.StreamEvent{base}
 	}
 	if event.Output == nil || event.Output.MessageOutput == nil {
@@ -58,6 +60,57 @@ func FromAgentEvent(sessionID, turnID string, event *adk.TypedAgentEvent[*schema
 		"agent":   event.AgentName,
 	}
 	return []protocol.StreamEvent{base}
+}
+
+func approvalFromInterrupt(sessionID, turnID string, info *adk.InterruptInfo) protocol.ApprovalRequest {
+	approval := protocol.ApprovalRequest{
+		CheckpointID:  "turn_" + turnID,
+		Summary:       "Permission required",
+		RequiresInput: true,
+		CreatedAt:     time.Now().UTC(),
+		Mode:          "tool",
+	}
+	if info == nil {
+		return approval
+	}
+	for _, ctx := range info.InterruptContexts {
+		if ctx == nil {
+			continue
+		}
+		request, ok := ctx.Info.(protocol.PermissionRequest)
+		if !ok {
+			request = protocol.PermissionRequest{
+				RequestID: ctx.ID,
+				Tool:      "tool",
+				Title:     "Tool permission",
+				Question:  "Do you want to allow this tool use?",
+				Summary:   fmt.Sprint(ctx.Info),
+				Options: []protocol.PermissionOption{
+					{Value: "accept-once", Label: "Yes", Scope: "node"},
+					{Value: "accept-session", Label: "Yes, during this session", Scope: "session"},
+					{Value: "reject", Label: "No", Scope: "node"},
+				},
+				CreatedAt: time.Now().UTC(),
+			}
+		}
+		if request.RequestID == "" {
+			request.RequestID = ctx.ID
+		}
+		request.InterruptID = ctx.ID
+		if request.SessionID == "" {
+			request.SessionID = sessionID
+		}
+		approval.Requests = append(approval.Requests, request)
+		approval.PendingNodeIDs = append(approval.PendingNodeIDs, request.NodeID)
+		if approval.InterruptID == "" {
+			approval.InterruptID = ctx.ID
+		}
+	}
+	if len(approval.Requests) > 0 {
+		approval.ActiveRequestID = approval.Requests[0].RequestID
+		approval.Summary = approval.Requests[0].Question
+	}
+	return approval
 }
 
 func AgenticText(msg *schema.AgenticMessage) string {

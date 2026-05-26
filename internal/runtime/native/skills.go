@@ -62,7 +62,7 @@ func (r *Runtime) RunSkill(ctx context.Context, sessionID, skillName, targetID s
 		return protocol.SkillRunResult{}, err
 	}
 	markdown := skillMarkdown(descriptor, snapshot, targetID)
-	manifest, err := r.writeSkillArtifact(sessionID, run.RunID, string(descriptor.Name), descriptor.Title, snapshot.Meta.Language, markdown, map[string]any{
+	manifest, err := r.writeSkillArtifact(sessionID, run.RunID, descriptor.ArtifactKind, descriptor.Title, snapshot.Meta.Language, markdown, map[string]any{
 		"skill":     descriptor.Name,
 		"target":    targetID,
 		"paper_ids": paperIDs,

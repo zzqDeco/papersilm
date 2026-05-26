@@ -46,17 +46,28 @@ func (r *Runtime) HandleTurn(ctx context.Context, envelope turnloop.TurnEnvelope
 		"item_count": len(envelope.Items),
 		"created_at": envelope.CreatedAt,
 	})
-	item := envelope.Items[len(envelope.Items)-1]
+	var result protocol.RunResult
+	for _, item := range envelope.Items {
+		next, err := r.handleItem(ctx, envelope.TurnID, item)
+		if err != nil {
+			return protocol.RunResult{}, err
+		}
+		result = next
+	}
+	return result, nil
+}
+
+func (r *Runtime) handleItem(ctx context.Context, turnID string, item runtimeinput.Item) (protocol.RunResult, error) {
 	switch item.Kind {
 	case runtimeinput.KindPermissionDecision:
 		decision, _ := item.Payload.(protocol.PermissionDecision)
-		return r.DecidePermission(ctx, item.SessionID, decision, envelope.TurnID)
+		return r.DecidePermission(ctx, item.SessionID, decision, turnID)
 	case runtimeinput.KindRunPlanned:
 		payload, _ := item.Payload.(runtimeinput.RunPlannedPayload)
-		return r.RunPlanned(ctx, item.SessionID, payload.Language, payload.Style, envelope.TurnID)
+		return r.RunPlanned(ctx, item.SessionID, payload.Language, payload.Style, turnID)
 	case runtimeinput.KindTaskAction:
 		payload, _ := item.Payload.(runtimeinput.TaskActionPayload)
-		return r.HandleTaskAction(ctx, item.SessionID, payload, envelope.TurnID)
+		return r.HandleTaskAction(ctx, item.SessionID, payload, turnID)
 	default:
 		req, ok := item.Payload.(protocol.ClientRequest)
 		if !ok {
@@ -65,7 +76,7 @@ func (r *Runtime) HandleTurn(ctx context.Context, envelope turnloop.TurnEnvelope
 				Task:      item.Text,
 			}
 		}
-		return r.Execute(ctx, req, envelope.TurnID)
+		return r.Execute(ctx, req, turnID)
 	}
 }
 
@@ -424,21 +435,18 @@ func (r *Runtime) runEinoAssistant(ctx context.Context, sessionID, userMessage s
 		UserMessage: userMessage,
 	})
 	if err != nil {
+		if persistErr := r.persistEinoEvents(sessionID, output); persistErr != nil {
+			return protocol.RunResult{}, persistErr
+		}
+		_ = r.markSessionFailed(sessionID, err)
 		return protocol.RunResult{}, err
 	}
 	return r.finishEinoOutput(sessionID, output)
 }
 
 func (r *Runtime) finishEinoOutput(sessionID string, output einoagent.RunOutput) (protocol.RunResult, error) {
-	for _, event := range output.Events {
-		if err := r.store.AppendEvent(sessionID, event); err != nil {
-			return protocol.RunResult{}, err
-		}
-		if r.sink != nil {
-			if err := r.sink.Emit(event); err != nil {
-				return protocol.RunResult{}, err
-			}
-		}
+	if err := r.persistEinoEvents(sessionID, output); err != nil {
+		return protocol.RunResult{}, err
 	}
 	meta, err := r.store.LoadMeta(sessionID)
 	if err != nil {
@@ -472,6 +480,32 @@ func (r *Runtime) finishEinoOutput(sessionID string, output einoagent.RunOutput)
 	}
 	snapshot, err := r.store.Snapshot(sessionID)
 	return protocol.RunResult{Session: snapshot, Plan: snapshot.Plan, Digests: snapshot.Digests, Comparison: snapshot.Compare, Artifacts: snapshot.Artifacts, Response: output.Response}, err
+}
+
+func (r *Runtime) persistEinoEvents(sessionID string, output einoagent.RunOutput) error {
+	for _, event := range output.Events {
+		if err := r.store.AppendEvent(sessionID, event); err != nil {
+			return err
+		}
+		if r.sink != nil {
+			if err := r.sink.Emit(event); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+func (r *Runtime) markSessionFailed(sessionID string, runErr error) error {
+	_ = runErr
+	meta, err := r.store.LoadMeta(sessionID)
+	if err != nil {
+		return err
+	}
+	meta.State = protocol.SessionStateFailed
+	meta.ApprovalPending = false
+	meta.UpdatedAt = time.Now().UTC()
+	return r.store.SaveMeta(meta)
 }
 
 func (r *Runtime) executeStep(ctx context.Context, sessionID, goal string, step protocol.PlanStep) (protocol.NodeOutputRef, error) {
