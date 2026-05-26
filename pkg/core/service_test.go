@@ -316,6 +316,44 @@ func TestRunTaskConfirmSideEffectCreatesApproval(t *testing.T) {
 	}
 }
 
+func TestRunTaskConfirmAmbiguousEditCreatesTaskScopedPermission(t *testing.T) {
+	t.Parallel()
+
+	svc, _ := newTestService(t)
+	sessionID := seedWorkspaceEditPlan(t, svc, []string{"fix typo in `README.md`", "fix typo in `notes.md`"})
+	if err := svc.store.DeletePendingApproval(sessionID); err != nil {
+		t.Fatalf("DeletePendingApproval: %v", err)
+	}
+	meta, err := svc.store.LoadMeta(sessionID)
+	if err != nil {
+		t.Fatalf("LoadMeta: %v", err)
+	}
+	meta.State = protocol.SessionStatePlanned
+	meta.ApprovalPending = false
+	meta.PermissionMode = protocol.PermissionModeConfirm
+	if err := svc.store.SaveMeta(meta); err != nil {
+		t.Fatalf("SaveMeta: %v", err)
+	}
+	result, err := svc.RunTask(context.Background(), sessionID, "edit_2", "zh", "distill")
+	if err != nil {
+		t.Fatalf("RunTask(ambiguous edit): %v", err)
+	}
+	approval := result.Session.Approval
+	if approval == nil || approval.Mode != "task" || approval.ActiveRequestID == "" {
+		t.Fatalf("expected task-scoped approval, got %+v", approval)
+	}
+	if len(approval.PendingNodeIDs) != 1 || approval.PendingNodeIDs[0] != "edit_2" {
+		t.Fatalf("expected pending edit_2, got %+v", approval.PendingNodeIDs)
+	}
+	request := approval.Requests[0]
+	if request.NodeID != "edit_2" || request.Tool != string(protocol.NodeKindWorkspaceEdit) || request.Preview.Kind != "agent_interpretation" {
+		t.Fatalf("expected selected ambiguous edit request, got %+v", request)
+	}
+	if request.Tool == "plan_checkpoint" {
+		t.Fatalf("ambiguous task approval must not fall back to plan checkpoint: %+v", request)
+	}
+}
+
 func TestTaskScopedApprovalDoesNotContinuePlan(t *testing.T) {
 	t.Parallel()
 
@@ -447,6 +485,30 @@ func TestFinishCompletedPropagatesResultEmitFailure(t *testing.T) {
 	})
 	if err == nil || !strings.Contains(err.Error(), "sink result failure") {
 		t.Fatalf("expected final result emit failure, got %v", err)
+	}
+}
+
+func TestRunTaskPropagatesResultEmitFailure(t *testing.T) {
+	t.Parallel()
+
+	svc := newTestServiceWithSink(t, failingResultSink{})
+	sessionID := seedCommandPlan(t, svc, []string{"printf %s first"})
+	if err := svc.store.DeletePendingApproval(sessionID); err != nil {
+		t.Fatalf("DeletePendingApproval: %v", err)
+	}
+	meta, err := svc.store.LoadMeta(sessionID)
+	if err != nil {
+		t.Fatalf("LoadMeta: %v", err)
+	}
+	meta.State = protocol.SessionStatePlanned
+	meta.ApprovalPending = false
+	meta.PermissionMode = protocol.PermissionModeAuto
+	if err := svc.store.SaveMeta(meta); err != nil {
+		t.Fatalf("SaveMeta: %v", err)
+	}
+	_, err = svc.RunTask(context.Background(), sessionID, "cmd_1", "zh", "distill")
+	if err == nil || !strings.Contains(err.Error(), "sink result failure") {
+		t.Fatalf("expected task result emit failure, got %v", err)
 	}
 }
 
@@ -861,6 +923,24 @@ func TestListAndRunSkillsUseNativeRuntime(t *testing.T) {
 	}
 }
 
+func TestRunSkillPropagatesResultEmitFailure(t *testing.T) {
+	t.Parallel()
+
+	svc := newTestServiceWithSink(t, failingResultSink{})
+	meta, err := svc.NewSession(protocol.PermissionModePlan, "zh", "distill")
+	if err != nil {
+		t.Fatalf("NewSession: %v", err)
+	}
+	digest := protocol.PaperDigest{PaperID: "paper_a", Title: "Paper A", OneLineSummary: "summary", Language: "zh", Style: "distill", GeneratedAt: time.Now().UTC()}
+	if err := svc.store.SaveDigest(meta.SessionID, digest); err != nil {
+		t.Fatalf("SaveDigest: %v", err)
+	}
+	_, err = svc.RunSkill(context.Background(), meta.SessionID, string(protocol.SkillNameReviewer), "paper_a")
+	if err == nil || !strings.Contains(err.Error(), "sink result failure") {
+		t.Fatalf("expected skill result emit failure, got %v", err)
+	}
+}
+
 func TestPaperSkillRequiresSessionPaperTarget(t *testing.T) {
 	t.Parallel()
 
@@ -992,6 +1072,51 @@ func seedCommandPlan(t *testing.T, svc *Service, commands []string) string {
 	approval := protocol.ApprovalRequest{PlanID: plan.PlanID, CheckpointID: "checkpoint_" + plan.PlanID, InterruptID: "permission_req_first", PendingNodeIDs: []string{"cmd_1"}, Summary: request.Question, RequiresInput: true, CreatedAt: now, Mode: "plan", ActiveRequestID: request.RequestID, Requests: []protocol.PermissionRequest{request}}
 	if err := svc.store.SavePendingApproval(meta.SessionID, approval); err != nil {
 		t.Fatalf("SavePendingApproval: %v", err)
+	}
+	return meta.SessionID
+}
+
+func seedWorkspaceEditPlan(t *testing.T, svc *Service, goals []string) string {
+	t.Helper()
+	meta, err := svc.NewSession(protocol.PermissionModeConfirm, "zh", "distill")
+	if err != nil {
+		t.Fatalf("NewSession: %v", err)
+	}
+	for _, path := range []string{"README.md", "notes.md"} {
+		if err := os.WriteFile(filepath.Join(svc.store.WorkspaceRoot(), path), []byte("hello typo\n"), 0o644); err != nil {
+			t.Fatalf("WriteFile(%s): %v", path, err)
+		}
+	}
+	if err := svc.store.RefreshWorkspaceState(); err != nil {
+		t.Fatalf("RefreshWorkspaceState: %v", err)
+	}
+	now := time.Now().UTC()
+	nodes := make([]protocol.PlanNode, 0, len(goals))
+	steps := make([]protocol.PlanStep, 0, len(goals))
+	execNodes := make([]protocol.NodeExecutionState, 0, len(goals))
+	for i, goal := range goals {
+		id := fmt.Sprintf("edit_%d", i+1)
+		nodes = append(nodes, protocol.PlanNode{ID: id, Kind: protocol.NodeKindWorkspaceEdit, Goal: goal, WorkerProfile: protocol.WorkerProfileSupervisor, Required: true, Status: protocol.NodeStatusReady})
+		steps = append(steps, protocol.PlanStep{ID: id, Tool: string(protocol.NodeKindWorkspaceEdit), Goal: goal, ExpectedArtifact: "workspace_response"})
+		execNodes = append(execNodes, protocol.NodeExecutionState{NodeID: id, WorkerProfile: protocol.WorkerProfileSupervisor, Status: protocol.NodeStatusReady})
+	}
+	plan := protocol.PlanResult{PlanID: "plan_" + meta.SessionID, Goal: "edit workspace", DAG: protocol.PlanDAG{Nodes: nodes}, Steps: steps, ApprovalRequired: true, CreatedAt: now}
+	board := protocol.TaskBoard{PlanID: plan.PlanID, Goal: plan.Goal, UpdatedAt: now}
+	for _, node := range nodes {
+		board.Tasks = append(board.Tasks, protocol.TaskCard{TaskID: node.ID, NodeID: node.ID, Kind: node.Kind, Title: node.Goal, Status: protocol.TaskStatusReady})
+	}
+	plan.TaskBoard = &board
+	if err := svc.store.SavePlan(meta.SessionID, plan); err != nil {
+		t.Fatalf("SavePlan: %v", err)
+	}
+	if err := svc.store.SaveExecutionState(meta.SessionID, protocol.ExecutionState{PlanID: plan.PlanID, Nodes: execNodes, UpdatedAt: now}); err != nil {
+		t.Fatalf("SaveExecutionState: %v", err)
+	}
+	meta.State = protocol.SessionStatePlanned
+	meta.ApprovalPending = false
+	meta.ActivePlanID = plan.PlanID
+	if err := svc.store.SaveMeta(meta); err != nil {
+		t.Fatalf("SaveMeta: %v", err)
 	}
 	return meta.SessionID
 }

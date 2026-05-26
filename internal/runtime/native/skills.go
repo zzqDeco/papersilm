@@ -93,8 +93,12 @@ func (r *Runtime) RunSkill(ctx context.Context, sessionID, skillName, targetID s
 	}
 	result := protocol.SkillRunResult{Session: fresh, Descriptor: descriptor, Run: run, Artifact: &manifest}
 	_ = ctx
-	_ = r.emit(sessionID, protocol.EventArtifactWritten, "skill artifact written", manifest)
-	_ = r.emit(sessionID, protocol.EventResult, "skill run completed", run)
+	if err := r.emit(sessionID, protocol.EventArtifactWritten, "skill artifact written", manifest); err != nil {
+		return protocol.SkillRunResult{}, err
+	}
+	if err := r.emit(sessionID, protocol.EventResult, "skill run completed", run); err != nil {
+		return protocol.SkillRunResult{}, err
+	}
 	return result, nil
 }
 

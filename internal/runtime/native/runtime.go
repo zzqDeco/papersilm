@@ -240,7 +240,9 @@ func (r *Runtime) RunTask(ctx context.Context, sessionID, taskID, lang, style, t
 		request, err := permissionRequestForStep(r.store, sessionID, plan.PlanID, step)
 		if err != nil {
 			if errors.Is(err, errAmbiguousWorkspaceEdit) {
-				request = planPermissionRequest(sessionID, *plan)
+				files, _ := r.registry.LoadWorkspaceFiles(r.store)
+				intent := inferWorkspaceIntent(step.Goal, files)
+				request = ambiguousEditPermissionRequest(sessionID, plan.PlanID, step, intent.targetPath)
 			} else {
 				return protocol.RunResult{}, err
 			}
@@ -257,7 +259,7 @@ func (r *Runtime) RunTask(ctx context.Context, sessionID, taskID, lang, style, t
 	if err := r.store.SaveMeta(meta); err != nil {
 		return protocol.RunResult{}, err
 	}
-	out, err := r.executeStep(ctx, sessionID, plan.Goal, step)
+	out, err := r.executeStep(ctx, sessionID, plan.Goal, step, runMode)
 	if err != nil {
 		_ = r.markStep(sessionID, plan.PlanID, step.ID, protocol.NodeStatusFailed, err.Error(), out)
 		_ = r.markSessionFailed(sessionID, err)
@@ -285,11 +287,13 @@ func (r *Runtime) RunTask(ctx context.Context, sessionID, taskID, lang, style, t
 		response = text
 	}
 	result := protocol.RunResult{Session: snapshot, Plan: snapshot.Plan, Digests: snapshot.Digests, Comparison: snapshot.Compare, Artifacts: snapshot.Artifacts, Response: response}
-	_ = r.emit(sessionID, protocol.EventResult, "task completed", map[string]any{
+	if err := r.emit(sessionID, protocol.EventResult, "task completed", map[string]any{
 		"turn_id":  turnID,
 		"task_id":  step.ID,
 		"response": response,
-	})
+	}); err != nil {
+		return protocol.RunResult{}, err
+	}
 	return result, nil
 }
 
@@ -375,6 +379,9 @@ func (r *Runtime) DecidePermission(ctx context.Context, sessionID string, decisi
 	if decision.Value == agenttool.PermissionReject {
 		return r.rejectPermission(sessionID, approval, request, decision)
 	}
+	if isAmbiguousEditPermissionRequest(request) {
+		return r.runAmbiguousEditAfterPermission(ctx, sessionID, turnID, approval, request)
+	}
 	if _, err := r.applyPermissionRequest(sessionID, request); err != nil {
 		return protocol.RunResult{}, r.failApprovedPermission(sessionID, err)
 	}
@@ -428,7 +435,7 @@ func (r *Runtime) executePlan(ctx context.Context, sessionID string, plan protoc
 	}
 	var response string
 	for _, step := range plan.Steps {
-		out, err := r.executeStep(ctx, sessionID, plan.Goal, step)
+		out, err := r.executeStep(ctx, sessionID, plan.Goal, step, protocol.PermissionModeAuto)
 		if err != nil {
 			_ = r.markStep(sessionID, plan.PlanID, step.ID, protocol.NodeStatusFailed, err.Error(), protocol.NodeOutputRef{})
 			_ = r.markSessionFailed(sessionID, err)
@@ -587,7 +594,7 @@ func (r *Runtime) failApprovedPermission(sessionID string, runErr error) error {
 	return runErr
 }
 
-func (r *Runtime) executeStep(ctx context.Context, sessionID, goal string, step protocol.PlanStep) (protocol.NodeOutputRef, error) {
+func (r *Runtime) executeStep(ctx context.Context, sessionID, goal string, step protocol.PlanStep, mode protocol.PermissionMode) (protocol.NodeOutputRef, error) {
 	now := time.Now().UTC()
 	switch step.Tool {
 	case string(protocol.NodeKindWorkspaceInspect):
@@ -617,7 +624,7 @@ func (r *Runtime) executeStep(ctx context.Context, sessionID, goal string, step 
 		request, err := editPermissionRequest(r.store, sessionID, "", step.ID, step.Goal, intent.targetPath)
 		if err != nil {
 			if errors.Is(err, errAmbiguousWorkspaceEdit) {
-				result, runErr := r.runEinoAssistant(ctx, sessionID, step.Goal, protocol.PermissionModeAuto, step.ID)
+				result, runErr := r.runEinoAssistant(ctx, sessionID, step.Goal, executionPermissionMode(mode), step.ID)
 				response := strings.TrimSpace(result.Response)
 				if response == "" {
 					response = fmt.Sprintf("Workspace edit for %s requires agent interpretation. Configure an OpenAI-compatible provider for full tool-calling execution.", intent.targetPath)
@@ -643,9 +650,16 @@ func (r *Runtime) executeStep(ctx context.Context, sessionID, goal string, step 
 		})
 		return protocol.NodeOutputRef{NodeID: step.ID, Kind: "comparison", Ref: "comparison", Data: map[string]any{"response": out}, CreatedAt: now}, err
 	default:
-		result, err := r.runEinoAssistant(ctx, sessionID, step.Goal, protocol.PermissionModeAuto, step.ID)
+		result, err := r.runEinoAssistant(ctx, sessionID, step.Goal, executionPermissionMode(mode), step.ID)
 		return nodeOutput(step.ID, "assistant_response", result.Response, now), err
 	}
+}
+
+func executionPermissionMode(mode protocol.PermissionMode) protocol.PermissionMode {
+	if mode == "" || mode == protocol.PermissionModePlan {
+		return protocol.PermissionModeAuto
+	}
+	return mode
 }
 
 func (r *Runtime) invokeExecutionTool(ctx context.Context, sessionID, name string, input any) (string, error) {

@@ -28,3 +28,17 @@ func TestReadWorkspaceFileForEditStoreOnlyTreatsMissingAsAbsent(t *testing.T) {
 		t.Fatalf("expected non-missing read error to propagate, got %v", err)
 	}
 }
+
+func TestExtractBacktickCommandPrefersRunnableCommand(t *testing.T) {
+	t.Parallel()
+
+	got := extractBacktickCommand("inspect `README.md` then run `go test ./...`")
+	if got != "go test ./..." {
+		t.Fatalf("expected runnable command, got %q", got)
+	}
+
+	got = extractBacktickCommand("run `printf %s hello`")
+	if got != "printf %s hello" {
+		t.Fatalf("single command segment should be preserved, got %q", got)
+	}
+}

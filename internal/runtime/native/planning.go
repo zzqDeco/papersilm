@@ -296,7 +296,8 @@ func (r *Runtime) nextPermissionRequest(ctx context.Context, sessionID string, p
 			request, err := editPermissionRequest(r.store, sessionID, plan.PlanID, step.ID, step.Goal, intent.targetPath)
 			if err != nil {
 				if errors.Is(err, errAmbiguousWorkspaceEdit) {
-					continue
+					request = ambiguousEditPermissionRequest(sessionID, plan.PlanID, step, intent.targetPath)
+					return approvalFromRequest(plan, request, "plan"), true, nil
 				}
 				return protocol.ApprovalRequest{}, false, err
 			}
@@ -339,6 +340,41 @@ func planPermissionRequest(sessionID string, plan protocol.PlanResult) protocol.
 		},
 		CreatedAt: time.Now().UTC(),
 	}
+}
+
+func ambiguousEditPermissionRequest(sessionID, planID string, step protocol.PlanStep, targetPath string) protocol.PermissionRequest {
+	targetPath = strings.TrimSpace(firstNonEmpty(targetPath, extractWorkspacePathMention(step.Goal)))
+	subtitle := targetPath
+	if subtitle == "" {
+		subtitle = step.ID
+	}
+	summary := strings.TrimSpace(step.Goal)
+	if summary == "" {
+		summary = "Workspace edit requires agent interpretation before a diff can be generated."
+	}
+	return protocol.PermissionRequest{
+		RequestID:  "edit_agent_" + safeID(firstNonEmpty(step.ID, targetPath, step.Goal)),
+		SessionID:  sessionID,
+		PlanID:     planID,
+		NodeID:     step.ID,
+		Tool:       string(protocol.NodeKindWorkspaceEdit),
+		Operation:  "write",
+		Title:      "Interpret workspace edit",
+		Subtitle:   subtitle,
+		Question:   "Do you want papersilm to interpret this workspace edit?",
+		Summary:    summary,
+		TargetPath: targetPath,
+		Preview: protocol.PermissionPreview{
+			Kind:    "agent_interpretation",
+			Summary: "A concrete diff is not available yet; the agent will continue in confirm mode and request tool-specific approval before side effects.",
+		},
+		Options:   agenttool.PermissionOptions(protocol.NodeKindWorkspaceEdit),
+		CreatedAt: time.Now().UTC(),
+	}
+}
+
+func isAmbiguousEditPermissionRequest(request protocol.PermissionRequest) bool {
+	return request.Tool == string(protocol.NodeKindWorkspaceEdit) && request.Preview.Kind == "agent_interpretation"
 }
 
 func summarizePlanSteps(plan protocol.PlanResult) string {
@@ -425,13 +461,10 @@ func (r *Runtime) continueAfterPermission(ctx context.Context, sessionID, turnID
 			request, err := permissionRequestForStep(r.store, sessionID, plan.PlanID, step)
 			if err != nil {
 				if errors.Is(err, errAmbiguousWorkspaceEdit) {
-					output, stepErr := r.executeStep(ctx, sessionID, plan.Goal, step)
-					if stepErr != nil {
-						_ = r.markStep(sessionID, plan.PlanID, step.ID, protocol.NodeStatusFailed, stepErr.Error(), output)
-						return protocol.RunResult{}, r.failApprovedPermission(sessionID, stepErr)
-					}
-					_ = r.markStep(sessionID, plan.PlanID, step.ID, protocol.NodeStatusCompleted, "", output)
-					continue
+					files, _ := r.registry.LoadWorkspaceFiles(r.store)
+					intent := inferWorkspaceIntent(step.Goal, files)
+					request = ambiguousEditPermissionRequest(sessionID, plan.PlanID, step, intent.targetPath)
+					return r.saveApproval(sessionID, *plan, approvalFromRequest(*plan, request, "plan"))
 				}
 				return protocol.RunResult{}, r.failApprovedPermission(sessionID, err)
 			}
@@ -443,7 +476,7 @@ func (r *Runtime) continueAfterPermission(ctx context.Context, sessionID, turnID
 			}
 			continue
 		}
-		output, err := r.executeStep(ctx, sessionID, plan.Goal, step)
+		output, err := r.executeStep(ctx, sessionID, plan.Goal, step, protocol.PermissionModeConfirm)
 		if err != nil {
 			_ = r.markStep(sessionID, plan.PlanID, step.ID, protocol.NodeStatusFailed, err.Error(), output)
 			return protocol.RunResult{}, r.failApprovedPermission(sessionID, err)
@@ -498,6 +531,48 @@ func (r *Runtime) finishTaskAfterPermission(sessionID, turnID string, plan proto
 		return protocol.RunResult{}, err
 	}
 	return result, nil
+}
+
+func (r *Runtime) runAmbiguousEditAfterPermission(ctx context.Context, sessionID, turnID string, approval *protocol.ApprovalRequest, request protocol.PermissionRequest) (protocol.RunResult, error) {
+	plan, err := r.store.LoadPlan(sessionID)
+	if err != nil {
+		return protocol.RunResult{}, r.failApprovedPermission(sessionID, err)
+	}
+	if plan == nil {
+		return protocol.RunResult{}, r.failApprovedPermission(sessionID, fmt.Errorf("no saved plan available"))
+	}
+	if err := r.store.DeletePendingApproval(sessionID); err != nil {
+		return protocol.RunResult{}, err
+	}
+	meta, err := r.store.LoadMeta(sessionID)
+	if err != nil {
+		return protocol.RunResult{}, err
+	}
+	meta.State = protocol.SessionStateRunning
+	meta.ApprovalPending = false
+	meta.PendingInterruptID = ""
+	meta.ActiveCheckpointID = ""
+	meta.ActivePlanID = plan.PlanID
+	meta.UpdatedAt = time.Now().UTC()
+	if err := r.store.SaveMeta(meta); err != nil {
+		return protocol.RunResult{}, err
+	}
+	userMessage := firstNonEmpty(request.Summary, request.Question)
+	result, err := r.runEinoAssistant(ctx, sessionID, userMessage, protocol.PermissionModeConfirm, firstNonEmpty(turnID, request.NodeID))
+	if err != nil {
+		return protocol.RunResult{}, r.failApprovedPermission(sessionID, err)
+	}
+	if result.Approval != nil {
+		return result, nil
+	}
+	output := nodeOutput(request.NodeID, "assistant_response", result.Response, time.Now().UTC())
+	if err := r.markStep(sessionID, plan.PlanID, request.NodeID, protocol.NodeStatusCompleted, "", output); err != nil {
+		return protocol.RunResult{}, err
+	}
+	if approval != nil && approval.Mode == "task" {
+		return r.finishTaskAfterPermission(sessionID, turnID, *plan, request)
+	}
+	return r.continueAfterPermission(ctx, sessionID, turnID, approval, request)
 }
 
 func (r *Runtime) finishCompleted(sessionID, turnID string) (protocol.RunResult, error) {
@@ -878,12 +953,51 @@ func workspacePathMatchKey(value string) string {
 }
 
 func extractBacktickCommand(goal string) string {
-	for _, segment := range backtickSegments(goal) {
-		if segment != "" {
+	segments := backtickSegments(goal)
+	if len(segments) == 1 {
+		return segments[0]
+	}
+	for _, segment := range segments {
+		if looksLikeShellCommand(segment) {
+			return segment
+		}
+	}
+	for _, segment := range segments {
+		if segment != "" && !pathLooksLikeWorkspaceFile(segment) {
 			return segment
 		}
 	}
 	return ""
+}
+
+func looksLikeShellCommand(value string) bool {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return false
+	}
+	if strings.HasPrefix(value, "./") || strings.HasPrefix(value, "../") {
+		return true
+	}
+	if strings.ContainsAny(value, " \t|&;><=$") {
+		return true
+	}
+	fields := strings.Fields(value)
+	if len(fields) == 0 {
+		return false
+	}
+	command := strings.TrimSpace(fields[0])
+	if strings.Contains(command, "/") {
+		return true
+	}
+	switch command {
+	case "go", "git", "gh", "npm", "pnpm", "yarn", "bun", "node", "deno",
+		"python", "python3", "pytest", "uv", "make", "cargo", "docker",
+		"sh", "bash", "zsh", "fish", "rg", "grep", "sed", "awk", "cat",
+		"ls", "find", "curl", "wget", "printf", "echo":
+		return true
+	default:
+		return false
+	}
 }
 
 func backtickSegments(value string) []string {
