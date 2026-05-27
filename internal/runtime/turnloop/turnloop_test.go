@@ -138,6 +138,32 @@ func TestDrainNextAdvancesBufferWithoutCopyingTail(t *testing.T) {
 	}
 }
 
+func TestDrainNextPrioritizesPermissionDecision(t *testing.T) {
+	t.Parallel()
+
+	loop := New(Config{Handler: func(_ context.Context, envelope TurnEnvelope) (protocol.RunResult, error) {
+		return protocol.RunResult{}, nil
+	}})
+	loop.buffer["sess_1"] = []input.Item{
+		{SessionID: "sess_1", Kind: input.KindUserMessage, Text: "stale prompt", Priority: input.PriorityNormal},
+		{SessionID: "sess_1", Kind: input.KindPermissionDecision, Text: "approve", Priority: input.PriorityCritical},
+		{SessionID: "sess_1", Kind: input.KindRunPlanned, Text: "run", Priority: input.PriorityHigh},
+	}
+
+	envelope := loop.drainNext("sess_1")
+	if len(envelope.Items) != 1 || envelope.Items[0].Kind != input.KindPermissionDecision {
+		t.Fatalf("expected permission decision first, got %+v", envelope.Items)
+	}
+	envelope = loop.drainNext("sess_1")
+	if len(envelope.Items) != 1 || envelope.Items[0].Kind != input.KindRunPlanned {
+		t.Fatalf("expected high-priority run second, got %+v", envelope.Items)
+	}
+	envelope = loop.drainNext("sess_1")
+	if len(envelope.Items) != 1 || envelope.Items[0].Kind != input.KindUserMessage {
+		t.Fatalf("expected normal prompt last, got %+v", envelope.Items)
+	}
+}
+
 func TestConcurrentPushNeverDispatchesEmptyTurn(t *testing.T) {
 	t.Parallel()
 

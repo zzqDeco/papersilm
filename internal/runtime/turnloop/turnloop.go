@@ -115,12 +115,17 @@ func (l *TurnLoop) drainNext(sessionID string) TurnEnvelope {
 	if len(items) == 0 {
 		return TurnEnvelope{SessionID: sessionID, CreatedAt: now}
 	}
-	next := items[0]
+	nextIndex := highestPriorityIndex(items)
+	next := items[nextIndex]
 	if len(items) == 1 {
 		delete(l.buffer, sessionID)
-	} else {
+	} else if nextIndex == 0 {
 		items[0] = input.Item{}
 		l.buffer[sessionID] = items[1:]
+	} else {
+		copy(items[nextIndex:], items[nextIndex+1:])
+		items[len(items)-1] = input.Item{}
+		l.buffer[sessionID] = items[:len(items)-1]
 	}
 	return TurnEnvelope{
 		TurnID:    newID("turn"),
@@ -128,6 +133,16 @@ func (l *TurnLoop) drainNext(sessionID string) TurnEnvelope {
 		Items:     []input.Item{next},
 		CreatedAt: now,
 	}
+}
+
+func highestPriorityIndex(items []input.Item) int {
+	best := 0
+	for i := 1; i < len(items); i++ {
+		if items[i].Priority > items[best].Priority {
+			best = i
+		}
+	}
+	return best
 }
 
 func (l *TurnLoop) drainLocked(sessionID string) TurnEnvelope {
