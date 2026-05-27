@@ -48,12 +48,11 @@ papersilm --config-init
 
 The config file is written to `~/.papersilm/config.yaml`.
 
-If no external provider is configured, `papersilm` falls back to a local deterministic tool-calling model so `plan`, `confirm`, `approve`, and `run` still work end-to-end.
+If no external provider is configured, `papersilm` uses a local deterministic Eino-compatible model for basic workspace responses. Configure an OpenAI-compatible provider for full agentic tool-calling.
 
 Provider config now supports named profiles plus one active profile:
 
 ```yaml
-runtime: legacy
 active_provider: local-openai
 providers:
   local-openai:
@@ -72,8 +71,6 @@ provider:
 
 Older single-provider configs still load and are migrated in memory to `providers.default`.
 
-`runtime` defaults to `legacy`. `PAPERSILM_RUNTIME=eino` can be used to opt into the Eino-native runtime while it is being developed.
-
 ## CLI Modes
 
 `papersilm` supports three execution modes:
@@ -82,7 +79,7 @@ Older single-provider configs still load and are migrated in memory to `provider
 - `confirm`: stop after plan and wait for approval
 - `auto`: run through to final artifacts
 
-The current planner compiles work into an explicit DAG with role-scoped worker nodes such as `paper_summary_worker`, `experiment_worker`, `math_reasoner_worker`, and compare workers. `json` and `stream-json` outputs expose the full DAG so future GUI clients can consume the same execution graph.
+The runtime is Eino-native: all user input enters the TurnLoop, each turn prepares a ChatModelAgent with workspace and paper tools, and side-effect tools use permission interrupts in confirm mode. `json` and `stream-json` outputs keep the existing protocol shape for GUI and automation clients.
 
 ## Usage
 

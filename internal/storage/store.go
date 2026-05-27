@@ -111,6 +111,10 @@ func (s *Store) artifactsDir(sessionID string) string {
 }
 
 func (s *Store) checkpointsDir(sessionID string) string {
+	return filepath.Join(s.SessionDir(sessionID), "eino_checkpoints")
+}
+
+func (s *Store) legacyCheckpointsDir(sessionID string) string {
 	return filepath.Join(s.SessionDir(sessionID), "checkpoints")
 }
 
@@ -140,6 +144,18 @@ func (s *Store) eventsPath(sessionID string) string {
 
 func (s *Store) transcriptPath(sessionID string) string {
 	return filepath.Join(s.SessionDir(sessionID), "transcript.jsonl")
+}
+
+func (s *Store) agentEventsPath(sessionID string) string {
+	return filepath.Join(s.SessionDir(sessionID), "agent_events.jsonl")
+}
+
+func (s *Store) turnsPath(sessionID string) string {
+	return filepath.Join(s.SessionDir(sessionID), "turns.jsonl")
+}
+
+func (s *Store) toolCallsPath(sessionID string) string {
+	return filepath.Join(s.SessionDir(sessionID), "tool_calls.jsonl")
 }
 
 func (s *Store) CreateSession(meta protocol.SessionMeta) error {
@@ -598,6 +614,18 @@ func (s *Store) AppendTranscriptEntry(sessionID string, entry protocol.Transcrip
 	return s.appendJSONL(s.transcriptPath(sessionID), entry)
 }
 
+func (s *Store) AppendAgentEvent(sessionID string, event any) error {
+	return s.appendJSONL(s.agentEventsPath(sessionID), event)
+}
+
+func (s *Store) AppendTurn(sessionID string, turn any) error {
+	return s.appendJSONL(s.turnsPath(sessionID), turn)
+}
+
+func (s *Store) AppendToolCall(sessionID string, call any) error {
+	return s.appendJSONL(s.toolCallsPath(sessionID), call)
+}
+
 func (s *Store) appendJSONL(path string, value interface{}) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return err
@@ -755,6 +783,9 @@ func (s *Store) InvalidatePlanState(sessionID string) error {
 	if err := os.RemoveAll(s.checkpointsDir(sessionID)); err != nil && !errors.Is(err, os.ErrNotExist) {
 		return err
 	}
+	if err := os.RemoveAll(s.legacyCheckpointsDir(sessionID)); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
 	if err := s.DeletePendingApproval(sessionID); err != nil {
 		return err
 	}
@@ -795,7 +826,7 @@ func permissionRuleEquivalent(a, b protocol.PermissionRule) bool {
 }
 
 func (s *Store) CheckPointStore(sessionID string) adk.CheckPointStore {
-	return &fileCheckpointStore{dir: s.checkpointsDir(sessionID)}
+	return &fileCheckpointStore{dir: s.checkpointsDir(sessionID), fallbackDir: s.legacyCheckpointsDir(sessionID)}
 }
 
 func (s *Store) LatestSessionID() (string, error) {
@@ -846,17 +877,36 @@ func (s *Store) loadJSON(path string, v interface{}) error {
 }
 
 type fileCheckpointStore struct {
-	dir string
+	dir         string
+	fallbackDir string
 }
 
 func (s *fileCheckpointStore) checkpointPath(checkPointID string) string {
 	return filepath.Join(s.dir, checkPointID+".bin")
 }
 
+func (s *fileCheckpointStore) fallbackCheckpointPath(checkPointID string) string {
+	if strings.TrimSpace(s.fallbackDir) == "" {
+		return ""
+	}
+	return filepath.Join(s.fallbackDir, checkPointID+".bin")
+}
+
 func (s *fileCheckpointStore) Get(_ context.Context, checkPointID string) ([]byte, bool, error) {
 	raw, err := os.ReadFile(s.checkpointPath(checkPointID))
 	if errors.Is(err, os.ErrNotExist) {
-		return nil, false, nil
+		fallbackPath := s.fallbackCheckpointPath(checkPointID)
+		if fallbackPath == "" {
+			return nil, false, nil
+		}
+		raw, err = os.ReadFile(fallbackPath)
+		if errors.Is(err, os.ErrNotExist) {
+			return nil, false, nil
+		}
+		if err != nil {
+			return nil, false, err
+		}
+		return raw, true, nil
 	}
 	if err != nil {
 		return nil, false, err

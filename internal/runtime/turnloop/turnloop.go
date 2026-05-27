@@ -56,13 +56,20 @@ func (l *TurnLoop) Push(ctx context.Context, item input.Item) (protocol.RunResul
 	l.dispatchMu.Lock()
 	defer l.dispatchMu.Unlock()
 
-	envelope := l.enqueueAndDrain(item)
-	result, err := l.handler(ctx, envelope)
-	if err != nil {
-		l.restore(envelope)
-		return protocol.RunResult{}, err
+	l.enqueue(item)
+	var result protocol.RunResult
+	for {
+		envelope := l.drainNext(item.SessionID)
+		if len(envelope.Items) == 0 {
+			return result, nil
+		}
+		next, err := l.handler(ctx, envelope)
+		if err != nil {
+			l.restore(envelope)
+			return protocol.RunResult{}, err
+		}
+		result = next
 	}
-	return result, nil
 }
 
 func (l *TurnLoop) Buffered(sessionID string) []input.Item {
@@ -73,13 +80,12 @@ func (l *TurnLoop) Buffered(sessionID string) []input.Item {
 	return append([]input.Item(nil), items...)
 }
 
-func (l *TurnLoop) enqueueAndDrain(item input.Item) TurnEnvelope {
+func (l *TurnLoop) enqueue(item input.Item) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 
 	item = l.normalizeItemLocked(item)
 	l.buffer[item.SessionID] = append(l.buffer[item.SessionID], item)
-	return l.drainLocked(item.SessionID)
 }
 
 func (l *TurnLoop) normalizeItemLocked(item input.Item) input.Item {
@@ -98,6 +104,30 @@ func (l *TurnLoop) drain(sessionID string) TurnEnvelope {
 	defer l.mu.Unlock()
 
 	return l.drainLocked(sessionID)
+}
+
+func (l *TurnLoop) drainNext(sessionID string) TurnEnvelope {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+
+	now := l.clock()
+	items := l.buffer[sessionID]
+	if len(items) == 0 {
+		return TurnEnvelope{SessionID: sessionID, CreatedAt: now}
+	}
+	next := items[0]
+	if len(items) == 1 {
+		delete(l.buffer, sessionID)
+	} else {
+		items[0] = input.Item{}
+		l.buffer[sessionID] = items[1:]
+	}
+	return TurnEnvelope{
+		TurnID:    newID("turn"),
+		SessionID: sessionID,
+		Items:     []input.Item{next},
+		CreatedAt: now,
+	}
 }
 
 func (l *TurnLoop) drainLocked(sessionID string) TurnEnvelope {

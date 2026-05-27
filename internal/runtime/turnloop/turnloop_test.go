@@ -82,6 +82,62 @@ func TestPushRestoresDrainedItemsWhenHandlerFails(t *testing.T) {
 	}
 }
 
+func TestPushProcessesRestoredAndNewInputsInOrder(t *testing.T) {
+	t.Parallel()
+
+	handlerErr := errors.New("handler failed")
+	var seen []string
+	failFirst := true
+	loop := New(Config{
+		Handler: func(_ context.Context, envelope TurnEnvelope) (protocol.RunResult, error) {
+			if len(envelope.Items) != 1 {
+				t.Fatalf("expected one item per dispatch, got %+v", envelope.Items)
+			}
+			seen = append(seen, envelope.Items[0].Text)
+			if failFirst {
+				failFirst = false
+				return protocol.RunResult{}, handlerErr
+			}
+			return protocol.RunResult{}, nil
+		},
+	})
+	_, err := loop.Push(context.Background(), input.Item{SessionID: "sess_1", Text: "first"})
+	if !errors.Is(err, handlerErr) {
+		t.Fatalf("expected first push failure, got %v", err)
+	}
+	if _, err := loop.Push(context.Background(), input.Item{SessionID: "sess_1", Text: "second"}); err != nil {
+		t.Fatalf("second push: %v", err)
+	}
+	want := []string{"first", "first", "second"}
+	if fmt.Sprint(seen) != fmt.Sprint(want) {
+		t.Fatalf("expected restored input before new input, got %v", seen)
+	}
+}
+
+func TestDrainNextAdvancesBufferWithoutCopyingTail(t *testing.T) {
+	t.Parallel()
+
+	loop := New(Config{Handler: func(_ context.Context, envelope TurnEnvelope) (protocol.RunResult, error) {
+		return protocol.RunResult{}, nil
+	}})
+	loop.buffer["sess_1"] = []input.Item{
+		{SessionID: "sess_1", Text: "first"},
+		{SessionID: "sess_1", Text: "second"},
+		{SessionID: "sess_1", Text: "third"},
+	}
+	tailPtr := &loop.buffer["sess_1"][1]
+	envelope := loop.drainNext("sess_1")
+	if len(envelope.Items) != 1 || envelope.Items[0].Text != "first" {
+		t.Fatalf("unexpected drained envelope: %+v", envelope)
+	}
+	if len(loop.buffer["sess_1"]) != 2 {
+		t.Fatalf("expected two buffered items left, got %+v", loop.buffer["sess_1"])
+	}
+	if &loop.buffer["sess_1"][0] != tailPtr {
+		t.Fatalf("expected drainNext to reslice the buffer tail instead of copying it")
+	}
+}
+
 func TestConcurrentPushNeverDispatchesEmptyTurn(t *testing.T) {
 	t.Parallel()
 

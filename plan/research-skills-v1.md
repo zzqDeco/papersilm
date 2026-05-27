@@ -15,7 +15,7 @@
 
 当前系统已有一些接近 skill 的基础，但还不够显式：
 
-- `internal/agent/dag.go` 已根据目标内容动态插入不同 worker。
+- `internal/runtime/native` 已提供 Eino-native skill descriptor 和 skill artifact 写入入口。
 - `internal/tools/registry.go` 提供固定工具集合。
 - `internal/cli/repl.go` 支持 `/style <distill|ultra|reviewer>`，说明系统已经存在“输出风格切换”的需求。
 

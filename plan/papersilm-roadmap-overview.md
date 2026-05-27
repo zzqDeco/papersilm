@@ -20,7 +20,7 @@
 当前仓库已经具备较好的核心底座：
 
 - `pkg/core/service.go` 提供会话级门面，负责会话创建、加载、执行与审批。
-- `internal/agent/dag.go` 已能把目标编译成显式 DAG，并维护 ready node 与执行批次。
+- `internal/runtime/` 已承载 TurnLoop、Eino ChatModelAgent 准备、工具执行和权限中断恢复。
 - `internal/storage/store.go` 已持久化会话、计划、执行状态、digest、comparison、artifact 与 event log。
 - `internal/tools/registry.go` 已提供固定工具集合，支撑 attach / inspect / distill / compare / export 等流程。
 - `internal/cli/repl.go` 已提供 `/plan`、`/run`、`/approve`、`/export` 等 CLI 入口。

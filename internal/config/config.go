@@ -39,19 +39,11 @@ const (
 	ThemeLight ThemeSetting = "light"
 )
 
-type RuntimeSetting string
-
-const (
-	RuntimeLegacy RuntimeSetting = "legacy"
-	RuntimeEino   RuntimeSetting = "eino"
-)
-
 type Config struct {
 	BaseDir        string                    `yaml:"base_dir" json:"base_dir"`
 	DefaultLang    string                    `yaml:"default_lang" json:"default_lang"`
 	DefaultStyle   string                    `yaml:"default_style" json:"default_style"`
 	PermissionMode protocol.PermissionMode   `yaml:"permission_mode" json:"permission_mode"`
-	Runtime        RuntimeSetting            `yaml:"runtime,omitempty" json:"runtime,omitempty"`
 	Theme          ThemeSetting              `yaml:"theme,omitempty" json:"theme,omitempty"`
 	ActiveProvider string                    `yaml:"active_provider,omitempty" json:"active_provider,omitempty"`
 	Providers      map[string]ProviderConfig `yaml:"providers,omitempty" json:"providers,omitempty"`
@@ -74,7 +66,6 @@ func Default() Config {
 		DefaultLang:    "zh",
 		DefaultStyle:   "distill",
 		PermissionMode: protocol.PermissionModeConfirm,
-		Runtime:        RuntimeLegacy,
 		Theme:          ThemeAuto,
 		ActiveProvider: DefaultProviderProfile,
 		Providers: map[string]ProviderConfig{
@@ -149,10 +140,6 @@ func (c *Config) Normalize() {
 	}
 	if c.PermissionMode == "" {
 		c.PermissionMode = defaults.PermissionMode
-	}
-	c.Runtime = RuntimeSetting(strings.TrimSpace(string(c.Runtime)))
-	if !c.Runtime.Valid() {
-		c.Runtime = defaults.Runtime
 	}
 	if !c.Theme.Valid() {
 		c.Theme = defaults.Theme
@@ -251,24 +238,6 @@ func (t ThemeSetting) Valid() bool {
 	default:
 		return false
 	}
-}
-
-func (r RuntimeSetting) Valid() bool {
-	switch RuntimeSetting(strings.TrimSpace(string(r))) {
-	case RuntimeLegacy, RuntimeEino:
-		return true
-	default:
-		return false
-	}
-}
-
-func (c Config) RuntimeSetting() RuntimeSetting {
-	cfg := c
-	cfg.Normalize()
-	if override := RuntimeSetting(strings.TrimSpace(os.Getenv("PAPERSILM_RUNTIME"))); override.Valid() {
-		return override
-	}
-	return cfg.Runtime
 }
 
 func (c *Config) SetTheme(theme ThemeSetting) error {

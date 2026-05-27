@@ -534,21 +534,22 @@ type PermissionOption struct {
 }
 
 type PermissionRequest struct {
-	RequestID  string             `json:"request_id"`
-	SessionID  string             `json:"session_id,omitempty"`
-	PlanID     string             `json:"plan_id,omitempty"`
-	NodeID     string             `json:"node_id,omitempty"`
-	Tool       string             `json:"tool"`
-	Operation  string             `json:"operation,omitempty"`
-	Title      string             `json:"title"`
-	Subtitle   string             `json:"subtitle,omitempty"`
-	Question   string             `json:"question"`
-	Summary    string             `json:"summary,omitempty"`
-	TargetPath string             `json:"target_path,omitempty"`
-	Command    string             `json:"command,omitempty"`
-	Preview    PermissionPreview  `json:"preview,omitempty"`
-	Options    []PermissionOption `json:"options"`
-	CreatedAt  time.Time          `json:"created_at"`
+	RequestID   string             `json:"request_id"`
+	InterruptID string             `json:"interrupt_id,omitempty"`
+	SessionID   string             `json:"session_id,omitempty"`
+	PlanID      string             `json:"plan_id,omitempty"`
+	NodeID      string             `json:"node_id,omitempty"`
+	Tool        string             `json:"tool"`
+	Operation   string             `json:"operation,omitempty"`
+	Title       string             `json:"title"`
+	Subtitle    string             `json:"subtitle,omitempty"`
+	Question    string             `json:"question"`
+	Summary     string             `json:"summary,omitempty"`
+	TargetPath  string             `json:"target_path,omitempty"`
+	Command     string             `json:"command,omitempty"`
+	Preview     PermissionPreview  `json:"preview,omitempty"`
+	Options     []PermissionOption `json:"options"`
+	CreatedAt   time.Time          `json:"created_at"`
 }
 
 type PermissionDecision struct {

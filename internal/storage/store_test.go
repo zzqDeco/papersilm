@@ -902,6 +902,44 @@ func TestSnapshotHydratesLegacyComparisonSkillPaperIDsFromArtifactJSON(t *testin
 	}
 }
 
+func TestCheckPointStoreReadsLegacyCheckpointPath(t *testing.T) {
+	t.Parallel()
+
+	store := New(t.TempDir())
+	if err := store.Ensure(); err != nil {
+		t.Fatalf("Ensure: %v", err)
+	}
+	meta := protocol.SessionMeta{
+		SessionID:      "sess_checkpoint_legacy",
+		State:          protocol.SessionStateAwaitingApproval,
+		PermissionMode: protocol.PermissionModeConfirm,
+		CreatedAt:      time.Now().UTC(),
+		UpdatedAt:      time.Now().UTC(),
+	}
+	if err := store.CreateSession(meta); err != nil {
+		t.Fatalf("CreateSession: %v", err)
+	}
+	if err := os.MkdirAll(store.legacyCheckpointsDir(meta.SessionID), 0o755); err != nil {
+		t.Fatalf("MkdirAll(legacy checkpoints): %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(store.legacyCheckpointsDir(meta.SessionID), "checkpoint_1.bin"), []byte("legacy checkpoint"), 0o644); err != nil {
+		t.Fatalf("WriteFile(legacy checkpoint): %v", err)
+	}
+	raw, ok, err := store.CheckPointStore(meta.SessionID).Get(nil, "checkpoint_1")
+	if err != nil {
+		t.Fatalf("Get legacy checkpoint: %v", err)
+	}
+	if !ok || string(raw) != "legacy checkpoint" {
+		t.Fatalf("expected legacy checkpoint fallback, ok=%v raw=%q", ok, string(raw))
+	}
+	if err := store.CheckPointStore(meta.SessionID).Set(nil, "checkpoint_2", []byte("new checkpoint")); err != nil {
+		t.Fatalf("Set new checkpoint: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(store.checkpointsDir(meta.SessionID), "checkpoint_2.bin")); err != nil {
+		t.Fatalf("expected new checkpoint path write: %v", err)
+	}
+}
+
 func TestLoadRecentEventsReturnsNewestValidEvents(t *testing.T) {
 	t.Parallel()
 

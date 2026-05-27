@@ -1,0 +1,84 @@
+package events
+
+import (
+	"strings"
+	"testing"
+
+	"github.com/cloudwego/eino/adk"
+	"github.com/cloudwego/eino/schema"
+
+	"github.com/zzqDeco/papersilm/pkg/protocol"
+)
+
+func TestFromAgentEventMapsInterruptToProtocolApproval(t *testing.T) {
+	t.Parallel()
+
+	event := &adk.TypedAgentEvent[*schema.AgenticMessage]{
+		Action: &adk.AgentAction{
+			Interrupted: &adk.InterruptInfo{
+				InterruptContexts: []*adk.InterruptCtx{{
+					ID: "interrupt_1",
+					Info: protocol.PermissionRequest{
+						RequestID: "req_1",
+						NodeID:    "node_1",
+						Tool:      string(protocol.NodeKindWorkspaceEdit),
+						Title:     "Edit file",
+						Question:  "Allow edit?",
+					},
+				}},
+			},
+		},
+	}
+
+	mapped := FromAgentEvent("session_1", "turn_1", "checkpoint_1", event)
+	if len(mapped) != 1 || mapped[0].Type != protocol.EventApprovalRequired {
+		t.Fatalf("expected one approval event, got %+v", mapped)
+	}
+	approval, ok := mapped[0].Payload.(protocol.ApprovalRequest)
+	if !ok {
+		t.Fatalf("expected protocol approval payload, got %T", mapped[0].Payload)
+	}
+	if approval.ActiveRequestID != "req_1" || approval.InterruptID != "interrupt_1" || len(approval.Requests) != 1 {
+		t.Fatalf("unexpected approval payload: %+v", approval)
+	}
+	if approval.CheckpointID != "checkpoint_1" {
+		t.Fatalf("expected checkpoint from runner, got %q", approval.CheckpointID)
+	}
+	if approval.Requests[0].InterruptID != "interrupt_1" {
+		t.Fatalf("expected request interrupt target to be preserved, got %+v", approval.Requests[0])
+	}
+}
+
+func TestFromAgentEventMapsStreamingMessageOutput(t *testing.T) {
+	t.Parallel()
+
+	event := &adk.TypedAgentEvent[*schema.AgenticMessage]{
+		AgentName: "papersilm",
+		Output: &adk.TypedAgentOutput[*schema.AgenticMessage]{
+			MessageOutput: &adk.TypedMessageVariant[*schema.AgenticMessage]{
+				IsStreaming: true,
+				MessageStream: schema.StreamReaderFromArray([]*schema.AgenticMessage{
+					agenticText("hello "),
+					agenticText("world"),
+				}),
+			},
+		},
+	}
+
+	mapped := FromAgentEvent("session_1", "turn_1", "checkpoint_1", event)
+	if len(mapped) != 1 || mapped[0].Type != protocol.EventAssistant {
+		t.Fatalf("expected one assistant event, got %+v", mapped)
+	}
+	if !strings.Contains(mapped[0].Message, "hello") || !strings.Contains(mapped[0].Message, "world") {
+		t.Fatalf("expected concatenated streaming text, got %q", mapped[0].Message)
+	}
+}
+
+func agenticText(text string) *schema.AgenticMessage {
+	return &schema.AgenticMessage{
+		Role: schema.AgenticRoleTypeAssistant,
+		ContentBlocks: []*schema.ContentBlock{
+			schema.NewContentBlock(&schema.AssistantGenText{Text: text}),
+		},
+	}
+}

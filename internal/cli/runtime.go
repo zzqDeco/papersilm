@@ -9,7 +9,6 @@ import (
 
 	"golang.org/x/term"
 
-	"github.com/zzqDeco/papersilm/internal/agent"
 	"github.com/zzqDeco/papersilm/internal/config"
 	"github.com/zzqDeco/papersilm/internal/pipeline"
 	"github.com/zzqDeco/papersilm/internal/storage"
@@ -53,8 +52,7 @@ func buildServiceRuntime(ctx context.Context, cfg config.Config, sink core.Event
 	runtimeCfg.BaseDir = workspaceStoreDir
 	p := pipeline.New(runtimeCfg)
 	registry := tools.New(p)
-	ag := agent.New(registry, cfg)
-	svc := core.New(cfg, store, ag, sink)
+	svc := core.New(cfg, store, registry, sink)
 	_ = ctx
 	return cfg, store, svc, nil
 }

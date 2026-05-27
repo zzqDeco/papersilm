@@ -2,7 +2,6 @@ package providers
 
 import (
 	"context"
-	"strings"
 	"testing"
 	"time"
 
@@ -26,27 +25,33 @@ func TestBuildAgenticModelOpenAICompatible(t *testing.T) {
 	}
 }
 
-func TestBuildAgenticModelRequiresConfiguredProvider(t *testing.T) {
+func TestBuildAgenticModelUsesLocalFallbackWhenUnconfigured(t *testing.T) {
 	t.Parallel()
 
-	_, err := BuildAgenticModel(context.Background(), config.ProviderConfig{
+	model, err := BuildAgenticModel(context.Background(), config.ProviderConfig{
 		Provider: config.ProviderOpenAI,
 		Model:    "gpt-5.4",
 	}, 2*time.Minute)
-	if err == nil || !strings.Contains(err.Error(), "configured provider") {
-		t.Fatalf("expected configured provider error, got %v", err)
+	if err != nil {
+		t.Fatalf("BuildAgenticModel(local fallback): %v", err)
+	}
+	if model == nil {
+		t.Fatalf("expected local agentic model")
 	}
 }
 
-func TestBuildAgenticModelRejectsUnsupportedProvider(t *testing.T) {
+func TestBuildAgenticModelAdaptsNonOpenAIProvider(t *testing.T) {
 	t.Parallel()
 
-	_, err := BuildAgenticModel(context.Background(), config.ProviderConfig{
+	model, err := BuildAgenticModel(context.Background(), config.ProviderConfig{
 		Provider: config.ProviderOllama,
 		Model:    "qwen2.5:7b",
 		BaseURL:  "http://127.0.0.1:11434",
 	}, 2*time.Minute)
-	if err == nil || !strings.Contains(err.Error(), "does not support provider") {
-		t.Fatalf("expected unsupported provider error, got %v", err)
+	if err != nil {
+		t.Fatalf("BuildAgenticModel(ollama adapter): %v", err)
+	}
+	if model == nil {
+		t.Fatalf("expected adapted agentic model")
 	}
 }
