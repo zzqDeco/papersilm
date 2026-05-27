@@ -28,16 +28,17 @@ type EventSink interface {
 }
 
 type Runtime struct {
-	cfg      config.Config
-	store    *storage.Store
-	registry *tools.Registry
-	sink     EventSink
+	cfg          config.Config
+	store        *storage.Store
+	registry     *tools.Registry
+	sink         EventSink
+	prepareAgent func(context.Context, prepare.Request) (prepare.PreparedAgent, error)
 }
 
 var assistantCheckpointSeq atomic.Uint64
 
 func New(cfg config.Config, store *storage.Store, registry *tools.Registry, sink EventSink) *Runtime {
-	return &Runtime{cfg: cfg, store: store, registry: registry, sink: sink}
+	return &Runtime{cfg: cfg, store: store, registry: registry, sink: sink, prepareAgent: prepare.Agent}
 }
 
 func (r *Runtime) HandleTurn(ctx context.Context, envelope turnloop.TurnEnvelope) (protocol.RunResult, error) {
@@ -347,7 +348,7 @@ func (r *Runtime) DecidePermission(ctx context.Context, sessionID string, decisi
 		if err != nil {
 			return protocol.RunResult{}, err
 		}
-		prepared, err := prepare.Agent(ctx, prepare.Request{
+		prepared, err := r.prepareAgent(ctx, prepare.Request{
 			Config:         r.cfg,
 			Store:          r.store,
 			Registry:       r.registry,
@@ -490,7 +491,7 @@ func (r *Runtime) runEinoAssistant(ctx context.Context, sessionID, userMessage s
 	if err != nil {
 		return protocol.RunResult{}, err
 	}
-	prepared, err := prepare.Agent(ctx, prepare.Request{
+	prepared, err := r.prepareAgent(ctx, prepare.Request{
 		Config:         r.cfg,
 		Store:          r.store,
 		Registry:       r.registry,
