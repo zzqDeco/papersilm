@@ -81,6 +81,16 @@ Older single-provider configs still load and are migrated in memory to `provider
 
 The runtime is Eino-native: all user input enters the TurnLoop, each turn prepares a ChatModelAgent with workspace and paper tools, and side-effect tools use permission interrupts in confirm mode. `json` and `stream-json` outputs keep the existing protocol shape for GUI and automation clients.
 
+Runtime smoke matrix for contributors:
+
+- `go test ./...`
+- `go vet ./...`
+- `go build -o bin/papersilm ./cmd/papersilm`
+- `papersilm -p "summarize current workspace" --permission-mode auto`
+- `papersilm -p "run command \`pwd\`" --permission-mode confirm --output-format json`
+
+Confirm-mode approvals are tool scoped. Workspace writes and shell commands create `PermissionRequest` payloads, resume through Eino `ResumeWithParams`, and support `accept-once`, `accept-session`, and `reject` decisions. Session-scoped allow rules are stored under the current workspace session, not in global config.
+
 ## Usage
 
 Print mode with one paper:
@@ -180,6 +190,7 @@ This repository currently includes:
 
 - headless `pkg/core` and `pkg/protocol`
 - local session storage and artifact persistence
+- Eino-native TurnLoop, ChatModelAgent runner, checkpoint/resume, and AgentTool workspace tools
 - per-paper workspace hydration with notes, annotations, resources, and similar slots
 - per-paper and comparison-level research skill runs with separate skill artifacts
 - CLI with REPL and `-p/--print` modes
@@ -187,11 +198,9 @@ This repository currently includes:
 - source normalization and inspection
 - AlphaXiv-first lookup for arXiv-compatible sources
 - explicit DAG planning and execution state
-- role-scoped multi-worker execution with parallel ready-node batches
 - task board projection that includes both DAG tasks and inspect-only skill runs
-- worker-composed single-paper distillation
 - digest-driven paper comparison and final synthesis
-- `plan | confirm | auto` permission flow
+- `plan | confirm | auto` permission flow backed by Eino interrupt/resume
 
 ## Release Notes
 
