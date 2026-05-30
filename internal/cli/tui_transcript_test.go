@@ -862,7 +862,7 @@ func TestApprovalContextOwnsKeyboardButPreservesDraft(t *testing.T) {
 		t.Fatalf("expected chat draft to be preserved while confirmation owns focus, got %q", updated.input.Value())
 	}
 	view := updated.renderMainScreen()
-	if !strings.Contains(view, "Permission request active") {
+	if !strings.Contains(view, "permission pending") {
 		t.Fatalf("expected main status to explain active permission request, got:\n%s", view)
 	}
 }
@@ -877,8 +877,8 @@ func TestApprovalShortcutSelection(t *testing.T) {
 	if cmd == nil {
 		t.Fatalf("expected rejection command")
 	}
-	if model.approvalSelection != approvalOptionIndex(model.approvalOptions(), tuiPermissionReject) {
-		t.Fatalf("expected r to select reject, got %d", model.approvalSelection)
+	if model.permissionState.Selection != approvalOptionIndex(model.approvalOptions(), tuiPermissionReject) {
+		t.Fatalf("expected r to select reject, got %d", model.permissionState.Selection)
 	}
 	if !model.busy {
 		t.Fatalf("expected approval action to enter busy state")
@@ -908,14 +908,14 @@ func TestApprovalScopeCyclesBetweenOnceAndSession(t *testing.T) {
 			},
 		},
 	}
-	model.approvalSelection = 0
+	model.permissionState.Selection = 0
 	model.cycleApprovalScope()
 	options := model.approvalOptions()
-	if got := options[model.approvalSelection].Value; got != tuiPermissionAcceptSession {
+	if got := options[model.permissionState.Selection].Value; got != tuiPermissionAcceptSession {
 		t.Fatalf("expected session-scoped accept after scope cycle, got %q", got)
 	}
 	model.cycleApprovalScope()
-	if got := options[model.approvalSelection].Value; got != tuiPermissionAcceptOnce {
+	if got := options[model.permissionState.Selection].Value; got != tuiPermissionAcceptOnce {
 		t.Fatalf("expected once-scoped accept after second scope cycle, got %q", got)
 	}
 }
@@ -926,7 +926,8 @@ func TestApprovalFeedbackModeCapturesYNAsText(t *testing.T) {
 	model := newTestTUIModel()
 	model.snapshot.Meta.State = protocol.SessionStateAwaitingApproval
 	model.snapshot.Meta.ApprovalPending = true
-	model.approvalFeedbackMode = tuiPermissionFeedbackReject
+	model.syncPermissionState()
+	model.permissionState.FeedbackMode = tuiPermissionFeedbackReject
 
 	gotModel, cmd := model.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("n")})
 	if cmd != nil {
@@ -936,8 +937,8 @@ func TestApprovalFeedbackModeCapturesYNAsText(t *testing.T) {
 	if updated.busy {
 		t.Fatalf("feedback text should not trigger rejection")
 	}
-	if updated.approvalFeedback != "n" {
-		t.Fatalf("expected n to be captured as feedback text, got %q", updated.approvalFeedback)
+	if updated.permissionState.Feedback != "n" {
+		t.Fatalf("expected n to be captured as feedback text, got %q", updated.permissionState.Feedback)
 	}
 
 	gotModel, cmd = updated.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("y")})
@@ -945,8 +946,8 @@ func TestApprovalFeedbackModeCapturesYNAsText(t *testing.T) {
 		t.Fatalf("did not expect text feedback to submit a command")
 	}
 	updated = gotModel.(*tuiModel)
-	if updated.approvalFeedback != "ny" {
-		t.Fatalf("expected y to be captured as feedback text, got %q", updated.approvalFeedback)
+	if updated.permissionState.Feedback != "ny" {
+		t.Fatalf("expected y to be captured as feedback text, got %q", updated.permissionState.Feedback)
 	}
 }
 
@@ -956,8 +957,9 @@ func TestApprovalFeedbackEscCancelsAmendWithoutRejecting(t *testing.T) {
 	model := newTestTUIModel()
 	model.snapshot.Meta.State = protocol.SessionStateAwaitingApproval
 	model.snapshot.Meta.ApprovalPending = true
-	model.approvalFeedbackMode = tuiPermissionFeedbackReject
-	model.approvalFeedback = "use tests only"
+	model.syncPermissionState()
+	model.permissionState.FeedbackMode = tuiPermissionFeedbackReject
+	model.permissionState.Feedback = "use tests only"
 
 	gotModel, cmd := model.handleKey(tea.KeyMsg{Type: tea.KeyEsc})
 	if cmd != nil {
@@ -967,8 +969,8 @@ func TestApprovalFeedbackEscCancelsAmendWithoutRejecting(t *testing.T) {
 	if updated.busy {
 		t.Fatalf("esc should only cancel amend feedback, not reject")
 	}
-	if updated.approvalFeedbackMode != "" || updated.approvalFeedback != "" {
-		t.Fatalf("expected feedback mode and text to clear, got mode=%q feedback=%q", updated.approvalFeedbackMode, updated.approvalFeedback)
+	if updated.permissionState.FeedbackMode != "" || updated.permissionState.Feedback != "" {
+		t.Fatalf("expected feedback mode and text to clear, got mode=%q feedback=%q", updated.permissionState.FeedbackMode, updated.permissionState.Feedback)
 	}
 	if !strings.Contains(updated.mainStatus, "Feedback cancelled") {
 		t.Fatalf("expected feedback cancelled status, got %q", updated.mainStatus)
@@ -1057,7 +1059,8 @@ func TestApprovalDetailsPaneShowsEditDiffAndDecisionOptions(t *testing.T) {
 			},
 		},
 	}
-	model.approvalSelection = 1
+	model.syncPermissionState()
+	model.permissionState.Selection = 1
 
 	model.openApprovalExplanation()
 	if !model.paneVisible {
@@ -1118,6 +1121,41 @@ func TestApprovalDetailsPaneRefreshesAfterSelectionChanges(t *testing.T) {
 	model.moveApprovalSelection(1)
 	if !strings.Contains(model.paneBody, "selected: Yes, during this session · path") {
 		t.Fatalf("expected refreshed selected option in pane, got:\n%s", model.paneBody)
+	}
+}
+
+func TestApprovalDetailsPaneClosesWhenPermissionResolves(t *testing.T) {
+	t.Parallel()
+
+	model := newTestTUIModel()
+	model.snapshot.Meta.State = protocol.SessionStateAwaitingApproval
+	model.snapshot.Meta.ApprovalPending = true
+	model.snapshot.Approval = &protocol.ApprovalRequest{
+		ActiveRequestID: "req_cmd",
+		Requests: []protocol.PermissionRequest{
+			{
+				RequestID: "req_cmd",
+				Tool:      string(protocol.NodeKindWorkspaceCommand),
+				Title:     "Run command",
+				Command:   "go test ./...",
+				Options: []protocol.PermissionOption{
+					{Value: tuiPermissionAcceptOnce, Label: "Yes", Scope: "node", Feedback: tuiPermissionFeedbackAccept},
+					{Value: tuiPermissionReject, Label: "No", Scope: "node", Feedback: tuiPermissionFeedbackReject},
+				},
+			},
+		},
+	}
+	model.openApprovalExplanation()
+	if !model.paneVisible {
+		t.Fatalf("expected permission details pane to open")
+	}
+
+	model.snapshot.Meta.State = protocol.SessionStateCompleted
+	model.snapshot.Meta.ApprovalPending = false
+	model.snapshot.Approval = nil
+	model.syncApprovalSelection()
+	if model.paneVisible || model.permissionState.Active {
+		t.Fatalf("expected resolved permission to close pane and reset state, pane=%v state=%+v", model.paneVisible, model.permissionState)
 	}
 }
 

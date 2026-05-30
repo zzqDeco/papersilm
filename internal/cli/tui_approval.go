@@ -23,10 +23,11 @@ const (
 )
 
 func (m *tuiModel) approvalPanelActive() bool {
+	m.syncPermissionState()
 	if m.busy || m.screen != tuiScreenMain {
 		return false
 	}
-	return m.snapshot.Meta.ApprovalPending || m.snapshot.Meta.State == protocol.SessionStateAwaitingApproval || m.richApprovalActive()
+	return m.permissionState.Active
 }
 
 func (m *tuiModel) richApprovalActive() bool {
@@ -34,6 +35,27 @@ func (m *tuiModel) richApprovalActive() bool {
 }
 
 func (m *tuiModel) activePermissionRequest() (protocol.PermissionRequest, bool) {
+	m.syncPermissionState()
+	if m.permissionState.Active {
+		return m.permissionState.Request, m.richApprovalActive()
+	}
+	return m.legacyPermissionRequest(), false
+}
+
+func (m *tuiModel) syncPermissionState() {
+	active := m.snapshot.Meta.ApprovalPending ||
+		m.snapshot.Meta.State == protocol.SessionStateAwaitingApproval ||
+		m.richApprovalActive()
+	request, _ := m.rawActivePermissionRequest()
+	wasActive := m.permissionState.Active
+	m.permissionState.Sync(active, request)
+	if wasActive && !m.permissionState.Active && m.paneVisible && m.paneTitle == tuiPermissionDetailsPaneTitle {
+		m.paneVisible = false
+		m.focus = tuiFocusInput
+	}
+}
+
+func (m *tuiModel) rawActivePermissionRequest() (protocol.PermissionRequest, bool) {
 	if m.snapshot.Approval != nil {
 		activeID := strings.TrimSpace(m.snapshot.Approval.ActiveRequestID)
 		for _, request := range m.snapshot.Approval.Requests {
@@ -69,52 +91,26 @@ func (m *tuiModel) legacyPermissionRequest() protocol.PermissionRequest {
 }
 
 func (m *tuiModel) approvalOptions() []protocol.PermissionOption {
-	request, _ := m.activePermissionRequest()
-	if len(request.Options) > 0 {
-		return request.Options
-	}
-	return m.legacyPermissionRequest().Options
+	m.syncPermissionState()
+	return m.permissionState.Options()
 }
 
 func (m *tuiModel) moveApprovalSelection(delta int) {
-	options := m.approvalOptions()
-	if len(options) == 0 {
-		m.approvalSelection = 0
-		return
-	}
-	next := m.approvalSelection + delta
-	if next < 0 {
-		next = len(options) - 1
-	}
-	if next >= len(options) {
-		next = 0
-	}
-	m.approvalSelection = next
-	m.approvalFeedbackMode = ""
+	m.syncPermissionState()
+	m.permissionState.MoveSelection(delta)
 	m.refreshApprovalExplanationPane()
 }
 
 func (m *tuiModel) syncApprovalSelection() {
-	if !m.approvalPanelActive() {
-		m.approvalSelection = 0
-		m.approvalFeedbackMode = ""
-		m.approvalFeedback = ""
-		return
-	}
-	options := m.approvalOptions()
-	if len(options) == 0 {
-		m.approvalSelection = 0
-		return
-	}
-	m.approvalSelection = clamp(m.approvalSelection, 0, len(options)-1)
+	m.syncPermissionState()
 }
 
 func (m *tuiModel) setApprovalSelectionForKey(key string) {
 	switch key {
 	case "a", "y":
-		m.approvalSelection = approvalOptionIndex(m.approvalOptions(), tuiPermissionAcceptOnce)
+		m.permissionState.SelectValue(tuiPermissionAcceptOnce)
 	case "r", "n", "esc":
-		m.approvalSelection = approvalOptionIndex(m.approvalOptions(), tuiPermissionReject)
+		m.permissionState.SelectValue(tuiPermissionReject)
 	}
 }
 
@@ -128,59 +124,31 @@ func approvalOptionIndex(options []protocol.PermissionOption, value string) int 
 }
 
 func (m *tuiModel) toggleApprovalFeedback() {
-	options := m.approvalOptions()
-	if len(options) == 0 {
-		return
-	}
-	m.approvalSelection = clamp(m.approvalSelection, 0, len(options)-1)
-	option := options[m.approvalSelection]
-	if strings.TrimSpace(option.Feedback) == "" {
+	m.syncPermissionState()
+	if !m.permissionState.ToggleFeedback() {
 		m.setMainStatus("Selected option does not accept feedback")
 		return
 	}
-	if m.approvalFeedbackMode == option.Feedback {
-		m.approvalFeedbackMode = ""
-		return
-	}
-	m.approvalFeedbackMode = option.Feedback
 }
 
 func (m *tuiModel) cycleApprovalScope() {
-	options := m.approvalOptions()
-	if len(options) == 0 {
+	m.syncPermissionState()
+	if m.permissionState.CycleScope(tuiPermissionFeedbackAccept) {
+		m.refreshApprovalExplanationPane()
 		return
-	}
-	current := options[clamp(m.approvalSelection, 0, len(options)-1)]
-	if current.Feedback == tuiPermissionFeedbackAccept {
-		for i := 1; i <= len(options); i++ {
-			next := (m.approvalSelection + i) % len(options)
-			if options[next].Feedback == tuiPermissionFeedbackAccept && options[next].Scope != current.Scope {
-				m.approvalSelection = next
-				m.approvalFeedbackMode = ""
-				m.refreshApprovalExplanationPane()
-				return
-			}
-		}
-	}
-	for i := 1; i <= len(options); i++ {
-		next := (m.approvalSelection + i) % len(options)
-		if options[next].Value == current.Value && options[next].Scope != current.Scope {
-			m.approvalSelection = next
-			m.approvalFeedbackMode = ""
-			m.refreshApprovalExplanationPane()
-			return
-		}
 	}
 	m.setMainStatus("No alternate scope for this decision")
 }
 
 func (m *tuiModel) openApprovalExplanation() {
+	m.permissionState.DetailsOpen = true
 	m.openPane(tuiPermissionDetailsPaneTitle, m.permissionDetailPaneBody())
 }
 
 func (m *tuiModel) toggleApprovalExplanation() {
 	if m.paneVisible && m.paneTitle == tuiPermissionDetailsPaneTitle {
 		m.paneVisible = false
+		m.permissionState.DetailsOpen = false
 		m.focus = tuiFocusInput
 		m.setMainStatus("Permission details closed")
 		return
@@ -201,7 +169,7 @@ func (m *tuiModel) permissionDetailPaneBody() string {
 	options := m.approvalOptions()
 	selected := 0
 	if len(options) > 0 {
-		selected = clamp(m.approvalSelection, 0, len(options)-1)
+		selected = clamp(m.permissionState.Selection, 0, len(options)-1)
 	}
 	return permissionDetailPaneText(request, options, selected)
 }
@@ -420,27 +388,22 @@ func approvalFeedbackPrompt(option protocol.PermissionOption) string {
 }
 
 func (m *tuiModel) handleApprovalFeedbackInput(msg tea.KeyMsg) bool {
-	if !m.approvalKeyboardActive() || m.approvalFeedbackMode == "" {
+	m.syncPermissionState()
+	if !m.approvalKeyboardActive() || m.permissionState.FeedbackMode == "" {
 		return false
 	}
 	switch msg.Type {
 	case tea.KeyRunes:
-		m.approvalFeedback += string(msg.Runes)
+		m.permissionState.AppendText(string(msg.Runes))
 	case tea.KeySpace:
-		m.approvalFeedback += " "
+		m.permissionState.AppendText(" ")
 	case tea.KeyBackspace:
-		if len(m.approvalFeedback) > 0 {
-			runes := []rune(m.approvalFeedback)
-			m.approvalFeedback = string(runes[:len(runes)-1])
-		}
+		m.permissionState.Backspace()
 	case tea.KeyDelete:
 		// Delete behaves like backspace because feedback uses a simple append buffer.
-		if len(m.approvalFeedback) > 0 {
-			runes := []rune(m.approvalFeedback)
-			m.approvalFeedback = string(runes[:len(runes)-1])
-		}
+		m.permissionState.Backspace()
 	case tea.KeyCtrlJ:
-		m.approvalFeedback += "\n"
+		m.permissionState.Newline()
 	default:
 		return false
 	}
@@ -448,17 +411,18 @@ func (m *tuiModel) handleApprovalFeedbackInput(msg tea.KeyMsg) bool {
 }
 
 func (m *tuiModel) cancelApprovalFeedback() {
-	m.approvalFeedbackMode = ""
-	m.approvalFeedback = ""
+	m.permissionState.CancelFeedback()
 	m.setMainStatus("Feedback cancelled")
 }
 
 func (m *tuiModel) shouldCancelApprovalFeedbackKey(msg tea.KeyMsg) bool {
-	return m.approvalKeyboardActive() && m.approvalFeedbackMode != "" && msg.String() == "esc"
+	m.syncPermissionState()
+	return m.approvalKeyboardActive() && m.permissionState.FeedbackMode != "" && msg.String() == "esc"
 }
 
 func (m *tuiModel) shouldCaptureApprovalFeedbackKey(msg tea.KeyMsg) bool {
-	if !m.approvalKeyboardActive() || m.approvalFeedbackMode == "" {
+	m.syncPermissionState()
+	if !m.approvalKeyboardActive() || m.permissionState.FeedbackMode == "" {
 		return false
 	}
 	switch msg.Type {
@@ -475,23 +439,22 @@ func (m *tuiModel) commitApprovalSelection(key string) (tea.Model, tea.Cmd) {
 		m.reflow()
 		return m, nil
 	}
+	m.syncPermissionState()
 	m.setApprovalSelectionForKey(key)
 	options := m.approvalOptions()
 	if len(options) == 0 {
 		return m, nil
 	}
-	m.approvalSelection = clamp(m.approvalSelection, 0, len(options)-1)
-	option := options[m.approvalSelection]
+	m.permissionState.Selection = clamp(m.permissionState.Selection, 0, len(options)-1)
+	option := options[m.permissionState.Selection]
 
 	m.suggestions = nil
 	m.sel = 0
 	m.historyState.active = false
 	m.focus = tuiFocusInput
 	m.busy = true
-	m.approvalFeedbackMode = ""
 
-	feedback := strings.TrimSpace(m.approvalFeedback)
-	m.approvalFeedback = ""
+	feedback := m.permissionState.ConsumeFeedback()
 
 	if !m.richApprovalActive() {
 		switch option.Value {
