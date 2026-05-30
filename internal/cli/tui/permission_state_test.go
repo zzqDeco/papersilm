@@ -38,6 +38,27 @@ func TestPermissionStateResetsOnNewRequest(t *testing.T) {
 	}
 }
 
+func TestPermissionStateResetsWhenPreviewChanges(t *testing.T) {
+	t.Parallel()
+
+	request := testPermissionRequest("req_1")
+	request.Preview = protocol.PermissionPreview{
+		Kind: "diff",
+		Diff: "-old\n+new",
+	}
+	var state PermissionState
+	state.Sync(true, request)
+	state.Selection = 2
+	state.FeedbackMode = "reject"
+	state.Feedback = "do not edit this way"
+
+	request.Preview.Diff = "-old\n+different"
+	state.Sync(true, request)
+	if state.Selection != 0 || state.FeedbackMode != "" || state.Feedback != "" {
+		t.Fatalf("expected preview change to reset stale decision state, got %+v", state)
+	}
+}
+
 func TestPermissionStateMovesFeedbackAndScope(t *testing.T) {
 	t.Parallel()
 

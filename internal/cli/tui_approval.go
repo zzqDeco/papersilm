@@ -47,6 +47,9 @@ func (m *tuiModel) syncPermissionState() {
 		m.snapshot.Meta.State == protocol.SessionStateAwaitingApproval ||
 		m.richApprovalActive()
 	request, _ := m.rawActivePermissionRequest()
+	if active && len(request.Options) == 0 {
+		request.Options = m.legacyPermissionRequest().Options
+	}
 	wasActive := m.permissionState.Active
 	m.permissionState.Sync(active, request)
 	if wasActive && !m.permissionState.Active && m.paneVisible && m.paneTitle == tuiPermissionDetailsPaneTitle {

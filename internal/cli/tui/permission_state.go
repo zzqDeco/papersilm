@@ -2,6 +2,7 @@ package tui
 
 import (
 	"strings"
+	"time"
 
 	"github.com/zzqDeco/papersilm/pkg/protocol"
 )
@@ -150,8 +151,20 @@ func permissionRequestKey(request protocol.PermissionRequest) string {
 		request.NodeID,
 		request.Tool,
 		request.Operation,
+		request.Title,
+		request.Subtitle,
+		request.Question,
+		request.Summary,
 		request.TargetPath,
 		request.Command,
+		request.Preview.Kind,
+		request.Preview.Summary,
+		request.Preview.Diff,
+		request.Preview.OldContentHash,
+		request.Preview.NewContent,
+		request.Preview.CommandPrefix,
+		request.Preview.ConflictMessage,
+		request.CreatedAt.UTC().Format(time.RFC3339Nano),
 	}
 	return strings.Join(parts, "\x00")
 }

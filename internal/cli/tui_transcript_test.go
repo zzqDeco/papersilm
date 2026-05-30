@@ -1159,6 +1159,39 @@ func TestApprovalDetailsPaneClosesWhenPermissionResolves(t *testing.T) {
 	}
 }
 
+func TestOptionlessRichApprovalUsesFallbackChoices(t *testing.T) {
+	t.Parallel()
+
+	model := newTestTUIModel()
+	model.snapshot.Meta.State = protocol.SessionStateAwaitingApproval
+	model.snapshot.Meta.ApprovalPending = true
+	model.snapshot.Approval = &protocol.ApprovalRequest{
+		ActiveRequestID: "req_tool",
+		Requests: []protocol.PermissionRequest{
+			{
+				RequestID: "req_tool",
+				Tool:      "tool",
+				Title:     "Tool permission",
+				Question:  "Do you want to allow this tool use?",
+			},
+		},
+	}
+	options := model.approvalOptions()
+	if len(options) != 3 {
+		t.Fatalf("expected fallback approval options, got %+v", options)
+	}
+	model.setApprovalSelectionForKey("n")
+	if got := options[model.permissionState.Selection].Value; got != tuiPermissionReject {
+		t.Fatalf("expected fallback reject option to be selectable, got %q", got)
+	}
+	rendered := model.renderApprovalStickyPanel()
+	for _, want := range []string{"Yes", "Yes, during this session", "No"} {
+		if !strings.Contains(rendered, want) {
+			t.Fatalf("expected fallback option %q in approval panel, got:\n%s", want, rendered)
+		}
+	}
+}
+
 func TestApprovalDetailsPaneEscClosesPaneBeforeRejecting(t *testing.T) {
 	t.Parallel()
 
