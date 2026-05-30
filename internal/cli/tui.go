@@ -193,9 +193,7 @@ type tuiModel struct {
 	activityCount        int
 	activityStarted      time.Time
 	activityStats        map[string]int
-	approvalSelection    int
-	approvalFeedbackMode string
-	approvalFeedback     string
+	permissionState      tuiui.PermissionState
 
 	paneVisible bool
 	paneTitle   string
@@ -1301,11 +1299,11 @@ func (m *tuiModel) renderApprovalStickyPanel() string {
 		return ""
 	}
 	width := max(20, m.width-2)
-	m.approvalSelection = clamp(m.approvalSelection, 0, len(options)-1)
+	m.permissionState.Selection = clamp(m.permissionState.Selection, 0, len(options)-1)
 
 	rows := make([]tuiui.ListRow, 0, len(options))
 	for i, option := range options {
-		selected := i == m.approvalSelection
+		selected := i == m.permissionState.Selection
 		labelStyle := m.styles.suggestionLabel
 		detailStyle := m.styles.suggestionDetail
 		if selected {
@@ -1325,7 +1323,7 @@ func (m *tuiModel) renderApprovalStickyPanel() string {
 	}
 
 	hint := "Enter yes · N no · Tab amend · Shift+Tab scope · Ctrl+E details"
-	if m.approvalFeedbackMode != "" {
+	if m.permissionState.FeedbackMode != "" {
 		hint = "Enter submit · Ctrl+J newline · Esc cancel"
 	}
 	return tuiui.RenderPermissionDialog(tuiui.PermissionDialog{
@@ -1338,9 +1336,9 @@ func (m *tuiModel) renderApprovalStickyPanel() string {
 		PreviewKind:         request.Preview.Kind,
 		PreviewMaxLines:     4,
 		Rows:                rows,
-		Feedback:            m.approvalFeedback,
-		FeedbackMode:        m.approvalFeedbackMode,
-		FeedbackLabel:       approvalFeedbackPrompt(options[m.approvalSelection]),
+		Feedback:            m.permissionState.Feedback,
+		FeedbackMode:        m.permissionState.FeedbackMode,
+		FeedbackLabel:       approvalFeedbackPrompt(options[m.permissionState.Selection]),
 		FeedbackPlaceholder: "Add optional feedback",
 		Hint:                hint,
 		DividerStyle:        m.styles.paneDivider,
@@ -1385,6 +1383,7 @@ func (m *tuiModel) renderSuggestions() string {
 }
 
 func (m *tuiModel) renderFooter() string {
+	m.syncPermissionState()
 	width := max(20, m.width-2)
 	profile := m.snapshot.Meta.ProviderProfile
 	if profile == "" {
@@ -1414,6 +1413,9 @@ func (m *tuiModel) renderFooter() string {
 		leftParts = append(leftParts, mode)
 	}
 	if m.screen == tuiScreenMain {
+		if m.permissionState.Active && !m.busy {
+			leftParts = append(leftParts, "permission pending")
+		}
 		if m.busy {
 			leftParts = append(leftParts, "working")
 		}
@@ -1758,10 +1760,10 @@ func (m *tuiModel) renderApprovalOptions(item tuiTimelineItem, width int) string
 	if len(options) == 0 {
 		return ""
 	}
-	m.approvalSelection = clamp(m.approvalSelection, 0, len(options)-1)
+	m.permissionState.Selection = clamp(m.permissionState.Selection, 0, len(options)-1)
 	rows := make([]tuiui.ListRow, 0, len(options))
 	for i, option := range options {
-		selected := i == m.approvalSelection
+		selected := i == m.permissionState.Selection
 		labelStyle := m.styles.suggestionLabel
 		detailStyle := m.styles.suggestionDetail
 		if selected {
