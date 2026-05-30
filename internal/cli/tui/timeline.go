@@ -131,7 +131,11 @@ func renderTimelineDecision(item TimelineItem, width, bodyWidth int, styles Time
 		return styles.SuccessShell.Render(header + "\n" + body)
 	case TimelineSubtypeApprovalRejected:
 		if item.Compact {
-			return renderCompactTimelineDecision(styles.RejectionLabel, styles.FooterMuted, decisionTitle("✗", firstTimelineText(item.Title, "Rejected")), item.Body, width)
+			labelStyle := styles.RejectionLabel
+			if strings.TrimSpace(item.Body) == "" {
+				labelStyle = styles.FooterMuted
+			}
+			return renderCompactTimelineDecision(labelStyle, styles.FooterMuted, decisionTitle("✗", firstTimelineText(item.Title, "Rejected")), item.Body, width)
 		}
 		body := styles.Body.Width(bodyWidth).Render(item.Body)
 		header := styles.RejectionLabel.Render(decisionTitle("✗", firstTimelineText(item.Title, "Rejected")))

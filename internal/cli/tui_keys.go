@@ -224,14 +224,14 @@ func (m *tuiModel) keyContexts() []tuiui.KeyContext {
 		return []tuiui.KeyContext{tuiui.ContextHistorySearch, tuiui.ContextGlobal}
 	}
 	contexts := make([]tuiui.KeyContext, 0, 4)
+	if m.approvalKeyboardActive() {
+		contexts = append(contexts, tuiui.ContextConfirmation)
+	}
 	if len(m.suggestions) > 0 {
 		contexts = append(contexts, tuiui.ContextAutocomplete)
 	}
 	if m.paneVisible {
 		contexts = append(contexts, tuiui.ContextPane)
-	}
-	if m.approvalKeyboardActive() {
-		contexts = append(contexts, tuiui.ContextConfirmation)
 	}
 	contexts = append(contexts, tuiui.ContextChat, tuiui.ContextGlobal)
 	return contexts

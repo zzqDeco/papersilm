@@ -6,7 +6,6 @@ const (
 	ContextGlobal           KeyContext = "global"
 	ContextChat             KeyContext = "chat"
 	ContextAutocomplete     KeyContext = "autocomplete"
-	ContextApproval         KeyContext = "approval"
 	ContextConfirmation     KeyContext = "confirmation"
 	ContextPane             KeyContext = "pane"
 	ContextModal            KeyContext = "modal"
@@ -156,23 +155,6 @@ func routeContextKey(context KeyContext, key string) (KeyAction, bool) {
 			return ActionSuggestionNext, true
 		case "tab":
 			return ActionSuggestionAccept, true
-		}
-	case ContextApproval:
-		switch key {
-		case "up", "left":
-			return ActionApprovalPrev, true
-		case "down", "right":
-			return ActionApprovalNext, true
-		case "enter", "a", "y", "r":
-			return ActionApprovalCommit, true
-		case "n", "esc":
-			return ActionApprovalReject, true
-		case "tab":
-			return ActionApprovalFeedback, true
-		case "shift+tab":
-			return ActionApprovalScope, true
-		case "ctrl+e", "i":
-			return ActionApprovalExplain, true
 		}
 	case ContextConfirmation:
 		switch key {
