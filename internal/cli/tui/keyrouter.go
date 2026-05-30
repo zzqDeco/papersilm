@@ -158,9 +158,9 @@ func routeContextKey(context KeyContext, key string) (KeyAction, bool) {
 		}
 	case ContextConfirmation:
 		switch key {
-		case "y", "enter":
+		case "a", "y", "enter":
 			return ActionApprovalCommit, true
-		case "n", "esc":
+		case "r", "n", "esc":
 			return ActionApprovalReject, true
 		case "up", "left":
 			return ActionApprovalPrev, true

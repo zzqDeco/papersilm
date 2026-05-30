@@ -59,6 +59,26 @@ func TestPermissionStateResetsWhenPreviewChanges(t *testing.T) {
 	}
 }
 
+func TestPermissionStateResetsWhenOptionsChange(t *testing.T) {
+	t.Parallel()
+
+	request := testPermissionRequest("req_1")
+	var state PermissionState
+	state.Sync(true, request)
+	state.Selection = 1
+	state.FeedbackMode = "accept"
+	state.Feedback = "continue with tests"
+
+	request.Options = []protocol.PermissionOption{
+		{Value: "reject", Label: "No", Scope: "node", Feedback: "reject"},
+		{Value: "accept-once", Label: "Yes", Scope: "node", Feedback: "accept"},
+	}
+	state.Sync(true, request)
+	if state.Selection != 0 || state.FeedbackMode != "" || state.Feedback != "" {
+		t.Fatalf("expected option changes to reset stale decision state, got %+v", state)
+	}
+}
+
 func TestPermissionStateMovesFeedbackAndScope(t *testing.T) {
 	t.Parallel()
 

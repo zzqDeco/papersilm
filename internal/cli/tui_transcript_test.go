@@ -1220,6 +1220,34 @@ func TestApprovalDetailsPaneEscClosesPaneBeforeRejecting(t *testing.T) {
 	}
 }
 
+func TestApprovalWithGenericPaneEscClosesPaneBeforeRejecting(t *testing.T) {
+	t.Parallel()
+
+	model := newTestTUIModel()
+	model.snapshot.Meta.State = protocol.SessionStateAwaitingApproval
+	model.snapshot.Meta.ApprovalPending = true
+	model.openPane("Workspace", "workspace details")
+
+	contexts := model.keyContexts()
+	if len(contexts) < 2 || contexts[0] != tuiui.ContextPane || contexts[1] != tuiui.ContextConfirmation {
+		t.Fatalf("expected generic pane to handle keys before confirmation, got %+v", contexts)
+	}
+	gotModel, cmd := model.handleKey(tea.KeyMsg{Type: tea.KeyEsc})
+	if cmd != nil {
+		t.Fatalf("did not expect Esc on generic pane to submit a permission decision")
+	}
+	updated := gotModel.(*tuiModel)
+	if updated.busy {
+		t.Fatalf("generic pane Esc should not start rejection")
+	}
+	if updated.paneVisible {
+		t.Fatalf("expected Esc to close generic pane")
+	}
+	if !updated.permissionState.Active {
+		t.Fatalf("permission request should remain active after closing generic pane")
+	}
+}
+
 func TestApprovalExplainTogglesPermissionDetailsPane(t *testing.T) {
 	t.Parallel()
 

@@ -166,5 +166,14 @@ func permissionRequestKey(request protocol.PermissionRequest) string {
 		request.Preview.ConflictMessage,
 		request.CreatedAt.UTC().Format(time.RFC3339Nano),
 	}
+	for _, option := range request.Options {
+		parts = append(parts,
+			option.Value,
+			option.Label,
+			option.Description,
+			option.Scope,
+			option.Feedback,
+		)
+	}
 	return strings.Join(parts, "\x00")
 }

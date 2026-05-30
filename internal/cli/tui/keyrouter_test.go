@@ -76,10 +76,21 @@ func TestRouteKeyGlobalQuitAlwaysAvailable(t *testing.T) {
 func TestRouteKeyConfirmationRejectsLikeClaudeCode(t *testing.T) {
 	t.Parallel()
 
-	for _, key := range []string{"n", "esc"} {
+	for _, key := range []string{"r", "n", "esc"} {
 		action := RouteKey([]KeyContext{ContextConfirmation, ContextChat, ContextGlobal}, key)
 		if action != ActionApprovalReject {
 			t.Fatalf("expected %s to reject approval, got %q", key, action)
+		}
+	}
+}
+
+func TestRouteKeyConfirmationPreservesAllowShortcut(t *testing.T) {
+	t.Parallel()
+
+	for _, key := range []string{"a", "y", "enter"} {
+		action := RouteKey([]KeyContext{ContextConfirmation, ContextChat, ContextGlobal}, key)
+		if action != ActionApprovalCommit {
+			t.Fatalf("expected %s to approve permission, got %q", key, action)
 		}
 	}
 }
