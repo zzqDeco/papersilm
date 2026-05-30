@@ -1525,6 +1525,64 @@ func TestCtrlRStartsPromptHistorySearchWithoutOpeningTranscript(t *testing.T) {
 	}
 }
 
+func TestEditingRecalledPromptHistoryPreservesEditedText(t *testing.T) {
+	t.Parallel()
+
+	model := newTestTUIModel()
+	model.setPromptValue("draft prompt")
+	model.messageStore.Reset([]protocol.TranscriptEntry{
+		{
+			ID:        "hist_1",
+			Type:      protocol.TranscriptEntryUser,
+			Title:     "You",
+			Body:      "summarize workspace",
+			InputMode: protocol.TranscriptInputPrompt,
+		},
+	})
+	model.historyUp()
+	if model.input.Value() != "summarize workspace" {
+		t.Fatalf("expected recalled history, got %q", model.input.Value())
+	}
+
+	gotModel, _ := model.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("!")})
+	updated := gotModel.(*tuiModel)
+	if updated.input.Value() != "summarize workspace!" {
+		t.Fatalf("expected edit to apply to recalled history, got %q", updated.input.Value())
+	}
+	if updated.historyState.active {
+		t.Fatalf("expected edit to leave history navigation")
+	}
+}
+
+func TestSubmittingRecalledPromptHistoryClearsPrompt(t *testing.T) {
+	t.Parallel()
+
+	model := newTestTUIModel()
+	model.setPromptValue("draft prompt")
+	model.messageStore.Reset([]protocol.TranscriptEntry{
+		{
+			ID:        "hist_1",
+			Type:      protocol.TranscriptEntryUser,
+			Title:     "You",
+			Body:      "summarize workspace",
+			InputMode: protocol.TranscriptInputPrompt,
+		},
+	})
+	model.historyUp()
+	if model.input.Value() != "summarize workspace" {
+		t.Fatalf("expected recalled history, got %q", model.input.Value())
+	}
+
+	gotModel, _ := model.submitInput()
+	updated := gotModel.(*tuiModel)
+	if updated.input.Value() != "" {
+		t.Fatalf("expected submitted history prompt to clear, got %q", updated.input.Value())
+	}
+	if updated.historyState.active {
+		t.Fatalf("expected submit to leave history navigation")
+	}
+}
+
 func TestAltPOpensProviderPicker(t *testing.T) {
 	t.Parallel()
 

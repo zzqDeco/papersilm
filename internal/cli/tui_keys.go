@@ -299,7 +299,7 @@ func (m *tuiModel) handleTextInput(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.historyState.active = false
 		m.historyState.index = 0
 		m.syncPromptFromAliases()
-		m.prompt.CancelHistory()
+		m.prompt.AcceptHistoryEdit()
 		m.syncPromptAliases()
 	}
 	m.refreshSuggestions()

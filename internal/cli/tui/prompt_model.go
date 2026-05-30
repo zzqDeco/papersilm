@@ -45,6 +45,16 @@ func (m *PromptModel) SetValue(value string) {
 	m.controller.SetValue(value)
 }
 
+func (m *PromptModel) ResetValue(value string) {
+	m.input.SetValue(value)
+	m.input.CursorEnd()
+	m.controller.ResetValue(value)
+}
+
+func (m *PromptModel) AcceptHistoryEdit() {
+	m.controller.ResetValue(m.input.Value())
+}
+
 func (m PromptModel) Value() string {
 	return m.input.Value()
 }

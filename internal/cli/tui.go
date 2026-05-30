@@ -1162,12 +1162,9 @@ func (m *tuiModel) ensureWelcomeItem() {
 func (m *tuiModel) consumeSubmittedInput() string {
 	m.syncPromptFromAliases()
 	line := strings.TrimSpace(m.prompt.Value())
+	m.prompt.ResetValue("")
 	m.syncPromptAliases()
-	m.setPromptValue("")
 	m.historyState = tuiHistoryState{}
-	m.syncPromptFromAliases()
-	m.prompt.CancelHistory()
-	m.syncPromptAliases()
 	m.focus = tuiFocusInput
 	m.suggestions = nil
 	m.sel = 0

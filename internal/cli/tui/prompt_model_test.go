@@ -49,3 +49,38 @@ func TestPromptModelHistoryRestoresDraft(t *testing.T) {
 		t.Fatalf("expected draft restore, got %q", model.Value())
 	}
 }
+
+func TestPromptModelAcceptHistoryEditPreservesEditedRecall(t *testing.T) {
+	t.Parallel()
+
+	input := textarea.New()
+	model := NewPromptModel(input, NewPromptController())
+	model.SetValue("draft")
+	model.SetHistory([]PromptHistoryEntry{{Value: "history", Mode: PromptModePrompt}})
+	if !model.HistoryPrev() {
+		t.Fatal("expected history recall")
+	}
+	model.SetValue("history edited")
+	model.AcceptHistoryEdit()
+	model.CancelHistory()
+	if model.Value() != "history edited" {
+		t.Fatalf("expected edited history to stay, got %q", model.Value())
+	}
+}
+
+func TestPromptModelResetValueClearsHistoryNavigation(t *testing.T) {
+	t.Parallel()
+
+	input := textarea.New()
+	model := NewPromptModel(input, NewPromptController())
+	model.SetValue("draft")
+	model.SetHistory([]PromptHistoryEntry{{Value: "history", Mode: PromptModePrompt}})
+	if !model.HistoryPrev() {
+		t.Fatal("expected history recall")
+	}
+	model.ResetValue("")
+	model.CancelHistory()
+	if model.Value() != "" {
+		t.Fatalf("expected reset prompt to stay empty, got %q", model.Value())
+	}
+}
