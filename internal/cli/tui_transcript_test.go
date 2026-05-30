@@ -1159,6 +1159,34 @@ func TestApprovalDetailsPaneClosesWhenPermissionResolves(t *testing.T) {
 	}
 }
 
+func TestApprovalDetailsPaneEscClosesPaneBeforeRejecting(t *testing.T) {
+	t.Parallel()
+
+	model := newTestTUIModel()
+	model.snapshot.Meta.State = protocol.SessionStateAwaitingApproval
+	model.snapshot.Meta.ApprovalPending = true
+	model.openApprovalExplanation()
+
+	contexts := model.keyContexts()
+	if len(contexts) < 2 || contexts[0] != tuiui.ContextPane || contexts[1] != tuiui.ContextConfirmation {
+		t.Fatalf("expected permission details pane to handle keys before confirmation, got %+v", contexts)
+	}
+	gotModel, cmd := model.handleKey(tea.KeyMsg{Type: tea.KeyEsc})
+	if cmd != nil {
+		t.Fatalf("did not expect Esc on details pane to submit a permission decision")
+	}
+	updated := gotModel.(*tuiModel)
+	if updated.busy {
+		t.Fatalf("details Esc should not start rejection")
+	}
+	if updated.paneVisible {
+		t.Fatalf("expected Esc to close permission details pane")
+	}
+	if !updated.permissionState.Active {
+		t.Fatalf("permission request should remain active after closing details pane")
+	}
+}
+
 func TestApprovalExplainTogglesPermissionDetailsPane(t *testing.T) {
 	t.Parallel()
 
