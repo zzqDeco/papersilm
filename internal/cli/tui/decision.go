@@ -105,7 +105,31 @@ func shouldRenderPermissionSubtitle(title, subtitle string) bool {
 	if title == "" || subtitle == "" {
 		return false
 	}
-	return title != subtitle && !strings.Contains(title, subtitle)
+	if strings.EqualFold(title, subtitle) {
+		return false
+	}
+	if isGenericPermissionTitle(title) {
+		return true
+	}
+	fields := strings.Fields(title)
+	if len(fields) >= 2 {
+		verb := strings.ToLower(fields[0])
+		remainder := strings.TrimSpace(strings.TrimPrefix(title, fields[0]))
+		switch verb {
+		case "edit", "run", "read", "write", "open", "delete", "create":
+			return !strings.EqualFold(remainder, subtitle)
+		}
+	}
+	return true
+}
+
+func isGenericPermissionTitle(title string) bool {
+	switch strings.ToLower(strings.TrimSpace(title)) {
+	case "edit file", "run command", "read file", "write file", "open file", "delete file", "create file", "permission request":
+		return true
+	default:
+		return false
+	}
 }
 
 func renderPermissionFeedback(dialog PermissionDialog, bodyWidth int) []string {

@@ -113,6 +113,19 @@ func TestRenderPermissionDialogSkipsRedundantSubtitle(t *testing.T) {
 	}
 }
 
+func TestRenderPermissionDialogKeepsGenericTitleTargetSubtitle(t *testing.T) {
+	t.Parallel()
+
+	rendered := RenderPermissionDialog(PermissionDialog{
+		Width:    60,
+		Title:    "Edit file",
+		Subtitle: "file",
+	})
+	if !strings.Contains(rendered, "Edit file · file") {
+		t.Fatalf("expected generic title to keep target subtitle, got %q", rendered)
+	}
+}
+
 func TestRenderPermissionDialogUsesCommandPreviewHierarchy(t *testing.T) {
 	t.Parallel()
 
