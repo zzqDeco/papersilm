@@ -100,7 +100,7 @@ func visualScenarios() []visualScenario {
 	}
 
 	add("idle_empty", coreThemes, nil,
-		[]string{"papersilm", "› Ask about workspace or papers", "? shortcuts"},
+		[]string{"papersilm", "workspace ready", "› Ask about workspace or papers", "? shortcuts"},
 		nil)
 	add("typing_prompt", darkOnly, func(m *tuiModel) {
 		m.setPromptValue("draft-visible-input-row")

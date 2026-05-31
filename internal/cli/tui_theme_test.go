@@ -65,7 +65,7 @@ func TestTUIThemePalettesTrackClaudeCodeTokens(t *testing.T) {
 	if dark.permission != lipgloss.Color("#B1B9F9") {
 		t.Fatalf("unexpected dark permission color: %q", dark.permission)
 	}
-	if dark.userBg != lipgloss.Color("#373737") {
+	if dark.userBg != lipgloss.Color("#303030") {
 		t.Fatalf("unexpected dark user background: %q", dark.userBg)
 	}
 
@@ -82,7 +82,7 @@ func TestTUIThemePalettesTrackClaudeCodeTokens(t *testing.T) {
 	if light.success != lipgloss.Color("#2E8B57") {
 		t.Fatalf("unexpected light success color: %q", light.success)
 	}
-	if light.userBg != lipgloss.Color("#F0F0F0") {
+	if light.userBg != lipgloss.Color("#F5F5F5") {
 		t.Fatalf("unexpected light user background: %q", light.userBg)
 	}
 }

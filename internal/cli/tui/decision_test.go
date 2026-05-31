@@ -97,6 +97,22 @@ func TestRenderPermissionDialogUsesDiffPreviewHierarchy(t *testing.T) {
 	}
 }
 
+func TestRenderPermissionDialogSkipsRedundantSubtitle(t *testing.T) {
+	t.Parallel()
+
+	rendered := RenderPermissionDialog(PermissionDialog{
+		Width:    60,
+		Title:    "Edit README.md",
+		Subtitle: "README.md",
+	})
+	if strings.Contains(rendered, "Edit README.md · README.md") {
+		t.Fatalf("expected redundant target subtitle to be suppressed, got %q", rendered)
+	}
+	if !strings.Contains(rendered, "Edit README.md") {
+		t.Fatalf("expected title to remain visible, got %q", rendered)
+	}
+}
+
 func TestRenderPermissionDialogUsesCommandPreviewHierarchy(t *testing.T) {
 	t.Parallel()
 
@@ -170,7 +186,7 @@ func TestRenderPermissionDialogKeeps80ColumnPromptCompact(t *testing.T) {
 			{Label: "Yes, during this session", Detail: "path README.md · Allow edits to this file for this session", Selected: true, SelectedPrefix: "❯ "},
 			{Label: "No", Detail: "Reject this tool use", SelectedPrefix: "❯ "},
 		},
-		Hint: "Enter select · N no · Tab feedback · Ctrl+E details",
+		Hint: "Enter select · Tab feedback · Ctrl+E details",
 	})
 	if got := strings.Count(rendered, "\n") + 1; got > 12 {
 		t.Fatalf("expected compact 80-column permission prompt, got %d lines:\n%s", got, rendered)

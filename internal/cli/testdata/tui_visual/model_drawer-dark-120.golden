@@ -1,5 +1,5 @@
 papersilm
-  Ask about the current workspace or papers.
+  workspace ready
 
 
 
@@ -20,7 +20,7 @@ papersilm
   ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
   Model Picker
   default · openai · profile default
-  › › gpt
-  › gpt-visual         – current model
-    gpt-visual-large   – larger context
-  ↑/↓ select · Enter switch model · Esc close
+  › gpt
+  › gpt-visual – current model
+    gpt-visual-large – larger context
+  Enter switch model · Esc close

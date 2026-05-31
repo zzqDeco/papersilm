@@ -72,7 +72,9 @@ func RenderPermissionDialog(dialog PermissionDialog) string {
 	}
 	if title := strings.TrimSpace(dialog.Title); title != "" {
 		if subtitle := strings.TrimSpace(dialog.Subtitle); subtitle != "" {
-			title = title + dialog.MutedStyle.Render(" · "+truncateRight(subtitle, max(8, bodyWidth-lipgloss.Width(title)-3)))
+			if shouldRenderPermissionSubtitle(title, subtitle) {
+				title = title + dialog.MutedStyle.Render(" · "+truncateRight(subtitle, max(8, bodyWidth-lipgloss.Width(title)-3)))
+			}
 		}
 		lines = append(lines, "  "+dialog.TitleStyle.Render(truncateRight(title, bodyWidth)))
 	}
@@ -95,6 +97,15 @@ func RenderPermissionDialog(dialog PermissionDialog) string {
 		lines = append(lines, "  "+dialog.MutedStyle.Render(truncateRight(hint, bodyWidth)))
 	}
 	return strings.Join(lines, "\n")
+}
+
+func shouldRenderPermissionSubtitle(title, subtitle string) bool {
+	title = strings.TrimSpace(title)
+	subtitle = strings.TrimSpace(subtitle)
+	if title == "" || subtitle == "" {
+		return false
+	}
+	return title != subtitle && !strings.Contains(title, subtitle)
 }
 
 func renderPermissionFeedback(dialog PermissionDialog, bodyWidth int) []string {

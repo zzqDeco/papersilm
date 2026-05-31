@@ -1,5 +1,5 @@
 papersilm
-  Ask about the current workspace or papers.
+  workspace ready
 
 
 
@@ -11,7 +11,7 @@ papersilm
 
 
 ──────────────────────────────────────────────────────────────────────────────
-  Edit README.md · README.md
+  Edit README.md
   Do you want to make this edit?
   Prepared workspace edit preview
   │ --- README.md
@@ -22,6 +22,6 @@ papersilm
   ❯ Yes – Allow this edit once
     Yes, during this session – path README.md · Allow edits to this file …
     No – Reject this edit
-  Enter select · N no · Tab feedback · Ctrl+E details
+  Enter select · Tab feedback · Ctrl+E details
 › Ask about workspace or papers
-permission pending · 1 approvals · ? shortcuts
+permission pending · 1 approvals

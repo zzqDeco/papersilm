@@ -107,7 +107,7 @@ func renderTimelineActivity(item TimelineItem, width int, styles TimelineStyles)
 func renderTimelineWelcome(item TimelineItem, width int, styles TimelineStyles) string {
 	hint := strings.TrimSpace(item.Body)
 	if hint == "" {
-		hint = "Ask about the current workspace or papers."
+		hint = "workspace ready"
 	}
 	return styles.FooterMuted.Render(truncateRight("  "+hint, width))
 }

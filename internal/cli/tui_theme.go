@@ -112,8 +112,8 @@ func newTUIStyles(setting config.ThemeSetting) tuiStyles {
 func tuiDarkPalette() tuiPalette {
 	return tuiPalette{
 		text:         lipgloss.Color("#FFFFFF"),
-		inactive:     lipgloss.Color("#999999"),
-		subtle:       lipgloss.Color("#505050"),
+		inactive:     lipgloss.Color("#8A8A8A"),
+		subtle:       lipgloss.Color("#5A5A5A"),
 		brand:        lipgloss.Color("#D77757"),
 		suggestion:   lipgloss.Color("#B1B9F9"),
 		success:      lipgloss.Color("#4EBA65"),
@@ -123,8 +123,8 @@ func tuiDarkPalette() tuiPalette {
 		divider:      lipgloss.Color("#505050"),
 		promptBorder: lipgloss.Color("#888888"),
 		surface:      lipgloss.Color("#FFFFFF"),
-		userBg:       lipgloss.Color("#373737"),
-		codeBg:       lipgloss.Color("#252525"),
+		userBg:       lipgloss.Color("#303030"),
+		codeBg:       lipgloss.Color("#242424"),
 		selectionBg:  lipgloss.Color("#264F78"),
 	}
 }
@@ -132,8 +132,8 @@ func tuiDarkPalette() tuiPalette {
 func tuiLightPalette() tuiPalette {
 	return tuiPalette{
 		text:         lipgloss.Color("#000000"),
-		inactive:     lipgloss.Color("#666666"),
-		subtle:       lipgloss.Color("#AFAFAF"),
+		inactive:     lipgloss.Color("#686868"),
+		subtle:       lipgloss.Color("#B8B8B8"),
 		brand:        lipgloss.Color("#D77757"),
 		suggestion:   lipgloss.Color("#5769F7"),
 		success:      lipgloss.Color("#2E8B57"),
@@ -143,7 +143,7 @@ func tuiLightPalette() tuiPalette {
 		divider:      lipgloss.Color("#AFAFAF"),
 		promptBorder: lipgloss.Color("#999999"),
 		surface:      lipgloss.Color("#FFFFFF"),
-		userBg:       lipgloss.Color("#F0F0F0"),
+		userBg:       lipgloss.Color("#F5F5F5"),
 		codeBg:       lipgloss.Color("#F7F7F7"),
 		selectionBg:  lipgloss.Color("#B4D5FF"),
 	}
@@ -183,10 +183,12 @@ func tuiMarkdownStyle(palette tuiPalette) ansi.StyleConfig {
 			LevelIndent: 2,
 		},
 		Item: ansi.StylePrimitive{
-			Color: tuiColorPtr(palette.inactive),
+			Prefix: "- ",
+			Color:  tuiColorPtr(palette.inactive),
 		},
 		Enumeration: ansi.StylePrimitive{
-			Color: tuiColorPtr(palette.inactive),
+			Suffix: ". ",
+			Color:  tuiColorPtr(palette.inactive),
 		},
 		Text: ansi.StylePrimitive{
 			Color: tuiColorPtr(palette.text),
@@ -218,6 +220,7 @@ func tuiMarkdownStyle(palette tuiPalette) ansi.StyleConfig {
 		CodeBlock: ansi.StyleCodeBlock{
 			StyleBlock: ansi.StyleBlock{
 				StylePrimitive: ansi.StylePrimitive{
+					BlockPrefix:     "│ ",
 					Color:           tuiColorPtr(palette.text),
 					BackgroundColor: tuiColorPtr(palette.codeBg),
 				},

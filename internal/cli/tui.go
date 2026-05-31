@@ -1154,7 +1154,7 @@ func (m *tuiModel) ensureWelcomeItem() {
 		Kind:      tuiItemSystem,
 		Subtype:   "welcome",
 		Title:     "Welcome",
-		Body:      "Ask about the current workspace or papers.",
+		Body:      "workspace ready",
 		CreatedAt: time.Now(),
 	})
 }
@@ -1435,7 +1435,7 @@ func (m *tuiModel) renderApprovalStickyPanel() string {
 		})
 	}
 
-	hint := "Enter select · N no · Tab feedback · Ctrl+E details"
+	hint := "Enter select · Tab feedback · Ctrl+E details"
 	if m.permissionState.FeedbackMode != "" {
 		hint = "Enter submit · Ctrl+J newline · Esc cancel"
 	}
@@ -1573,7 +1573,12 @@ func (m *tuiModel) renderFooter() string {
 	m.syncPromptFromAliases()
 	promptValue := m.prompt.Value()
 	m.syncPromptAliases()
-	showHints := m.hintsVisible && m.height >= 18 && strings.TrimSpace(promptValue) == "" && m.focus != tuiFocusHistorySearch
+	showHints := m.hintsVisible &&
+		m.height >= 18 &&
+		strings.TrimSpace(promptValue) == "" &&
+		m.focus != tuiFocusHistorySearch &&
+		m.focus != tuiFocusModal &&
+		!m.permissionState.Active
 	return tuiui.RenderFooterChrome(tuiui.FooterChrome{
 		Width:       width,
 		MetaLeft:    left,
@@ -1641,7 +1646,7 @@ func (m *tuiModel) renderModalBox() string {
 	}
 	width := max(20, m.width)
 	bodyWidth := max(20, width-4)
-	filter := "› " + m.modalIn.View()
+	filter := m.modalIn.View()
 	messageParts := make([]string, 0, 4)
 	if message := strings.TrimSpace(m.modal.Message); message != "" {
 		messageParts = append(messageParts, message)
@@ -1707,13 +1712,13 @@ func (m *tuiModel) renderModalBox() string {
 func modalDrawerHint(kind tuiModalKind) string {
 	switch kind {
 	case tuiModalCommands:
-		return "↑/↓ select · Enter insert · Esc close"
+		return "Enter insert · Esc close"
 	case tuiModalProviders:
-		return "↑/↓ select · Enter choose profile · Esc close"
+		return "Enter choose profile · Esc close"
 	case tuiModalModels:
-		return "↑/↓ select · Enter switch model · Esc close"
+		return "Enter switch model · Esc close"
 	default:
-		return "↑/↓ select · Enter apply · Esc close"
+		return "Enter apply · Esc close"
 	}
 }
 
@@ -1927,7 +1932,7 @@ func (m *tuiModel) renderApprovalOptions(item tuiTimelineItem, width int) string
 		})
 	}
 	lines := tuiui.RenderListRows(rows, width)
-	hint := m.styles.footerMuted.Render("  Enter select · N no · Tab feedback · Ctrl+E details")
+	hint := m.styles.footerMuted.Render("  Enter select · Tab feedback · Ctrl+E details")
 	lines = append(lines, hint)
 	return strings.Join(lines, "\n")
 }
@@ -2252,7 +2257,7 @@ func hiddenActivityBoundary(entry protocol.TranscriptEntry) bool {
 	}
 }
 
-func activitySummary(entry protocol.TranscriptEntry, stats map[string]int, count int, started time.Time) string {
+func activitySummary(entry protocol.TranscriptEntry, stats map[string]int, count int, _ time.Time) string {
 	verb := activityVerb(entry, stats)
 	last := strings.TrimSpace(entry.Body)
 	if last == "" {
@@ -2264,11 +2269,6 @@ func activitySummary(entry protocol.TranscriptEntry, stats map[string]int, count
 		parts = append(parts, statText)
 	} else if count > 1 {
 		parts = append(parts, fmt.Sprintf("%d updates", count))
-	}
-	if !started.IsZero() {
-		if elapsed := time.Since(started).Round(time.Second); elapsed > 0 {
-			parts = append(parts, elapsed.String())
-		}
 	}
 	if detail, ok := activityDisplayDetail(last); ok {
 		failure := isFailureActivityDetail(last)
