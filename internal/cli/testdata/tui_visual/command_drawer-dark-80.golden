@@ -1,0 +1,26 @@
+papersilm
+  Ask about the current workspace or papers.
+
+
+
+
+
+
+
+
+
+
+
+
+
+  ────────────────────────────────────────────────────────────────────────────
+  Command Palette
+  › › Filter commands
+  › /approve         – Approve the current checkpoint
+    /clear           – Add a visual separator
+    /commands        – Open the command palette
+    /exit            – Quit the session
+    /export          – Open artifact export pane
+    /help            – Show slash commands
+    /hints           – Toggle footer shortcut hints
+  ↑/↓ select · Enter insert · Esc close

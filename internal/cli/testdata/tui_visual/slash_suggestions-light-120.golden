@@ -1,0 +1,26 @@
+papersilm
+  Ask about the current workspace or papers.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+  + /help – Show slash commands
+    /commands – Open the command palette
+    /transcript – Open transcript view
+    /model – Open provider/model picker
+    /source add – Attach a source
+› /
+                                                                                                    default/gpt-visual
