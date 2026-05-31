@@ -1435,7 +1435,7 @@ func (m *tuiModel) renderApprovalStickyPanel() string {
 		})
 	}
 
-	hint := "Enter yes · N no · Tab feedback · Ctrl+E details"
+	hint := "Enter select · N no · Tab feedback · Ctrl+E details"
 	if m.permissionState.FeedbackMode != "" {
 		hint = "Enter submit · Ctrl+J newline · Esc cancel"
 	}
@@ -1927,7 +1927,7 @@ func (m *tuiModel) renderApprovalOptions(item tuiTimelineItem, width int) string
 		})
 	}
 	lines := tuiui.RenderListRows(rows, width)
-	hint := m.styles.footerMuted.Render("  Enter yes · N no · Tab feedback · Ctrl+E details")
+	hint := m.styles.footerMuted.Render("  Enter select · N no · Tab feedback · Ctrl+E details")
 	lines = append(lines, hint)
 	return strings.Join(lines, "\n")
 }
