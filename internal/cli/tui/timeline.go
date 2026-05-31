@@ -100,10 +100,7 @@ func renderTimelineActivity(item TimelineItem, width int, styles TimelineStyles)
 	if body == "" {
 		return ""
 	}
-	prefix := "⏺ "
-	if item.Subtype == "activity.grouped" {
-		prefix = "⏺ "
-	}
+	prefix := "· "
 	return styles.ProgressLine.Width(width).Render(truncateRight(prefix+body, width))
 }
 

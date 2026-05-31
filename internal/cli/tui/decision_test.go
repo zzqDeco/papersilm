@@ -170,12 +170,12 @@ func TestRenderPermissionDialogKeeps80ColumnPromptCompact(t *testing.T) {
 			{Label: "Yes, during this session", Detail: "path README.md · Allow edits to this file for this session", Selected: true, SelectedPrefix: "❯ "},
 			{Label: "No", Detail: "Reject this tool use", SelectedPrefix: "❯ "},
 		},
-		Hint: "Enter yes · N no · Tab amend · Shift+Tab scope · Ctrl+E details",
+		Hint: "Enter yes · N no · Tab feedback · Ctrl+E details",
 	})
 	if got := strings.Count(rendered, "\n") + 1; got > 12 {
 		t.Fatalf("expected compact 80-column permission prompt, got %d lines:\n%s", got, rendered)
 	}
-	for _, want := range []string{"│ …", "path README.md", "Tab amend"} {
+	for _, want := range []string{"│ …", "path README.md", "Tab feedback"} {
 		if !strings.Contains(rendered, want) {
 			t.Fatalf("expected %q in compact prompt, got %q", want, rendered)
 		}

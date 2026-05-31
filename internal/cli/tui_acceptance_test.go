@@ -63,12 +63,12 @@ func TestCCTUIAcceptanceMainScreenStaysContentFirst(t *testing.T) {
 	model.reflow()
 
 	view := model.renderMainScreen()
-	for _, forbidden := range []string{"session created", "node execution completed", "Assistant ·", "assistant ·", "You ·", "you ·"} {
+	for _, forbidden := range []string{"session created", "node execution completed", "Assistant ·", "assistant ·", "You ·", "you ·", "⏺", "? for shortcuts"} {
 		if containsString(view, forbidden) {
 			t.Fatalf("expected CC-style main screen to hide %q, got:\n%s", forbidden, view)
 		}
 	}
-	for _, required := range []string{"summarize this workspace", "Running plan", "Workspace summary is ready."} {
+	for _, required := range []string{"summarize this workspace", "· Running plan", "Workspace summary is ready.", "? shortcuts"} {
 		if !containsString(view, required) {
 			t.Fatalf("expected CC-style main screen to show %q, got:\n%s", required, view)
 		}

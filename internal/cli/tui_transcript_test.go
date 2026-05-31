@@ -329,8 +329,11 @@ func TestWorkspaceActivitySummarizesToolsInsteadOfUpdates(t *testing.T) {
 		t.Fatalf("did not expect low-level tool details in grouped activity, got %q", body)
 	}
 	rendered := model.renderTimelineItem(model.items[0], 80)
-	if !containsString(rendered, "⏺ Inspecting workspace") {
+	if !containsString(rendered, "· Inspecting workspace") {
 		t.Fatalf("expected compact activity row, got %q", rendered)
+	}
+	if containsString(rendered, "⏺") {
+		t.Fatalf("expected low-noise activity marker, got %q", rendered)
 	}
 	if containsString(rendered, "Progress") || containsString(rendered, "activity.grouped") {
 		t.Fatalf("did not expect activity to render as log header, got %q", rendered)
@@ -693,7 +696,7 @@ func TestApprovalRequiredRendersDecisionOptions(t *testing.T) {
 	model.reflow()
 
 	view := model.renderMainScreen()
-	for _, want := range []string{"Review plan checkpoint", "❯ Yes", "Yes, during this session", "No", "Tab amend"} {
+	for _, want := range []string{"Review plan checkpoint", "❯ Yes", "Yes, during this session", "No", "Tab feedback"} {
 		if !strings.Contains(view, want) {
 			t.Fatalf("expected approval decision option %q in view:\n%s", want, view)
 		}
@@ -2225,7 +2228,7 @@ func TestHintsCanBeHiddenWithoutRemovingFooterMeta(t *testing.T) {
 
 	model := newTestTUIModel()
 	visible := model.renderFooter()
-	if !containsString(visible, "? for shortcuts") {
+	if !containsString(visible, "? shortcuts") {
 		t.Fatalf("expected compact footer shortcut hint, got %q", visible)
 	}
 	if containsString(visible, "Enter send") || containsString(visible, "Ctrl+K") {
@@ -2234,7 +2237,7 @@ func TestHintsCanBeHiddenWithoutRemovingFooterMeta(t *testing.T) {
 
 	model.setHintsVisible(false)
 	hidden := model.renderFooter()
-	if containsString(hidden, "? for shortcuts") {
+	if containsString(hidden, "? shortcuts") {
 		t.Fatalf("expected hints line to disappear, got %q", hidden)
 	}
 	if containsString(hidden, "confirm") {
@@ -2249,7 +2252,7 @@ func TestFooterHintsSuppressWhileTyping(t *testing.T) {
 	model.input.SetValue("draft prompt")
 
 	footer := model.renderFooter()
-	if containsString(footer, "? for shortcuts") {
+	if containsString(footer, "? shortcuts") {
 		t.Fatalf("expected shortcuts to be suppressed while typing, got %q", footer)
 	}
 	if strings.TrimSpace(footer) != "" {

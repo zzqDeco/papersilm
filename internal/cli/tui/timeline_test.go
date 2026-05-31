@@ -53,8 +53,11 @@ func TestRenderTimelineActivityIsCompact(t *testing.T) {
 		Subtype: "activity.grouped",
 		Body:    "Inspecting workspace · 1 read",
 	}, 80, plainTimelineRenderer())
-	if !strings.Contains(rendered, "⏺ Inspecting workspace") {
+	if !strings.Contains(rendered, "· Inspecting workspace") {
 		t.Fatalf("expected compact activity row, got %q", rendered)
+	}
+	if strings.Contains(rendered, "⏺") {
+		t.Fatalf("expected low-noise activity marker, got %q", rendered)
 	}
 }
 
