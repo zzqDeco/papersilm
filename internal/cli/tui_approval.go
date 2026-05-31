@@ -8,6 +8,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
+	tuiui "github.com/zzqDeco/papersilm/internal/cli/tui"
 	"github.com/zzqDeco/papersilm/pkg/protocol"
 )
 
@@ -51,7 +52,9 @@ func (m *tuiModel) syncPermissionState() {
 		request.Options = m.legacyPermissionRequest().Options
 	}
 	wasActive := m.permissionState.Active
-	m.permissionState.Sync(active, request)
+	m.permissionComponent.State = m.permissionState
+	m.permissionComponent.Sync(active, request)
+	m.syncPermissionAliasesFromComponent()
 	if wasActive && !m.permissionState.Active && m.paneVisible && m.paneTitle == tuiPermissionDetailsPaneTitle {
 		m.paneVisible = false
 		m.focus = tuiFocusInput
@@ -100,7 +103,9 @@ func (m *tuiModel) approvalOptions() []protocol.PermissionOption {
 
 func (m *tuiModel) moveApprovalSelection(delta int) {
 	m.syncPermissionState()
-	m.permissionState.MoveSelection(delta)
+	m.syncPermissionComponentFromAliases()
+	m.permissionComponent.State.MoveSelection(delta)
+	m.syncPermissionAliasesFromComponent()
 	m.refreshApprovalExplanationPane()
 }
 
@@ -128,7 +133,10 @@ func approvalOptionIndex(options []protocol.PermissionOption, value string) int 
 
 func (m *tuiModel) toggleApprovalFeedback() {
 	m.syncPermissionState()
-	if !m.permissionState.ToggleFeedback() {
+	m.syncPermissionComponentFromAliases()
+	ok := m.permissionComponent.State.ToggleFeedback()
+	m.syncPermissionAliasesFromComponent()
+	if !ok {
 		m.setMainStatus("Selected option does not accept feedback")
 		return
 	}
@@ -136,7 +144,10 @@ func (m *tuiModel) toggleApprovalFeedback() {
 
 func (m *tuiModel) cycleApprovalScope() {
 	m.syncPermissionState()
-	if m.permissionState.CycleScope(tuiPermissionFeedbackAccept) {
+	m.syncPermissionComponentFromAliases()
+	ok := m.permissionComponent.State.CycleScope(tuiPermissionFeedbackAccept)
+	m.syncPermissionAliasesFromComponent()
+	if ok {
 		m.refreshApprovalExplanationPane()
 		return
 	}
@@ -395,26 +406,19 @@ func (m *tuiModel) handleApprovalFeedbackInput(msg tea.KeyMsg) bool {
 	if !m.approvalKeyboardActive() || m.permissionState.FeedbackMode == "" {
 		return false
 	}
-	switch msg.Type {
-	case tea.KeyRunes:
-		m.permissionState.AppendText(string(msg.Runes))
-	case tea.KeySpace:
-		m.permissionState.AppendText(" ")
-	case tea.KeyBackspace:
-		m.permissionState.Backspace()
-	case tea.KeyDelete:
-		// Delete behaves like backspace because feedback uses a simple append buffer.
-		m.permissionState.Backspace()
-	case tea.KeyCtrlJ:
-		m.permissionState.Newline()
-	default:
+	m.syncPermissionComponentFromAliases()
+	event := m.permissionComponent.UpdateKey(msg)
+	m.syncPermissionAliasesFromComponent()
+	if event.Kind != tuiui.PermissionEventFeedback {
 		return false
 	}
 	return true
 }
 
 func (m *tuiModel) cancelApprovalFeedback() {
-	m.permissionState.CancelFeedback()
+	m.syncPermissionComponentFromAliases()
+	m.permissionComponent.CancelFeedback()
+	m.syncPermissionAliasesFromComponent()
 	m.setMainStatus("Feedback cancelled")
 }
 

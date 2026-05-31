@@ -64,8 +64,10 @@ func (m *tuiModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.pane, cmd = m.pane.Update(msg)
 		return m, cmd
 	case tuiui.ActionScrollPage:
-		var cmd tea.Cmd
-		m.timeline, cmd = m.timeline.Update(msg)
+		m.syncMessageListFromAliases()
+		updated, cmd := m.messageList.Update(msg)
+		m.messageList = updated
+		m.syncMessageListAliases()
 		m.updateScrollState()
 		return m, cmd
 	case tuiui.ActionJumpBottom:
@@ -260,8 +262,10 @@ func isPromptEditingKey(msg tea.KeyMsg) bool {
 
 func (m *tuiModel) handleTextInput(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if m.modal.Kind != tuiModalNone {
-		var cmd tea.Cmd
-		m.modalIn, cmd = m.modalIn.Update(msg)
+		m.syncDrawerFromModal()
+		updated, cmd := m.drawer.Update(msg)
+		m.drawer = updated
+		m.syncModalFromDrawer()
 		m.refreshModalChoices()
 		m.reflow()
 		return m, cmd
@@ -285,16 +289,20 @@ func (m *tuiModel) handleTextInput(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	}
 
 	var cmd tea.Cmd
-	focusCmd := m.input.Focus()
-	m.input, cmd = m.input.Update(msg)
+	m.syncPromptFromAliases()
+	updated, promptUpdate := m.prompt.Update(msg)
+	m.prompt = updated
+	cmd = promptUpdate.Cmd
+	m.syncPromptAliases()
 	m.focus = tuiFocusInput
 	if m.historyState.active {
 		m.historyState.active = false
 		m.historyState.index = 0
-		m.promptController.CancelHistory()
+		m.syncPromptFromAliases()
+		m.prompt.AcceptHistoryEdit()
+		m.syncPromptAliases()
 	}
-	m.promptController.SetValue(m.input.Value())
 	m.refreshSuggestions()
 	m.reflow()
-	return m, tea.Batch(focusCmd, cmd)
+	return m, cmd
 }

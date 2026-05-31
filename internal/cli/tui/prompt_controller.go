@@ -41,6 +41,15 @@ func (p *PromptController) SetValue(value string) {
 	p.mode = DetectPromptMode(value)
 }
 
+func (p *PromptController) ResetValue(value string) {
+	p.value = value
+	p.draft = value
+	p.mode = DetectPromptMode(value)
+	p.historyMode = p.mode
+	p.historyIdx = 0
+	p.navigating = false
+}
+
 func (p *PromptController) Value() string {
 	return p.value
 }

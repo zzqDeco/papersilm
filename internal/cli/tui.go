@@ -172,6 +172,10 @@ type tuiModel struct {
 	searchIn   textinput.Model
 	historyIn  textinput.Model
 
+	prompt               tuiui.PromptModel
+	messageList          tuiui.MessageListModel
+	drawer               tuiui.DrawerModel
+	permissionComponent  tuiui.PermissionModel
 	items                []tuiTimelineItem
 	messageViewport      tuiui.MessageViewport
 	messageStore         tuiui.MessageStore
@@ -301,6 +305,8 @@ func newTUIModel(ctx context.Context, runtime *tuiRuntimeManager, snapshot proto
 	searchIn.Placeholder = "Search transcript"
 	historyIn := textinput.New()
 	historyIn.Placeholder = "Search prompt history"
+	promptController := tuiui.NewPromptController()
+	timeline := viewport.New(0, 0)
 
 	workspaceRoot, _ := os.Getwd()
 	workspaceRoot = strings.TrimSpace(workspaceRoot)
@@ -321,15 +327,19 @@ func newTUIModel(ctx context.Context, runtime *tuiRuntimeManager, snapshot proto
 		ctx:                  ctx,
 		runtime:              runtime,
 		snapshot:             snapshot,
-		timeline:             viewport.New(0, 0),
+		timeline:             timeline,
 		transcript:           viewport.New(0, 0),
 		pane:                 viewport.New(0, 0),
 		input:                input,
 		modalIn:              modalIn,
 		searchIn:             searchIn,
 		historyIn:            historyIn,
+		prompt:               tuiui.NewPromptModel(input, promptController),
+		messageList:          tuiui.NewMessageListModel(timeline, tuiui.MessageViewport{}),
+		drawer:               tuiui.NewDrawerModel(modalIn),
+		permissionComponent:  tuiui.NewPermissionModel(),
 		messagePipeline:      tuiui.NewMessagePipeline(),
-		promptController:     tuiui.NewPromptController(),
+		promptController:     promptController,
 		screen:               tuiScreenMain,
 		focus:                tuiFocusInput,
 		autoScroll:           true,
@@ -340,6 +350,8 @@ func newTUIModel(ctx context.Context, runtime *tuiRuntimeManager, snapshot proto
 	}
 	model.applyTheme(runtime.cfg.Theme)
 	model.timeline.MouseWheelEnabled = true
+	model.messageList.SetMouseWheelEnabled(true)
+	model.syncMessageListAliases()
 	model.transcript.MouseWheelEnabled = true
 	model.pane.MouseWheelEnabled = true
 	model.refreshSuggestions()
@@ -350,7 +362,10 @@ func newTUIModel(ctx context.Context, runtime *tuiRuntimeManager, snapshot proto
 }
 
 func (m *tuiModel) Init() tea.Cmd {
-	return tea.Batch(m.input.Focus(), waitForTUIEvent(m.runtime.sink.ch))
+	m.syncPromptFromAliases()
+	cmd := m.prompt.Init()
+	m.syncPromptAliases()
+	return tea.Batch(cmd, waitForTUIEvent(m.runtime.sink.ch))
 }
 
 func (m *tuiModel) applyTheme(theme config.ThemeSetting) {
@@ -360,6 +375,60 @@ func (m *tuiModel) applyTheme(theme config.ThemeSetting) {
 	applyTextInputTheme(&m.modalIn, m.styles)
 	applyTextInputTheme(&m.searchIn, m.styles)
 	applyTextInputTheme(&m.historyIn, m.styles)
+	m.syncPromptFromAliases()
+	m.syncPromptAliases()
+}
+
+func (m *tuiModel) syncPromptFromAliases() {
+	m.prompt.SetInput(m.input)
+	m.prompt.SetController(m.promptController)
+}
+
+func (m *tuiModel) syncPromptAliases() {
+	m.input = m.prompt.Input()
+	m.promptController = m.prompt.Controller()
+}
+
+func (m *tuiModel) syncMessageListFromAliases() {
+	m.messageList.SetViewport(m.timeline)
+	m.messageList.SetCache(m.messageViewport)
+	m.messageList.SetAutoScroll(m.autoScroll)
+	m.messageList.SetUnread(m.unread)
+}
+
+func (m *tuiModel) syncMessageListAliases() {
+	m.timeline = m.messageList.Viewport()
+	m.messageViewport = m.messageList.Cache()
+	m.autoScroll = m.messageList.AutoScroll()
+	m.unread = m.messageList.Unread()
+}
+
+func (m *tuiModel) syncPermissionAliasesFromComponent() {
+	m.permissionState = m.permissionComponent.State
+}
+
+func (m *tuiModel) syncPermissionComponentFromAliases() {
+	m.permissionComponent.State = m.permissionState
+}
+
+func (m *tuiModel) syncDrawerFromModal() {
+	m.drawer.Filter = m.modalIn
+	m.drawer.Kind = modalOverlayKind(m.modal.Kind)
+	m.drawer.Title = m.modal.Title
+	m.drawer.Message = m.modal.Message
+	m.drawer.Loading = m.modal.Loading
+	m.drawer.Selection = m.modal.Selection
+	m.drawer.SetChoices(drawerChoicesFromModal(m.modal.All))
+	m.drawer.Visible = drawerChoicesFromModal(m.modal.Visible)
+	if len(m.drawer.Visible) > 0 {
+		m.drawer.Selection = clamp(m.drawer.Selection, 0, len(m.drawer.Visible)-1)
+	}
+}
+
+func (m *tuiModel) syncModalFromDrawer() {
+	m.modalIn = m.drawer.Filter
+	m.modal.Selection = m.drawer.Selection
+	m.modal.Visible = modalChoicesFromDrawer(m.drawer.Visible)
 }
 
 func (m *tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -479,6 +548,7 @@ func (m *tuiModel) View() string {
 }
 
 func (m *tuiModel) renderMainScreen() string {
+	m.syncMessageListFromAliases()
 	bottomParts := []string{}
 	if approval := m.renderApprovalStickyPanel(); strings.TrimSpace(approval) != "" {
 		bottomParts = append(bottomParts, approval)
@@ -494,7 +564,7 @@ func (m *tuiModel) renderMainScreen() string {
 		Width:         m.width,
 		Header:        m.renderHeader(),
 		StickyHeader:  m.renderStickyPromptHeader(),
-		Scrollable:    m.timeline.View(),
+		Scrollable:    m.messageList.View(),
 		Bottom:        bottom,
 		Pane:          m.renderPane(),
 		PromptOverlay: suggestions,
@@ -530,8 +600,10 @@ func (m *tuiModel) handleMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 		m.pane, cmd = m.pane.Update(msg)
 		return m, cmd
 	}
-	var cmd tea.Cmd
-	m.timeline, cmd = m.timeline.Update(msg)
+	m.syncMessageListFromAliases()
+	updated, cmd := m.messageList.Update(msg)
+	m.messageList = updated
+	m.syncMessageListAliases()
 	m.updateScrollState()
 	return m, cmd
 }
@@ -542,7 +614,9 @@ func (m *tuiModel) submitInput() (tea.Model, tea.Cmd) {
 		m.reflow()
 		return m, nil
 	}
-	line := strings.TrimSpace(m.input.Value())
+	m.syncPromptFromAliases()
+	line := strings.TrimSpace(m.prompt.Value())
+	m.syncPromptAliases()
 	if line == "" {
 		return m, nil
 	}
@@ -640,7 +714,10 @@ func (m *tuiModel) commitModalSelection() (tea.Model, tea.Cmd) {
 		m.setPromptValue(choice.Value)
 		m.refreshSuggestions()
 		m.reflow()
-		return m, m.input.Focus()
+		m.syncPromptFromAliases()
+		cmd := m.prompt.Focus()
+		m.syncPromptAliases()
+		return m, cmd
 	case tuiModalProviders:
 		if len(m.modal.Visible) == 0 {
 			return m, nil
@@ -677,7 +754,9 @@ func (m *tuiModel) commitModalSelection() (tea.Model, tea.Cmd) {
 }
 
 func (m *tuiModel) openCommandPalette() tea.Cmd {
-	m.input.Blur()
+	m.syncPromptFromAliases()
+	m.prompt.Blur()
+	m.syncPromptAliases()
 	m.focus = tuiFocusModal
 	m.modal = tuiModalState{
 		Kind:  tuiModalCommands,
@@ -690,7 +769,9 @@ func (m *tuiModel) openCommandPalette() tea.Cmd {
 }
 
 func (m *tuiModel) openProviderModal() tea.Cmd {
-	m.input.Blur()
+	m.syncPromptFromAliases()
+	m.prompt.Blur()
+	m.syncPromptAliases()
 	m.focus = tuiFocusModal
 	choices := make([]tuiChoice, 0, len(m.runtime.profileNames()))
 	for _, name := range m.runtime.profileNames() {
@@ -739,8 +820,11 @@ func (m *tuiModel) closeModal() {
 	m.modal = tuiModalState{}
 	m.modalIn.SetValue("")
 	m.modalIn.Blur()
+	m.drawer.Close()
 	m.focus = tuiFocusInput
-	m.input.Focus()
+	m.syncPromptFromAliases()
+	m.prompt.Focus()
+	m.syncPromptAliases()
 }
 
 func (m *tuiModel) refreshModalChoices() {
@@ -762,23 +846,10 @@ func (m *tuiModel) refreshModalChoices() {
 	default:
 		return
 	}
-	if query == "" {
-		m.modal.Visible = append([]tuiChoice(nil), m.modal.All...)
-	} else {
-		visible := make([]tuiChoice, 0, len(m.modal.All))
-		for _, choice := range m.modal.All {
-			haystack := strings.ToLower(strings.Join([]string{choice.Label, choice.Value, choice.Detail}, " "))
-			if strings.Contains(haystack, strings.ToLower(query)) {
-				visible = append(visible, choice)
-			}
-		}
-		m.modal.Visible = visible
-	}
-	if len(m.modal.Visible) == 0 {
-		m.modal.Selection = 0
-		return
-	}
-	m.modal.Selection = clamp(m.modal.Selection, 0, len(m.modal.Visible)-1)
+	m.syncDrawerFromModal()
+	m.drawer.Filter = m.modalIn
+	m.drawer.Refresh()
+	m.syncModalFromDrawer()
 }
 
 func (m *tuiModel) recordHistory(input string) {
@@ -792,12 +863,15 @@ func (m *tuiModel) recordHistory(input string) {
 }
 
 func (m *tuiModel) refreshSuggestions() {
-	if strings.TrimSpace(m.input.Value()) == "" {
+	m.syncPromptFromAliases()
+	value := m.prompt.Value()
+	m.syncPromptAliases()
+	if strings.TrimSpace(value) == "" {
 		m.suggestions = nil
 		m.sel = 0
 		return
 	}
-	m.suggestions = buildInputSuggestions(m.input.Value(), m.snapshot, m.history)
+	m.suggestions = buildInputSuggestions(value, m.snapshot, m.history)
 	if len(m.suggestions) == 0 {
 		m.sel = 0
 		return
@@ -827,7 +901,9 @@ func (m *tuiModel) openPane(title, body string) {
 func (m *tuiModel) openTranscriptScreen(withSearch bool) tea.Cmd {
 	m.transcriptScreen.Open(m.messageStore.Len())
 	m.screen = tuiScreenTranscript
-	m.input.Blur()
+	m.syncPromptFromAliases()
+	m.prompt.Blur()
+	m.syncPromptAliases()
 	if withSearch {
 		m.focus = tuiFocusTranscriptSearch
 		m.refreshTranscriptSearch()
@@ -844,18 +920,24 @@ func (m *tuiModel) closeTranscriptScreen() {
 	m.transcriptScreen.Close()
 	m.searchIn.SetValue("")
 	m.searchIn.Blur()
-	m.input.Focus()
+	m.syncPromptFromAliases()
+	m.prompt.Focus()
+	m.syncPromptAliases()
 }
 
 func (m *tuiModel) openHistorySearch() tea.Cmd {
-	m.historyDraft = m.input.Value()
+	m.syncPromptFromAliases()
+	m.historyDraft = m.prompt.Value()
+	m.syncPromptAliases()
 	m.historyIn.SetValue("")
 	m.historySelection = 0
 	m.historyStatus = ""
 	m.focus = tuiFocusHistorySearch
 	m.suggestions = nil
 	m.sel = 0
-	m.input.Blur()
+	m.syncPromptFromAliases()
+	m.prompt.Blur()
+	m.syncPromptAliases()
 	m.refreshHistorySearch()
 	return m.historyIn.Focus()
 }
@@ -872,7 +954,10 @@ func (m *tuiModel) closeHistorySearch(restoreDraft bool) tea.Cmd {
 	m.historyDraft = ""
 	m.focus = tuiFocusInput
 	m.refreshSuggestions()
-	return m.input.Focus()
+	m.syncPromptFromAliases()
+	cmd := m.prompt.Focus()
+	m.syncPromptAliases()
+	return cmd
 }
 
 func (m *tuiModel) appendItem(item tuiTimelineItem) {
@@ -884,11 +969,15 @@ func (m *tuiModel) appendItem(item tuiTimelineItem) {
 	}
 	m.items = append(m.items, item)
 	width := max(20, m.width-6)
-	m.timeline.SetContent(m.renderTimelineContent(width))
+	m.renderTimelineContent(width)
 	if m.autoScroll {
 		m.timeline.GotoBottom()
 		m.unread = 0
 	}
+	m.syncMessageListFromAliases()
+	m.messageList.SetAutoScroll(m.autoScroll)
+	m.messageList.SetUnread(m.unread)
+	m.syncMessageListAliases()
 }
 
 func (m *tuiModel) appendTranscript(entry protocol.TranscriptEntry, persist bool) {
@@ -912,6 +1001,9 @@ func (m *tuiModel) appendTranscript(entry protocol.TranscriptEntry, persist bool
 	} else if visible && countUnread && !m.autoScroll {
 		m.unread++
 	}
+	m.syncMessageListFromAliases()
+	m.messageList.SetUnread(m.unread)
+	m.syncMessageListAliases()
 	if m.focus == tuiFocusTranscriptSearch {
 		m.refreshTranscriptSearch()
 	}
@@ -996,15 +1088,20 @@ func (m *tuiModel) replaceLastItem(item tuiTimelineItem) {
 	}
 	m.items[len(m.items)-1] = item
 	width := max(20, m.width-6)
-	if content, ok := m.messageViewport.ReplaceLastByKey(width, item.ID, m.renderTimelineItem(item, width)); ok {
-		m.timeline.SetContent(content)
-	} else {
-		m.timeline.SetContent(m.renderTimelineContent(width))
-	}
+	m.syncMessageListFromAliases()
+	m.messageList.ReplaceLastByKey(width, item.ID, m.renderTimelineItem(item, width), func() string {
+		return m.renderTimelineContent(width)
+	})
+	m.syncMessageListAliases()
 	if m.autoScroll {
 		m.timeline.GotoBottom()
 		m.unread = 0
 	}
+	m.messageList.SetViewport(m.timeline)
+	m.messageList.SetCache(m.messageViewport)
+	m.messageList.SetAutoScroll(m.autoScroll)
+	m.messageList.SetUnread(m.unread)
+	m.syncMessageListAliases()
 }
 
 func (m *tuiModel) appendError(err error) {
@@ -1027,6 +1124,9 @@ func (m *tuiModel) hydrateTranscript(entries []protocol.TranscriptEntry) {
 	m.messageStore.Reset(entries)
 	m.items = m.items[:0]
 	m.messageViewport.Reset()
+	m.syncMessageListFromAliases()
+	m.messageList.ResetCache()
+	m.syncMessageListAliases()
 	m.messagePipeline = tuiui.NewMessagePipeline()
 	m.activityCount = 0
 	m.activityStarted = time.Time{}
@@ -1040,8 +1140,10 @@ func (m *tuiModel) hydrateTranscript(entries []protocol.TranscriptEntry) {
 	if len(m.items) == 0 {
 		m.ensureWelcomeItem()
 	}
-	m.timeline.SetContent(m.renderTimelineContent(max(20, m.width-6)))
-	m.timeline.GotoBottom()
+	m.renderTimelineContent(max(20, m.width-6))
+	m.syncMessageListFromAliases()
+	m.messageList.GotoBottom()
+	m.syncMessageListAliases()
 	m.transcript.SetContent(m.renderTranscriptContent(max(20, m.width-2)))
 	m.transcript.GotoBottom()
 }
@@ -1058,10 +1160,11 @@ func (m *tuiModel) ensureWelcomeItem() {
 }
 
 func (m *tuiModel) consumeSubmittedInput() string {
-	line := strings.TrimSpace(m.input.Value())
-	m.setPromptValue("")
+	m.syncPromptFromAliases()
+	line := strings.TrimSpace(m.prompt.Value())
+	m.prompt.ResetValue("")
+	m.syncPromptAliases()
 	m.historyState = tuiHistoryState{}
-	m.promptController.CancelHistory()
 	m.focus = tuiFocusInput
 	m.suggestions = nil
 	m.sel = 0
@@ -1069,9 +1172,9 @@ func (m *tuiModel) consumeSubmittedInput() string {
 }
 
 func (m *tuiModel) setPromptValue(value string) {
-	m.input.SetValue(value)
-	m.input.CursorEnd()
-	m.promptController.SetValue(value)
+	m.syncPromptFromAliases()
+	m.prompt.SetValue(value)
+	m.syncPromptAliases()
 }
 
 func (m *tuiModel) toggleHints() {
@@ -1137,9 +1240,11 @@ func (m *tuiModel) reflow() {
 	wasPinned := m.timeline.AtBottom()
 	bottomGap := max(0, m.timeline.TotalLineCount()-(m.timeline.YOffset+m.timeline.Height))
 
-	m.input.SetWidth(max(20, width-4))
-	lines := clamp(m.input.LineCount(), 1, 7)
-	m.input.SetHeight(lines)
+	m.syncPromptFromAliases()
+	m.prompt.SetWidth(max(20, width-4))
+	lines := clamp(m.prompt.LineCount(), 1, 7)
+	m.prompt.SetHeight(lines)
+	m.syncPromptAliases()
 	m.modalIn.Width = clamp(width-16, 18, 72)
 	m.searchIn.Width = clamp(width-16, 18, 72)
 	m.historyIn.Width = clamp(width-24, 18, 72)
@@ -1158,15 +1263,16 @@ func (m *tuiModel) reflow() {
 	}
 	timelineHeight := max(6, m.height-headerHeight-inputHeight-footerHeight-approvalHeight)
 
-	m.timeline.Width = max(20, width-2)
-	m.timeline.Height = timelineHeight
-	anchor, hasAnchor := m.messageViewport.AnchorAt(m.timeline.YOffset)
-	m.timeline.SetContent(m.renderTimelineContent(m.timeline.Width))
+	m.syncMessageListFromAliases()
+	m.messageList.SetSize(max(20, width-2), timelineHeight)
+	m.syncMessageListAliases()
+	anchor, hasAnchor := m.messageList.AnchorAt(m.timeline.YOffset)
+	m.renderTimelineContent(m.timeline.Width)
 	if m.autoScroll || wasPinned {
 		m.timeline.GotoBottom()
 		m.unread = 0
 	} else if hasAnchor {
-		if offset, ok := m.messageViewport.OffsetForAnchor(anchor); ok {
+		if offset, ok := m.messageList.OffsetForAnchor(anchor); ok {
 			m.timeline.SetYOffset(offset)
 		} else {
 			m.timeline.SetYOffset(max(0, m.timeline.TotalLineCount()-m.timeline.Height-bottomGap))
@@ -1174,6 +1280,10 @@ func (m *tuiModel) reflow() {
 	} else {
 		m.timeline.SetYOffset(max(0, m.timeline.TotalLineCount()-m.timeline.Height-bottomGap))
 	}
+	m.syncMessageListFromAliases()
+	m.messageList.SetAutoScroll(m.autoScroll)
+	m.messageList.SetUnread(m.unread)
+	m.syncMessageListAliases()
 	transcriptSearchHeight := 0
 	if m.screen == tuiScreenTranscript && m.focus == tuiFocusTranscriptSearch {
 		transcriptSearchHeight = lipgloss.Height(m.renderTranscriptSearchBar(width))
@@ -1274,8 +1384,11 @@ func (m *tuiModel) renderInput() string {
 	if m.approvalPanelActive() {
 		label = "prompt · approval pending"
 	}
-	body := m.input.View()
-	if strings.TrimSpace(m.input.Value()) == "" {
+	m.syncPromptFromAliases()
+	body := m.prompt.View()
+	value := m.prompt.Value()
+	m.syncPromptAliases()
+	if strings.TrimSpace(value) == "" {
 		placeholder := truncateRight(tuiPromptPlaceholder, max(8, width-4))
 		body = m.styles.footerMuted.Render("› " + placeholder)
 	}
@@ -1457,7 +1570,10 @@ func (m *tuiModel) renderFooter() string {
 	if m.screen == tuiScreenMain && m.focus == tuiFocusHistorySearch {
 		searchLine = m.renderHistorySearchFooterLine(width)
 	}
-	showHints := m.hintsVisible && m.height >= 18 && strings.TrimSpace(m.input.Value()) == "" && m.focus != tuiFocusHistorySearch
+	m.syncPromptFromAliases()
+	promptValue := m.prompt.Value()
+	m.syncPromptAliases()
+	showHints := m.hintsVisible && m.height >= 18 && strings.TrimSpace(promptValue) == "" && m.focus != tuiFocusHistorySearch
 	return tuiui.RenderFooterChrome(tuiui.FooterChrome{
 		Width:       width,
 		MetaLeft:    left,
@@ -1612,6 +1728,32 @@ func modalOverlayKind(kind tuiModalKind) tuiui.OverlayKind {
 	}
 }
 
+func drawerChoicesFromModal(choices []tuiChoice) []tuiui.DrawerChoice {
+	out := make([]tuiui.DrawerChoice, 0, len(choices))
+	for _, choice := range choices {
+		out = append(out, tuiui.DrawerChoice{
+			Label:    choice.Label,
+			Value:    choice.Value,
+			Detail:   choice.Detail,
+			Disabled: choice.Disabled,
+		})
+	}
+	return out
+}
+
+func modalChoicesFromDrawer(choices []tuiui.DrawerChoice) []tuiChoice {
+	out := make([]tuiChoice, 0, len(choices))
+	for _, choice := range choices {
+		out = append(out, tuiChoice{
+			Label:    choice.Label,
+			Value:    choice.Value,
+			Detail:   choice.Detail,
+			Disabled: choice.Disabled,
+		})
+	}
+	return out
+}
+
 func (m *tuiModel) renderTranscriptScreen() string {
 	width := max(20, m.width-2)
 	lines := []string{m.renderHeader()}
@@ -1648,9 +1790,12 @@ func (m *tuiModel) renderTimelineContent(width int) string {
 		keys = append(keys, key)
 		versions = append(versions, timelineItemVersion(item))
 	}
-	return m.messageViewport.ContentByKeyVersion(width, keys, versions, func(index int, width int) string {
+	m.syncMessageListFromAliases()
+	content := m.messageList.SetContentByKeyVersion(width, keys, versions, func(index int, width int) string {
 		return m.renderTimelineItem(items[index], width)
 	})
+	m.syncMessageListAliases()
+	return content
 }
 
 func (m *tuiModel) visibleTimelineItems() []tuiTimelineItem {
@@ -1901,26 +2046,28 @@ func (m *tuiModel) jumpToSearchSelection() {
 }
 
 func (m *tuiModel) updateScrollState() {
+	m.syncMessageListFromAliases()
 	m.autoScroll = m.timeline.AtBottom()
 	if m.autoScroll {
 		m.unread = 0
 	}
+	m.messageList.SetAutoScroll(m.autoScroll)
+	m.messageList.SetUnread(m.unread)
+	m.syncMessageListAliases()
 }
 
 func (m *tuiModel) jumpMainToBottom() {
-	m.autoScroll = true
-	m.unread = 0
-	m.timeline.GotoBottom()
+	m.syncMessageListFromAliases()
+	m.messageList.GotoBottom()
+	m.syncMessageListAliases()
 }
 
 func (m *tuiModel) shouldUseHistoryUp() bool {
 	if m.paneVisible || m.screen != tuiScreenMain {
 		return false
 	}
-	if strings.TrimSpace(m.input.Value()) == "" {
-		return true
-	}
-	return m.input.Line() == 0 && m.input.LineInfo().RowOffset == 0
+	m.syncPromptFromAliases()
+	return m.prompt.AtFirstLine()
 }
 
 func (m *tuiModel) shouldUseHistoryDown() bool {
@@ -1930,27 +2077,36 @@ func (m *tuiModel) shouldUseHistoryDown() bool {
 	if m.historyState.active {
 		return true
 	}
-	return m.input.Line() >= max(0, m.input.LineCount()-1)
+	m.syncPromptFromAliases()
+	return m.prompt.AtLastLine()
 }
 
 func (m *tuiModel) historyUp() {
-	mode := transcriptInputModeForValue(m.input.Value())
+	m.syncPromptFromAliases()
+	currentValue := m.prompt.Value()
+	m.syncPromptAliases()
+	mode := transcriptInputModeForValue(currentValue)
 	entries := m.messageStore.History(mode)
 	if len(entries) == 0 {
 		return
 	}
 	if !m.historyState.active || m.historyState.mode != mode {
-		m.promptController.SetValue(m.input.Value())
-		m.promptController.SetHistory(promptHistoryEntries(entries))
+		m.syncPromptFromAliases()
+		m.prompt.SetValue(currentValue)
+		m.prompt.SetHistory(promptHistoryEntries(entries))
+		m.syncPromptAliases()
 		m.historyState = tuiHistoryState{
 			active: true,
-			draft:  m.input.Value(),
+			draft:  currentValue,
 			mode:   mode,
 		}
 	}
-	if !m.promptController.HistoryPrev() {
+	m.syncPromptFromAliases()
+	if !m.prompt.HistoryPrev() {
+		m.syncPromptAliases()
 		return
 	}
+	m.syncPromptAliases()
 	if m.historyState.index < len(entries) {
 		m.historyState.index++
 	}
@@ -1965,12 +2121,17 @@ func (m *tuiModel) historyDown() {
 	entries := m.messageStore.History(mode)
 	if len(entries) == 0 {
 		m.historyState = tuiHistoryState{}
-		m.promptController.CancelHistory()
+		m.syncPromptFromAliases()
+		m.prompt.CancelHistory()
+		m.syncPromptAliases()
 		return
 	}
-	if !m.promptController.HistoryNext() {
+	m.syncPromptFromAliases()
+	if !m.prompt.HistoryNext() {
+		m.syncPromptAliases()
 		return
 	}
+	m.syncPromptAliases()
 	if m.historyState.index > 1 {
 		m.historyState.index--
 		m.setPromptValue(m.promptController.Value())
