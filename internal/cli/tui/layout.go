@@ -104,7 +104,7 @@ func RenderBottomDrawer(drawer Drawer) string {
 		lines = append(lines, drawerTextLines(drawer.Filter, bodyWidth, drawer.BodyStyle)...)
 	}
 	if len(drawer.Rows) > 0 {
-		lines = append(lines, RenderListRows(drawer.Rows, bodyWidth)...)
+		lines = append(lines, RenderCompactListRows(drawer.Rows, bodyWidth)...)
 	} else if strings.TrimSpace(drawer.EmptyMessage) != "" {
 		lines = append(lines, "  "+drawer.MutedStyle.Render(truncateRight(drawer.EmptyMessage, bodyWidth)))
 	}

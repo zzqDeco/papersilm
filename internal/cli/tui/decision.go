@@ -72,7 +72,9 @@ func RenderPermissionDialog(dialog PermissionDialog) string {
 	}
 	if title := strings.TrimSpace(dialog.Title); title != "" {
 		if subtitle := strings.TrimSpace(dialog.Subtitle); subtitle != "" {
-			title = title + dialog.MutedStyle.Render(" · "+truncateRight(subtitle, max(8, bodyWidth-lipgloss.Width(title)-3)))
+			if shouldRenderPermissionSubtitle(title, subtitle) {
+				title = title + dialog.MutedStyle.Render(" · "+truncateRight(subtitle, max(8, bodyWidth-lipgloss.Width(title)-3)))
+			}
 		}
 		lines = append(lines, "  "+dialog.TitleStyle.Render(truncateRight(title, bodyWidth)))
 	}
@@ -95,6 +97,39 @@ func RenderPermissionDialog(dialog PermissionDialog) string {
 		lines = append(lines, "  "+dialog.MutedStyle.Render(truncateRight(hint, bodyWidth)))
 	}
 	return strings.Join(lines, "\n")
+}
+
+func shouldRenderPermissionSubtitle(title, subtitle string) bool {
+	title = strings.TrimSpace(title)
+	subtitle = strings.TrimSpace(subtitle)
+	if title == "" || subtitle == "" {
+		return false
+	}
+	if strings.EqualFold(title, subtitle) {
+		return false
+	}
+	if isGenericPermissionTitle(title) {
+		return true
+	}
+	fields := strings.Fields(title)
+	if len(fields) >= 2 {
+		verb := strings.ToLower(fields[0])
+		remainder := strings.TrimSpace(strings.TrimPrefix(title, fields[0]))
+		switch verb {
+		case "edit", "run", "read", "write", "open", "delete", "create":
+			return !strings.EqualFold(remainder, subtitle)
+		}
+	}
+	return true
+}
+
+func isGenericPermissionTitle(title string) bool {
+	switch strings.ToLower(strings.TrimSpace(title)) {
+	case "edit file", "run command", "read file", "write file", "open file", "delete file", "create file", "permission request":
+		return true
+	default:
+		return false
+	}
 }
 
 func renderPermissionFeedback(dialog PermissionDialog, bodyWidth int) []string {

@@ -1,12 +1,12 @@
 papersilm
-  Ask about the current workspace or papers.
+  workspace ready
 
 ## Workspace Summary
 
-Read README.md
-Found a small CLI
+- Read README.md
+- Found a small CLI
 
-fmt.Println("ok")
+│ fmt.Println("ok")
 
 
 

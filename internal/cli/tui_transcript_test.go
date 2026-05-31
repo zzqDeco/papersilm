@@ -1645,7 +1645,7 @@ func TestModalDrawerUsesUnifiedListRowsAndHint(t *testing.T) {
 	model.modalIn.SetValue("/h")
 
 	drawer := model.renderModalBox()
-	for _, want := range []string{"Command Palette", "› /h", "› /help", " – Show slash commands", "↑/↓ select · Enter insert · Esc close"} {
+	for _, want := range []string{"Command Palette", "› /h", "› /help", " – Show slash commands", "Enter insert · Esc close"} {
 		if !containsString(drawer, want) {
 			t.Fatalf("expected %q in modal drawer, got %q", want, drawer)
 		}
@@ -1819,7 +1819,7 @@ func TestWelcomeIsLowNoiseSingleLine(t *testing.T) {
 	if containsString(rendered, "Workspace") {
 		t.Fatalf("did not expect welcome to repeat workspace metadata, got %q", rendered)
 	}
-	if !containsString(rendered, "Ask about the current workspace") {
+	if !containsString(rendered, "workspace ready") {
 		t.Fatalf("expected low-noise workspace hint, got %q", rendered)
 	}
 }
