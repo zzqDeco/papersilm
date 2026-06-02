@@ -83,7 +83,7 @@ func RenderFullscreenLayout(layout FullscreenLayout) string {
 		if peek <= 0 {
 			peek = 2
 		}
-		base = OverlayBottomWithPeek(base, layout.Modal, width, peek)
+		base = OverlayAboveBottomWithPeek(base, layout.Modal, width, bottomHeight, peek)
 	}
 	return base
 }
@@ -204,6 +204,16 @@ func OverlayBottomWithPeek(base, block string, width int, peek int) string {
 	maxOverlayHeight := max(1, baseHeight-peek)
 	block = ClipBlockHeight(block, maxOverlayHeight)
 	return OverlayAt(base, block, max(peek, baseHeight-lipgloss.Height(block)), lipgloss.Left, width)
+}
+
+func OverlayAboveBottomWithPeek(base, block string, width int, reservedBottom int, peek int) string {
+	baseHeight := len(strings.Split(base, "\n"))
+	reservedBottom = clamp(reservedBottom, 0, max(0, baseHeight-1))
+	overlayRegionHeight := max(1, baseHeight-reservedBottom)
+	peek = clamp(peek, 0, max(0, overlayRegionHeight-1))
+	maxOverlayHeight := max(1, overlayRegionHeight-peek)
+	block = ClipBlockHeight(block, maxOverlayHeight)
+	return OverlayAt(base, block, max(peek, overlayRegionHeight-lipgloss.Height(block)), lipgloss.Left, width)
 }
 
 func ClipBlockHeight(block string, maxHeight int) string {

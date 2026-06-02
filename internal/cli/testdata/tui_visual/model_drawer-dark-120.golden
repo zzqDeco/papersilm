@@ -15,8 +15,6 @@ papersilm
 
 
 
-
-
   ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
   Model Picker
   default · openai · profile default
@@ -24,3 +22,5 @@ papersilm
   › gpt-visual – current model
     gpt-visual-large – larger context
   Enter switch model · Esc close
+› Ask about workspace or papers
+                                                                                                    default/gpt-visual
