@@ -4,8 +4,10 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"runtime"
 	"strconv"
 	"strings"
@@ -35,12 +37,13 @@ type ptyScenario struct {
 }
 
 type ptyRun struct {
-	program *tea.Program
-	master  *fileWriter
-	slave   *fileWriter
-	output  *lockedBuffer
-	width   int
-	height  int
+	program      *tea.Program
+	master       *fileWriter
+	slave        *fileWriter
+	output       *lockedBuffer
+	scenarioName string
+	width        int
+	height       int
 }
 
 type fileWriter struct {
@@ -291,11 +294,12 @@ func runPTYTUI(t *testing.T, scenario ptyScenario) (string, string) {
 	}
 
 	run := &ptyRun{
-		master: &fileWriter{file: master},
-		slave:  &fileWriter{file: slave},
-		output: &lockedBuffer{},
-		width:  scenario.Width,
-		height: scenario.Height,
+		master:       &fileWriter{file: master},
+		slave:        &fileWriter{file: slave},
+		output:       &lockedBuffer{},
+		scenarioName: scenario.Name,
+		width:        scenario.Width,
+		height:       scenario.Height,
 	}
 	t.Cleanup(func() {
 		_ = run.master.Close()
@@ -384,7 +388,17 @@ func waitForPTYFrame(t *testing.T, run *ptyRun, width int, required []string, fo
 		}
 		time.Sleep(20 * time.Millisecond)
 	}
-	t.Fatalf("timed out waiting for PTY frame with %v\n--- raw ---\n%q\n--- frame ---\n%s", required, raw, frame)
+	artifactDir := dumpPTYFailureArtifacts(t, ptyFailureArtifact{
+		ScenarioName: run.scenarioName,
+		Reason:       fmt.Sprintf("timed out waiting for PTY frame with required strings: %v", required),
+		Width:        width,
+		Height:       run.height,
+		Raw:          raw,
+		Frame:        frame,
+		Required:     required,
+		Forbidden:    forbidden,
+	})
+	t.Fatalf("timed out waiting for PTY frame with %v\nPTY failure artifacts: %s\n--- raw ---\n%q\n--- frame ---\n%s", required, artifactDir, raw, frame)
 	return "", ""
 }
 
@@ -408,31 +422,114 @@ func resizePTY(t *testing.T, run *ptyRun, width, height int) {
 func assertPTYSmokeFrame(t *testing.T, scenario ptyScenario, raw string, frame string) {
 	t.Helper()
 	if scenario.RequireAltANSI && !strings.Contains(raw, "\x1b[?1049h") {
-		t.Fatalf("expected alt-screen ANSI in raw output for %s\nraw=%q", scenario.Name, raw)
+		failPTYSmokeFrame(t, scenario, raw, frame, "expected alt-screen ANSI in raw output")
 	}
 	for _, want := range scenario.Required {
 		if !strings.Contains(frame, want) {
-			t.Fatalf("expected %q in PTY frame for %s\n%s", want, scenario.Name, frame)
+			failPTYSmokeFrame(t, scenario, raw, frame, fmt.Sprintf("expected %q in PTY frame", want))
 		}
 	}
 	if scenario.RequirePrompt && !strings.Contains(frame, "›") {
-		t.Fatalf("expected prompt marker in PTY frame for %s\n%s", scenario.Name, frame)
+		failPTYSmokeFrame(t, scenario, raw, frame, "expected prompt marker in PTY frame")
 	}
 	for _, bad := range scenario.Forbidden {
 		if strings.Contains(frame, bad) {
-			t.Fatalf("did not expect %q in PTY frame for %s\n%s", bad, scenario.Name, frame)
+			failPTYSmokeFrame(t, scenario, raw, frame, fmt.Sprintf("did not expect %q in PTY frame", bad))
 		}
 	}
 	if !ptyFrameLinesFit(frame, effectivePTYWidth(scenario)) {
 		for lineNo, line := range strings.Split(frame, "\n") {
 			if got := lipgloss.Width(line); got > effectivePTYWidth(scenario) {
-				t.Fatalf("line %d in %s exceeds width %d: got %d: %q\n%s", lineNo+1, scenario.Name, effectivePTYWidth(scenario), got, line, frame)
+				failPTYSmokeFrame(t, scenario, raw, frame, fmt.Sprintf("line %d exceeds width %d: got %d: %q", lineNo+1, effectivePTYWidth(scenario), got, line))
 			}
 		}
 	}
 	if footer := extractPTYFooter(frame); len(footer) > 2 {
-		t.Fatalf("expected footer <= 2 lines for %s, got %d: %q\n%s", scenario.Name, len(footer), footer, frame)
+		failPTYSmokeFrame(t, scenario, raw, frame, fmt.Sprintf("expected footer <= 2 lines, got %d: %q", len(footer), footer))
 	}
+}
+
+type ptyFailureArtifact struct {
+	ScenarioName string
+	Reason       string
+	Width        int
+	Height       int
+	Raw          string
+	Frame        string
+	Required     []string
+	Forbidden    []string
+}
+
+func failPTYSmokeFrame(t *testing.T, scenario ptyScenario, raw, frame, reason string) {
+	t.Helper()
+	artifactDir := dumpPTYFailureArtifacts(t, ptyFailureArtifact{
+		ScenarioName: scenario.Name,
+		Reason:       reason,
+		Width:        effectivePTYWidth(scenario),
+		Height:       scenario.Height,
+		Raw:          raw,
+		Frame:        frame,
+		Required:     scenario.Required,
+		Forbidden:    scenario.Forbidden,
+	})
+	t.Fatalf("%s for %s\nPTY failure artifacts: %s\n--- frame ---\n%s", reason, scenario.Name, artifactDir, frame)
+}
+
+func dumpPTYFailureArtifacts(t *testing.T, artifact ptyFailureArtifact) string {
+	t.Helper()
+	root := os.Getenv("PAPERSILM_TUI_PTY_ARTIFACT_DIR")
+	var dir string
+	var err error
+	if root == "" {
+		dir, err = os.MkdirTemp("", "papersilm-tui-pty-*")
+	} else {
+		if err = os.MkdirAll(root, 0o755); err != nil {
+			t.Fatalf("create PTY artifact root: %v", err)
+		}
+		dir, err = os.MkdirTemp(root, sanitizePTYArtifactName(artifact.ScenarioName)+"-*")
+	}
+	if err != nil {
+		t.Fatalf("create PTY artifact dir: %v", err)
+	}
+
+	files := map[string]string{
+		"frame.normalized.txt": artifact.Frame,
+		"raw.ansi":             artifact.Raw,
+		"raw.escaped.txt":      fmt.Sprintf("%q\n", artifact.Raw),
+		"screen.rendered.txt":  renderPTYScreen(artifact.Raw, artifact.Width, artifact.Height),
+		"scenario.txt": fmt.Sprintf(
+			"scenario: %s\nreason: %s\nwidth: %d\nheight: %d\nrequired: %s\nforbidden: %s\n",
+			artifact.ScenarioName,
+			artifact.Reason,
+			artifact.Width,
+			artifact.Height,
+			strings.Join(artifact.Required, ", "),
+			strings.Join(artifact.Forbidden, ", "),
+		),
+	}
+	for name, content := range files {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(content), 0o644); err != nil {
+			t.Fatalf("write PTY artifact %s: %v", name, err)
+		}
+	}
+	return dir
+}
+
+func sanitizePTYArtifactName(name string) string {
+	name = strings.TrimSpace(strings.ToLower(name))
+	var builder strings.Builder
+	for _, r := range name {
+		if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') || r == '-' || r == '_' {
+			builder.WriteRune(r)
+			continue
+		}
+		builder.WriteByte('-')
+	}
+	cleaned := strings.Trim(builder.String(), "-")
+	if cleaned == "" {
+		return "scenario"
+	}
+	return cleaned
 }
 
 func visiblePTYFrame(raw string, width, height int) string {
