@@ -89,6 +89,13 @@ Runtime smoke matrix for contributors:
 - `papersilm -p "summarize current workspace" --permission-mode auto`
 - `papersilm -p "run command \`pwd\`" --permission-mode confirm --output-format json`
 
+TUI visual changes should also run `scripts/tui-smoke.sh`. The script covers the
+snapshot-backed visual scenarios, PTY smoke frames, TUI packages, full tests, vet,
+build, and `git diff --check`. When a PTY scenario fails, the test output includes
+an artifact directory containing the raw ANSI capture, normalized frame, rendered
+screen, and scenario metadata. Set `PAPERSILM_TUI_PTY_ARTIFACT_DIR=/path/to/dir`
+to choose where failure artifacts are written.
+
 Confirm-mode approvals are tool scoped. Workspace writes and shell commands create `PermissionRequest` payloads, resume through Eino `ResumeWithParams`, and support `accept-once`, `accept-session`, and `reject` decisions. Session-scoped allow rules are stored under the current workspace session, not in global config.
 
 ## Usage
