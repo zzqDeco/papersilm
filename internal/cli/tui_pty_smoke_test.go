@@ -90,6 +90,25 @@ func TestTUIPTYSmokeScenarios(t *testing.T) {
 	}
 }
 
+func TestPTYScreenBufferHonorsEraseAndWrap(t *testing.T) {
+	t.Parallel()
+
+	lineErased := normalizePTYSnapshot(renderPTYScreen("\x1b[2J\x1b[Habcdef\x1b[1;4H\x1b[K", 8, 3))
+	if strings.Contains(lineErased, "def") || !strings.Contains(lineErased, "abc") {
+		t.Fatalf("expected CSI K to erase from cursor to line end, got %q", lineErased)
+	}
+
+	screenErased := normalizePTYSnapshot(renderPTYScreen("\x1b[2J\x1b[Htop\r\nmiddle\r\nbottom\x1b[2;4H\x1b[J", 8, 4))
+	if strings.Contains(screenErased, "dle") || strings.Contains(screenErased, "bottom") || !strings.Contains(screenErased, "mid") {
+		t.Fatalf("expected CSI J to erase from cursor to screen end, got %q", screenErased)
+	}
+
+	wrapped := normalizePTYSnapshot(renderPTYScreen(strings.Repeat("a", 20)+"bc", 20, 3))
+	if wrapped != strings.Repeat("a", 20)+"\nbc" {
+		t.Fatalf("expected overflow to wrap instead of overwriting the last cell, got %q", wrapped)
+	}
+}
+
 func ptyScenarios() []ptyScenario {
 	const (
 		width  = 80
@@ -435,10 +454,7 @@ func renderPTYScreen(raw string, width, height int) string {
 		ch := raw[i]
 		switch ch {
 		case '\x1b':
-			next, newRow, newCol, clear := consumePTYEscape(raw, i, row, col)
-			if clear {
-				clearPTYScreen(screen)
-			}
+			next, newRow, newCol := consumePTYEscape(raw, i, row, col, screen)
 			row, col = clamp(newRow, 0, height-1), clamp(newCol, 0, width-1)
 			i = next
 		case '\r':
@@ -476,13 +492,22 @@ func renderPTYScreen(raw string, width, height int) string {
 					continue
 				}
 			}
+			if col+cellWidth > width && cellWidth > 1 {
+				if row < height-1 {
+					row++
+					col = 0
+				} else {
+					i += size
+					continue
+				}
+			}
 			screen[row][col] = string(r)
 			for offset := 1; offset < cellWidth && col+offset < width; offset++ {
 				screen[row][col+offset] = ""
 			}
 			col += cellWidth
 			if col >= width {
-				col = width - 1
+				col = width
 			}
 			i += size
 		}
@@ -494,9 +519,9 @@ func renderPTYScreen(raw string, width, height int) string {
 	return strings.Join(lines, "\n")
 }
 
-func consumePTYEscape(raw string, start, row, col int) (int, int, int, bool) {
+func consumePTYEscape(raw string, start, row, col int, screen [][]string) (int, int, int) {
 	if start+1 >= len(raw) {
-		return start + 1, row, col, false
+		return start + 1, row, col
 	}
 	switch raw[start+1] {
 	case '[':
@@ -509,35 +534,56 @@ func consumePTYEscape(raw string, start, row, col int) (int, int, int, bool) {
 			end++
 		}
 		if end >= len(raw) {
-			return len(raw), row, col, false
+			return len(raw), row, col
 		}
 		params := raw[start+2 : end]
 		switch raw[end] {
 		case 'H', 'f':
 			nextRow, nextCol := parsePTYCursor(params)
-			return end + 1, nextRow, nextCol, false
+			return end + 1, nextRow, nextCol
 		case 'J':
-			return end + 1, row, col, strings.Contains(params, "2")
+			erasePTYScreen(screen, row, col, firstCSIParam(params, 0))
+			return end + 1, row, col
 		case 'K':
-			return end + 1, row, col, false
+			erasePTYLine(screen, row, col, firstCSIParam(params, 0))
+			return end + 1, row, col
 		default:
-			return end + 1, row, col, false
+			return end + 1, row, col
 		}
 	case ']':
 		end := start + 2
 		for end < len(raw) {
 			if raw[end] == '\a' {
-				return end + 1, row, col, false
+				return end + 1, row, col
 			}
 			if raw[end] == '\x1b' && end+1 < len(raw) && raw[end+1] == '\\' {
-				return end + 2, row, col, false
+				return end + 2, row, col
 			}
 			end++
 		}
-		return len(raw), row, col, false
+		return len(raw), row, col
 	default:
-		return start + 2, row, col, false
+		return start + 2, row, col
 	}
+}
+
+func firstCSIParam(params string, fallback int) int {
+	params = strings.TrimPrefix(params, "?")
+	if params == "" {
+		return fallback
+	}
+	head := params
+	if idx := strings.Index(head, ";"); idx >= 0 {
+		head = head[:idx]
+	}
+	if head == "" {
+		return fallback
+	}
+	value, err := strconv.Atoi(head)
+	if err != nil {
+		return fallback
+	}
+	return value
 }
 
 func parsePTYCursor(params string) (int, int) {
@@ -565,6 +611,54 @@ func clearPTYScreen(screen [][]string) {
 		for col := range screen[row] {
 			screen[row][col] = " "
 		}
+	}
+}
+
+func erasePTYScreen(screen [][]string, row, col, mode int) {
+	if len(screen) == 0 {
+		return
+	}
+	row = clamp(row, 0, len(screen)-1)
+	col = clamp(col, 0, len(screen[row]))
+	switch mode {
+	case 1:
+		for r := 0; r < row; r++ {
+			clearPTYLineRange(screen[r], 0, len(screen[r]))
+		}
+		clearPTYLineRange(screen[row], 0, min(col+1, len(screen[row])))
+	default:
+		if mode == 2 || mode == 3 {
+			clearPTYScreen(screen)
+			return
+		}
+		clearPTYLineRange(screen[row], col, len(screen[row]))
+		for r := row + 1; r < len(screen); r++ {
+			clearPTYLineRange(screen[r], 0, len(screen[r]))
+		}
+	}
+}
+
+func erasePTYLine(screen [][]string, row, col, mode int) {
+	if len(screen) == 0 {
+		return
+	}
+	row = clamp(row, 0, len(screen)-1)
+	col = clamp(col, 0, len(screen[row]))
+	switch mode {
+	case 1:
+		clearPTYLineRange(screen[row], 0, min(col+1, len(screen[row])))
+	case 2:
+		clearPTYLineRange(screen[row], 0, len(screen[row]))
+	default:
+		clearPTYLineRange(screen[row], col, len(screen[row]))
+	}
+}
+
+func clearPTYLineRange(line []string, start, end int) {
+	start = clamp(start, 0, len(line))
+	end = clamp(end, start, len(line))
+	for col := start; col < end; col++ {
+		line[col] = " "
 	}
 }
 
