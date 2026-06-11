@@ -1678,11 +1678,11 @@ func TestModelDrawerEmptyStateExplainsTypedModelFallback(t *testing.T) {
 	}
 }
 
-func TestHistorySearchAcceptRestoresSelectedPrompt(t *testing.T) {
+func TestHistorySearchEscRestoresDraftPrompt(t *testing.T) {
 	t.Parallel()
 
 	model := newTestTUIModel()
-	model.input.SetValue("draft prompt")
+	model.setPromptValue("draft prompt")
 	model.messageStore.Reset([]protocol.TranscriptEntry{
 		{
 			ID:        "hist_1",
@@ -1701,8 +1701,39 @@ func TestHistorySearchAcceptRestoresSelectedPrompt(t *testing.T) {
 	if updated.focus != tuiFocusInput {
 		t.Fatalf("expected input focus, got %q", updated.focus)
 	}
+	if updated.input.Value() != "draft prompt" {
+		t.Fatalf("expected draft prompt to be restored, got %q", updated.input.Value())
+	}
+}
+
+func TestHistorySearchTabAcceptsSelectedPromptWithoutSubmit(t *testing.T) {
+	t.Parallel()
+
+	model := newTestTUIModel()
+	model.setPromptValue("draft prompt")
+	model.messageStore.Reset([]protocol.TranscriptEntry{
+		{
+			ID:        "hist_1",
+			Type:      protocol.TranscriptEntryUser,
+			Title:     "You",
+			Body:      "summarize workspace",
+			InputMode: protocol.TranscriptInputPrompt,
+		},
+	})
+	model.openHistorySearch()
+	model.historyIn.SetValue("workspace")
+	model.refreshHistorySearch()
+
+	gotModel, _ := model.handleKey(tea.KeyMsg{Type: tea.KeyTab})
+	updated := gotModel.(*tuiModel)
+	if updated.focus != tuiFocusInput {
+		t.Fatalf("expected input focus, got %q", updated.focus)
+	}
 	if updated.input.Value() != "summarize workspace" {
 		t.Fatalf("expected selected history prompt, got %q", updated.input.Value())
+	}
+	if updated.busy {
+		t.Fatalf("did not expect tab to submit selected history")
 	}
 }
 
