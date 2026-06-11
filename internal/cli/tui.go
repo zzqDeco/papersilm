@@ -1545,7 +1545,13 @@ func (m *tuiModel) renderFooter() string {
 		leftParts = append(leftParts, fmt.Sprintf("%d tasks", taskCount))
 	}
 	if approvals > 0 {
-		leftParts = append(leftParts, fmt.Sprintf("%d approvals", approvals))
+		if !(m.screen == tuiScreenMain && m.permissionState.Active && approvals == 1) {
+			label := "approval"
+			if approvals != 1 {
+				label = "approvals"
+			}
+			leftParts = append(leftParts, fmt.Sprintf("%d %s", approvals, label))
+		}
 	}
 	if len(m.snapshot.Sources) > 0 && width >= 90 {
 		leftParts = append(leftParts, fmt.Sprintf("%d sources", len(m.snapshot.Sources)))

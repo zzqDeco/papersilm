@@ -7,10 +7,12 @@ import (
 	"io"
 	"os"
 	"runtime"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
@@ -37,6 +39,8 @@ type ptyRun struct {
 	master  *fileWriter
 	slave   *fileWriter
 	output  *lockedBuffer
+	width   int
+	height  int
 }
 
 type fileWriter struct {
@@ -86,6 +90,25 @@ func TestTUIPTYSmokeScenarios(t *testing.T) {
 	}
 }
 
+func TestPTYScreenBufferHonorsEraseAndWrap(t *testing.T) {
+	t.Parallel()
+
+	lineErased := normalizePTYSnapshot(renderPTYScreen("\x1b[2J\x1b[Habcdef\x1b[1;4H\x1b[K", 8, 3))
+	if strings.Contains(lineErased, "def") || !strings.Contains(lineErased, "abc") {
+		t.Fatalf("expected CSI K to erase from cursor to line end, got %q", lineErased)
+	}
+
+	screenErased := normalizePTYSnapshot(renderPTYScreen("\x1b[2J\x1b[Htop\r\nmiddle\r\nbottom\x1b[2;4H\x1b[J", 8, 4))
+	if strings.Contains(screenErased, "dle") || strings.Contains(screenErased, "bottom") || !strings.Contains(screenErased, "mid") {
+		t.Fatalf("expected CSI J to erase from cursor to screen end, got %q", screenErased)
+	}
+
+	wrapped := normalizePTYSnapshot(renderPTYScreen(strings.Repeat("a", 20)+"bc", 20, 3))
+	if wrapped != strings.Repeat("a", 20)+"\nbc" {
+		t.Fatalf("expected overflow to wrap instead of overwriting the last cell, got %q", wrapped)
+	}
+}
+
 func ptyScenarios() []ptyScenario {
 	const (
 		width  = 80
@@ -132,6 +155,22 @@ func ptyScenarios() []ptyScenario {
 			RequireAltANSI: true,
 		},
 		{
+			Name:   "slash_suggestions_esc",
+			Width:  width,
+			Height: height,
+			Theme:  config.ThemeDark,
+			Script: func(t *testing.T, run *ptyRun) {
+				t.Helper()
+				writePTYInput(t, run, "/")
+				waitForPTYFrame(t, run, width, []string{"/help", "› /"}, baseForbidden)
+				writePTYInput(t, run, "\x1b")
+			},
+			Required:       []string{"papersilm", "workspace ready", "› /"},
+			Forbidden:      append([]string{"/help", "/commands", "/transcript"}, baseForbidden...),
+			RequirePrompt:  true,
+			RequireAltANSI: true,
+		},
+		{
 			Name:   "command_drawer",
 			Width:  width,
 			Height: height,
@@ -141,6 +180,23 @@ func ptyScenarios() []ptyScenario {
 			},
 			Required:       []string{"Command Palette", "/help", "Enter insert · Esc close", "› Ask about workspace or papers"},
 			Forbidden:      baseForbidden,
+			RequirePrompt:  true,
+			RequireAltANSI: true,
+		},
+		{
+			Name:   "command_drawer_esc",
+			Width:  width,
+			Height: height,
+			Theme:  config.ThemeDark,
+			Setup: func(m *tuiModel) {
+				_ = m.openCommandPalette()
+			},
+			Script: func(t *testing.T, run *ptyRun) {
+				t.Helper()
+				writePTYInput(t, run, "\x1b")
+			},
+			Required:       []string{"papersilm", "workspace ready", "› Ask about workspace or papers"},
+			Forbidden:      append([]string{"Command Palette", "Enter insert · Esc close"}, baseForbidden...),
 			RequirePrompt:  true,
 			RequireAltANSI: true,
 		},
@@ -162,6 +218,36 @@ func ptyScenarios() []ptyScenario {
 			Theme:          config.ThemeDark,
 			Setup:          setupVisualPermissionEdit,
 			Required:       []string{"Edit README.md", "Do you want to make this edit?", "Enter select", "› Ask about workspace or papers", "permission pending"},
+			Forbidden:      append([]string{"Enter yes"}, baseForbidden...),
+			RequirePrompt:  true,
+			RequireAltANSI: true,
+		},
+		{
+			Name:   "permission_feedback_tab",
+			Width:  width,
+			Height: height,
+			Theme:  config.ThemeDark,
+			Setup:  setupVisualPermissionEdit,
+			Script: func(t *testing.T, run *ptyRun) {
+				t.Helper()
+				writePTYInput(t, run, "\tuse tests only")
+			},
+			Required:       []string{"Edit README.md", "Yes and tell papersilm what to do next", "use tests only", "Enter submit · Ctrl+J newline · Esc cancel", "› Ask about workspace or papers"},
+			Forbidden:      append([]string{"Enter yes"}, baseForbidden...),
+			RequirePrompt:  true,
+			RequireAltANSI: true,
+		},
+		{
+			Name:   "permission_details_ctrl_e",
+			Width:  width,
+			Height: height,
+			Theme:  config.ThemeDark,
+			Setup:  setupVisualPermissionEdit,
+			Script: func(t *testing.T, run *ptyRun) {
+				t.Helper()
+				writePTYInput(t, run, "\x05")
+			},
+			Required:       []string{"Permission Details", "Context", "README.md", "› Ask about workspace or papers"},
 			Forbidden:      append([]string{"Enter yes"}, baseForbidden...),
 			RequirePrompt:  true,
 			RequireAltANSI: true,
@@ -208,6 +294,8 @@ func runPTYTUI(t *testing.T, scenario ptyScenario) (string, string) {
 		master: &fileWriter{file: master},
 		slave:  &fileWriter{file: slave},
 		output: &lockedBuffer{},
+		width:  scenario.Width,
+		height: scenario.Height,
 	}
 	t.Cleanup(func() {
 		_ = run.master.Close()
@@ -251,7 +339,7 @@ func runPTYTUI(t *testing.T, scenario ptyScenario) (string, string) {
 	}()
 
 	program.Send(tea.WindowSizeMsg{Width: scenario.Width, Height: scenario.Height})
-	waitForPTYFrame(t, run, scenario.Width, []string{"papersilm"})
+	waitForPTYFrame(t, run, scenario.Width, []string{"papersilm"}, nil)
 
 	if scenario.Script != nil {
 		scenario.Script(t, run)
@@ -261,7 +349,7 @@ func runPTYTUI(t *testing.T, scenario ptyScenario) (string, string) {
 	if scenario.RequirePrompt {
 		required = append(required, "›")
 	}
-	raw, frame := waitForPTYFrame(t, run, effectivePTYWidth(scenario), required)
+	raw, frame := waitForPTYFrame(t, run, effectivePTYWidth(scenario), required, scenario.Forbidden)
 
 	program.Kill()
 	_ = run.slave.Close()
@@ -284,14 +372,14 @@ func runPTYTUI(t *testing.T, scenario ptyScenario) (string, string) {
 	return raw, frame
 }
 
-func waitForPTYFrame(t *testing.T, run *ptyRun, width int, required []string) (string, string) {
+func waitForPTYFrame(t *testing.T, run *ptyRun, width int, required []string, forbidden []string) (string, string) {
 	t.Helper()
 	deadline := time.Now().Add(1500 * time.Millisecond)
 	var raw, frame string
 	for time.Now().Before(deadline) {
 		raw = run.output.String()
-		frame = visiblePTYFrame(raw)
-		if ptyFrameContainsAll(frame, required) && ptyFrameLinesFit(frame, width) {
+		frame = visiblePTYFrame(raw, width, run.height)
+		if ptyFrameContainsAll(frame, required) && !ptyFrameContainsAny(frame, forbidden) && ptyFrameLinesFit(frame, width) {
 			return raw, frame
 		}
 		time.Sleep(20 * time.Millisecond)
@@ -312,6 +400,8 @@ func resizePTY(t *testing.T, run *ptyRun, width, height int) {
 	if err := pty.Setsize(run.slave.file, &pty.Winsize{Rows: uint16(height), Cols: uint16(width)}); err != nil {
 		t.Fatalf("resize pty: %v", err)
 	}
+	run.width = width
+	run.height = height
 	run.program.Send(tea.WindowSizeMsg{Width: width, Height: height})
 }
 
@@ -345,12 +435,242 @@ func assertPTYSmokeFrame(t *testing.T, scenario ptyScenario, raw string, frame s
 	}
 }
 
-func visiblePTYFrame(raw string) string {
-	raw = strings.ReplaceAll(raw, "\x1b[?1049h", "\n")
-	if idx := strings.LastIndex(raw, "\x1b[H"); idx >= 0 {
-		raw = raw[idx:]
+func visiblePTYFrame(raw string, width, height int) string {
+	return normalizePTYSnapshot(renderPTYScreen(raw, width, height))
+}
+
+func renderPTYScreen(raw string, width, height int) string {
+	width = max(20, width)
+	height = max(1, height)
+	screen := make([][]string, height)
+	for row := range screen {
+		screen[row] = make([]string, width)
+		for col := range screen[row] {
+			screen[row][col] = " "
+		}
 	}
-	return normalizePTYSnapshot(raw)
+	row, col := 0, 0
+	for i := 0; i < len(raw); {
+		ch := raw[i]
+		switch ch {
+		case '\x1b':
+			next, newRow, newCol := consumePTYEscape(raw, i, row, col, screen)
+			row, col = clamp(newRow, 0, height-1), clamp(newCol, 0, width-1)
+			i = next
+		case '\r':
+			col = 0
+			i++
+		case '\n':
+			if row < height-1 {
+				row++
+			}
+			i++
+		case '\t':
+			nextTab := min(width-1, ((col/4)+1)*4)
+			for col < nextTab {
+				screen[row][col] = " "
+				col++
+			}
+			i++
+		default:
+			r, size := nextPTYRune(raw[i:])
+			if size == 0 {
+				i++
+				continue
+			}
+			if r < 0x20 || r == 0x7f {
+				i += size
+				continue
+			}
+			cellWidth := max(1, lipgloss.Width(string(r)))
+			if col >= width {
+				if row < height-1 {
+					row++
+					col = 0
+				} else {
+					i += size
+					continue
+				}
+			}
+			if col+cellWidth > width && cellWidth > 1 {
+				if row < height-1 {
+					row++
+					col = 0
+				} else {
+					i += size
+					continue
+				}
+			}
+			screen[row][col] = string(r)
+			for offset := 1; offset < cellWidth && col+offset < width; offset++ {
+				screen[row][col+offset] = ""
+			}
+			col += cellWidth
+			if col >= width {
+				col = width
+			}
+			i += size
+		}
+	}
+	lines := make([]string, len(screen))
+	for i, cells := range screen {
+		lines[i] = strings.Join(cells, "")
+	}
+	return strings.Join(lines, "\n")
+}
+
+func consumePTYEscape(raw string, start, row, col int, screen [][]string) (int, int, int) {
+	if start+1 >= len(raw) {
+		return start + 1, row, col
+	}
+	switch raw[start+1] {
+	case '[':
+		end := start + 2
+		for end < len(raw) {
+			final := raw[end]
+			if final >= 0x40 && final <= 0x7e {
+				break
+			}
+			end++
+		}
+		if end >= len(raw) {
+			return len(raw), row, col
+		}
+		params := raw[start+2 : end]
+		switch raw[end] {
+		case 'H', 'f':
+			nextRow, nextCol := parsePTYCursor(params)
+			return end + 1, nextRow, nextCol
+		case 'J':
+			erasePTYScreen(screen, row, col, firstCSIParam(params, 0))
+			return end + 1, row, col
+		case 'K':
+			erasePTYLine(screen, row, col, firstCSIParam(params, 0))
+			return end + 1, row, col
+		default:
+			return end + 1, row, col
+		}
+	case ']':
+		end := start + 2
+		for end < len(raw) {
+			if raw[end] == '\a' {
+				return end + 1, row, col
+			}
+			if raw[end] == '\x1b' && end+1 < len(raw) && raw[end+1] == '\\' {
+				return end + 2, row, col
+			}
+			end++
+		}
+		return len(raw), row, col
+	default:
+		return start + 2, row, col
+	}
+}
+
+func firstCSIParam(params string, fallback int) int {
+	params = strings.TrimPrefix(params, "?")
+	if params == "" {
+		return fallback
+	}
+	head := params
+	if idx := strings.Index(head, ";"); idx >= 0 {
+		head = head[:idx]
+	}
+	if head == "" {
+		return fallback
+	}
+	value, err := strconv.Atoi(head)
+	if err != nil {
+		return fallback
+	}
+	return value
+}
+
+func parsePTYCursor(params string) (int, int) {
+	params = strings.TrimPrefix(params, "?")
+	if params == "" {
+		return 0, 0
+	}
+	parts := strings.Split(params, ";")
+	row, col := 1, 1
+	if len(parts) > 0 && parts[0] != "" {
+		if value, err := strconv.Atoi(parts[0]); err == nil && value > 0 {
+			row = value
+		}
+	}
+	if len(parts) > 1 && parts[1] != "" {
+		if value, err := strconv.Atoi(parts[1]); err == nil && value > 0 {
+			col = value
+		}
+	}
+	return row - 1, col - 1
+}
+
+func clearPTYScreen(screen [][]string) {
+	for row := range screen {
+		for col := range screen[row] {
+			screen[row][col] = " "
+		}
+	}
+}
+
+func erasePTYScreen(screen [][]string, row, col, mode int) {
+	if len(screen) == 0 {
+		return
+	}
+	row = clamp(row, 0, len(screen)-1)
+	col = clamp(col, 0, len(screen[row]))
+	switch mode {
+	case 1:
+		for r := 0; r < row; r++ {
+			clearPTYLineRange(screen[r], 0, len(screen[r]))
+		}
+		clearPTYLineRange(screen[row], 0, min(col+1, len(screen[row])))
+	default:
+		if mode == 2 || mode == 3 {
+			clearPTYScreen(screen)
+			return
+		}
+		clearPTYLineRange(screen[row], col, len(screen[row]))
+		for r := row + 1; r < len(screen); r++ {
+			clearPTYLineRange(screen[r], 0, len(screen[r]))
+		}
+	}
+}
+
+func erasePTYLine(screen [][]string, row, col, mode int) {
+	if len(screen) == 0 {
+		return
+	}
+	row = clamp(row, 0, len(screen)-1)
+	col = clamp(col, 0, len(screen[row]))
+	switch mode {
+	case 1:
+		clearPTYLineRange(screen[row], 0, min(col+1, len(screen[row])))
+	case 2:
+		clearPTYLineRange(screen[row], 0, len(screen[row]))
+	default:
+		clearPTYLineRange(screen[row], col, len(screen[row]))
+	}
+}
+
+func clearPTYLineRange(line []string, start, end int) {
+	start = clamp(start, 0, len(line))
+	end = clamp(end, start, len(line))
+	for col := start; col < end; col++ {
+		line[col] = " "
+	}
+}
+
+func nextPTYRune(value string) (rune, int) {
+	if value == "" {
+		return 0, 0
+	}
+	r, size := utf8.DecodeRuneInString(value)
+	if r == utf8.RuneError && size == 0 {
+		return 0, 0
+	}
+	return r, size
 }
 
 func normalizePTYSnapshot(view string) string {
@@ -387,6 +707,15 @@ func ptyFrameContainsAll(frame string, required []string) bool {
 		}
 	}
 	return true
+}
+
+func ptyFrameContainsAny(frame string, forbidden []string) bool {
+	for _, bad := range forbidden {
+		if strings.Contains(frame, bad) {
+			return true
+		}
+	}
+	return false
 }
 
 func ptyFrameLinesFit(frame string, width int) bool {
