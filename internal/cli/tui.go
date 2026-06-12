@@ -2944,7 +2944,14 @@ func runPromptCmd(ctx context.Context, runtime *tuiRuntimeManager, snapshot prot
 	return func() tea.Msg {
 		before := snapshot
 		after := snapshot
-		text, err := executePromptText(ctx, runtime.svc, &after, prompt)
+		ops := runtime.runtimeOps()
+		if ops == nil {
+			return tuiExecDoneMsg{Input: prompt, Before: before, After: after, Err: fmt.Errorf("runtime is not available")}
+		}
+		next, text, err := ops.ExecutePrompt(ctx, snapshot, prompt)
+		if err == nil {
+			after = next
+		}
 		return tuiExecDoneMsg{
 			Input:  prompt,
 			Before: before,

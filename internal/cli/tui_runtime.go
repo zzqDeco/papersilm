@@ -45,7 +45,32 @@ type tuiRuntimeManager struct {
 	cfg   config.Config
 	store *storage.Store
 	svc   *core.Service
+	ops   tuiRuntimeOps
 	sink  *tuiEventSink
+}
+
+type tuiRuntimeOps interface {
+	ExecutePrompt(ctx context.Context, snapshot protocol.SessionSnapshot, prompt string) (protocol.SessionSnapshot, string, error)
+	DecidePermission(ctx context.Context, snapshot protocol.SessionSnapshot, decision protocol.PermissionDecision) (protocol.SessionSnapshot, string, error)
+}
+
+type serviceTUIRuntimeOps struct {
+	svc *core.Service
+}
+
+func (o serviceTUIRuntimeOps) ExecutePrompt(ctx context.Context, snapshot protocol.SessionSnapshot, prompt string) (protocol.SessionSnapshot, string, error) {
+	after := snapshot
+	text, err := executePromptText(ctx, o.svc, &after, prompt)
+	return after, text, err
+}
+
+func (o serviceTUIRuntimeOps) DecidePermission(ctx context.Context, snapshot protocol.SessionSnapshot, decision protocol.PermissionDecision) (protocol.SessionSnapshot, string, error) {
+	result, err := o.svc.DecidePermission(ctx, snapshot.Meta.SessionID, decision)
+	after := snapshot
+	if err == nil {
+		after = result.Session
+	}
+	return after, fmt.Sprintf("Permission decision: %s", decision.Value), err
 }
 
 func newTUIRuntimeManager(ctx context.Context, opts TUIOptions) (*tuiRuntimeManager, protocol.SessionSnapshot, error) {
@@ -63,6 +88,7 @@ func newTUIRuntimeManager(ctx context.Context, opts TUIOptions) (*tuiRuntimeMana
 		cfg:   cfg,
 		store: store,
 		svc:   svc,
+		ops:   serviceTUIRuntimeOps{svc: svc},
 		sink:  sink,
 	}
 	if changed, err := manager.ensureSessionRuntimeMeta(&snapshot); err != nil {
@@ -145,12 +171,26 @@ func (r *tuiRuntimeManager) switchProviderModel(snapshot *protocol.SessionSnapsh
 	r.cfg = cfg
 	r.store = store
 	r.svc = svc
+	r.ops = serviceTUIRuntimeOps{svc: svc}
 
 	fresh, err := r.store.Snapshot(snapshot.Meta.SessionID)
 	if err != nil {
 		return err
 	}
 	*snapshot = fresh
+	return nil
+}
+
+func (r *tuiRuntimeManager) runtimeOps() tuiRuntimeOps {
+	if r == nil {
+		return nil
+	}
+	if r.ops != nil {
+		return r.ops
+	}
+	if r.svc != nil {
+		return serviceTUIRuntimeOps{svc: r.svc}
+	}
 	return nil
 }
 
