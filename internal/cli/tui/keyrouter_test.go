@@ -94,3 +94,20 @@ func TestRouteKeyConfirmationPreservesAllowShortcut(t *testing.T) {
 		}
 	}
 }
+
+func TestRouteKeyHistorySearchUsesEscAsCancel(t *testing.T) {
+	t.Parallel()
+
+	for _, key := range []string{"esc", "ctrl+c"} {
+		action := RouteKey([]KeyContext{ContextHistorySearch, ContextChat, ContextGlobal}, key)
+		if action != ActionHistorySearchCancel {
+			t.Fatalf("expected %s to cancel history search, got %q", key, action)
+		}
+	}
+	if action := RouteKey([]KeyContext{ContextHistorySearch, ContextChat, ContextGlobal}, "tab"); action != ActionHistorySearchClose {
+		t.Fatalf("expected tab to accept history without submit, got %q", action)
+	}
+	if action := RouteKey([]KeyContext{ContextHistorySearch, ContextChat, ContextGlobal}, "enter"); action != ActionHistorySearchAccept {
+		t.Fatalf("expected enter to accept and submit history, got %q", action)
+	}
+}

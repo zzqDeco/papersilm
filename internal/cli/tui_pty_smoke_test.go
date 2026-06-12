@@ -21,6 +21,7 @@ import (
 	"github.com/creack/pty"
 
 	"github.com/zzqDeco/papersilm/internal/config"
+	"github.com/zzqDeco/papersilm/pkg/protocol"
 )
 
 type ptyScenario struct {
@@ -204,6 +205,25 @@ func ptyScenarios() []ptyScenario {
 			RequireAltANSI: true,
 		},
 		{
+			Name:   "command_drawer_enter_inserts",
+			Width:  width,
+			Height: height,
+			Theme:  config.ThemeDark,
+			Setup: func(m *tuiModel) {
+				_ = m.openCommandPalette()
+			},
+			Script: func(t *testing.T, run *ptyRun) {
+				t.Helper()
+				writePTYInput(t, run, "help")
+				waitForPTYFrame(t, run, width, []string{"Command Palette", "/help"}, baseForbidden)
+				writePTYInput(t, run, "\r")
+			},
+			Required:       []string{"papersilm", "› /help"},
+			Forbidden:      append([]string{"Command Palette", "Enter insert · Esc close"}, baseForbidden...),
+			RequirePrompt:  true,
+			RequireAltANSI: true,
+		},
+		{
 			Name:           "model_drawer",
 			Width:          width,
 			Height:         height,
@@ -211,6 +231,55 @@ func ptyScenarios() []ptyScenario {
 			Setup:          setupVisualModelDrawer,
 			Required:       []string{"Model Picker", "gpt-visual", "Enter switch model · Esc close", "› Ask about workspace or papers"},
 			Forbidden:      baseForbidden,
+			RequirePrompt:  true,
+			RequireAltANSI: true,
+		},
+		{
+			Name:   "model_drawer_esc",
+			Width:  width,
+			Height: height,
+			Theme:  config.ThemeDark,
+			Setup:  setupVisualModelDrawer,
+			Script: func(t *testing.T, run *ptyRun) {
+				t.Helper()
+				writePTYInput(t, run, "\x1b")
+			},
+			Required:       []string{"papersilm", "workspace ready", "› Ask about workspace or papers"},
+			Forbidden:      append([]string{"Model Picker", "Enter switch model · Esc close"}, baseForbidden...),
+			RequirePrompt:  true,
+			RequireAltANSI: true,
+		},
+		{
+			Name:   "history_search_esc_restores_draft",
+			Width:  width,
+			Height: height,
+			Theme:  config.ThemeDark,
+			Setup:  setupPTYPromptHistory,
+			Script: func(t *testing.T, run *ptyRun) {
+				t.Helper()
+				writePTYInput(t, run, "\x12")
+				waitForPTYFrame(t, run, width, []string{"search prompts:", "1/1"}, baseForbidden)
+				writePTYInput(t, run, "\x1b")
+			},
+			Required:       []string{"papersilm", "› draft history input"},
+			Forbidden:      append([]string{"search prompts:", "summarize saved workspace"}, baseForbidden...),
+			RequirePrompt:  true,
+			RequireAltANSI: true,
+		},
+		{
+			Name:   "history_search_tab_accepts_selected",
+			Width:  width,
+			Height: height,
+			Theme:  config.ThemeDark,
+			Setup:  setupPTYPromptHistory,
+			Script: func(t *testing.T, run *ptyRun) {
+				t.Helper()
+				writePTYInput(t, run, "\x12")
+				waitForPTYFrame(t, run, width, []string{"search prompts:", "1/1"}, baseForbidden)
+				writePTYInput(t, run, "\t")
+			},
+			Required:       []string{"papersilm", "› summarize saved workspace"},
+			Forbidden:      append([]string{"search prompts:", "draft history input"}, baseForbidden...),
 			RequirePrompt:  true,
 			RequireAltANSI: true,
 		},
@@ -256,6 +325,23 @@ func ptyScenarios() []ptyScenario {
 			RequireAltANSI: true,
 		},
 		{
+			Name:   "permission_details_esc_returns_to_confirmation",
+			Width:  width,
+			Height: height,
+			Theme:  config.ThemeDark,
+			Setup:  setupVisualPermissionEdit,
+			Script: func(t *testing.T, run *ptyRun) {
+				t.Helper()
+				writePTYInput(t, run, "\x05")
+				waitForPTYFrame(t, run, width, []string{"Permission Details", "README.md"}, baseForbidden)
+				writePTYInput(t, run, "\x1b")
+			},
+			Required:       []string{"Edit README.md", "Do you want to make this edit?", "Enter select", "› Ask about workspace or papers", "permission pending"},
+			Forbidden:      append([]string{"Permission Details", "Enter yes"}, baseForbidden...),
+			RequirePrompt:  true,
+			RequireAltANSI: true,
+		},
+		{
 			Name:           "transcript_search",
 			Width:          width,
 			Height:         height,
@@ -263,6 +349,24 @@ func ptyScenarios() []ptyScenario {
 			Setup:          setupVisualTranscriptSearch,
 			Required:       []string{"/ search transcript", "Workspace summary", "summary"},
 			Forbidden:      baseForbidden,
+			RequireAltANSI: true,
+		},
+		{
+			Name:   "transcript_esc_returns_to_prompt",
+			Width:  width,
+			Height: height,
+			Theme:  config.ThemeDark,
+			Setup: func(m *tuiModel) {
+				appendVisualTranscript(m, "assistant", protocol.TranscriptEntryAssistant, "Assistant", "Workspace summary is ready.")
+				m.openTranscriptScreen(false)
+			},
+			Script: func(t *testing.T, run *ptyRun) {
+				t.Helper()
+				writePTYInput(t, run, "\x1b")
+			},
+			Required:       []string{"papersilm", "Workspace summary is ready.", "› Ask about workspace or papers"},
+			Forbidden:      append([]string{"? transcript", "/ search transcript"}, baseForbidden...),
+			RequirePrompt:  true,
 			RequireAltANSI: true,
 		},
 		{
@@ -280,6 +384,21 @@ func ptyScenarios() []ptyScenario {
 			RequireAltANSI: true,
 		},
 	}
+}
+
+func setupPTYPromptHistory(m *tuiModel) {
+	m.setPromptValue("draft history input")
+	m.messageStore.Reset([]protocol.TranscriptEntry{
+		{
+			ID:        "hist_pty_1",
+			SessionID: "sess_visual",
+			Type:      protocol.TranscriptEntryUser,
+			Title:     "You",
+			Body:      "summarize saved workspace",
+			InputMode: protocol.TranscriptInputPrompt,
+			CreatedAt: visualFixedTime,
+		},
+	})
 }
 
 func runPTYTUI(t *testing.T, scenario ptyScenario) (string, string) {

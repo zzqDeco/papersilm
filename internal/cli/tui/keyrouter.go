@@ -134,9 +134,9 @@ func routeContextKey(context KeyContext, key string) (KeyAction, bool) {
 		}
 	case ContextHistorySearch:
 		switch key {
-		case "ctrl+c":
+		case "ctrl+c", "esc":
 			return ActionHistorySearchCancel, true
-		case "esc", "tab":
+		case "tab":
 			return ActionHistorySearchClose, true
 		case "enter":
 			return ActionHistorySearchAccept, true
