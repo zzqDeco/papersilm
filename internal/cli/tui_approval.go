@@ -509,11 +509,14 @@ func permissionDecisionInput(decision protocol.PermissionDecision) string {
 func runPermissionDecisionCmd(ctx context.Context, runtime *tuiRuntimeManager, snapshot protocol.SessionSnapshot, decision protocol.PermissionDecision) tea.Cmd {
 	return func() tea.Msg {
 		before := snapshot
-		result, err := runtime.svc.DecidePermission(ctx, snapshot.Meta.SessionID, decision)
 		after := snapshot
-		text := fmt.Sprintf("Permission decision: %s", decision.Value)
+		ops := runtime.runtimeOps()
+		if ops == nil {
+			return tuiExecDoneMsg{Input: permissionDecisionInput(decision), SkipHistory: true, Before: before, After: after, Err: fmt.Errorf("runtime is not available")}
+		}
+		next, text, err := ops.DecidePermission(ctx, snapshot, decision)
 		if err == nil {
-			after = result.Session
+			after = next
 		}
 		return tuiExecDoneMsg{
 			Input:       permissionDecisionInput(decision),
