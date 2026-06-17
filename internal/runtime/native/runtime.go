@@ -439,9 +439,7 @@ func (r *Runtime) executePlan(ctx context.Context, sessionID string, plan protoc
 	}
 	var response string
 	for _, step := range plan.Steps {
-		if err := r.emitPlanProgress(sessionID, plan.PlanID, step, protocol.PlanProgressStarted, "node execution started"); err != nil {
-			return protocol.RunResult{}, err
-		}
+		_ = r.emitPlanProgress(sessionID, plan.PlanID, step, protocol.PlanProgressStarted, "node execution started")
 		out, err := r.executeStep(ctx, sessionID, plan.Goal, step, protocol.PermissionModeAuto)
 		if err != nil {
 			_ = r.markStep(sessionID, plan.PlanID, step.ID, protocol.NodeStatusFailed, err.Error(), protocol.NodeOutputRef{})
@@ -450,9 +448,7 @@ func (r *Runtime) executePlan(ctx context.Context, sessionID string, plan protoc
 			return protocol.RunResult{}, err
 		}
 		_ = r.markStep(sessionID, plan.PlanID, step.ID, protocol.NodeStatusCompleted, "", out)
-		if err := r.emitPlanProgress(sessionID, plan.PlanID, step, protocol.PlanProgressCompleted, "node execution completed"); err != nil {
-			return protocol.RunResult{}, err
-		}
+		_ = r.emitPlanProgress(sessionID, plan.PlanID, step, protocol.PlanProgressCompleted, "node execution completed")
 		if text, ok := out.Data["response"].(string); ok {
 			response = appendText(response, text)
 		}

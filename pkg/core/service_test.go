@@ -37,6 +37,15 @@ func (s failingResultSink) Emit(event protocol.StreamEvent) error {
 	return nil
 }
 
+type failingProgressSink struct{}
+
+func (s failingProgressSink) Emit(event protocol.StreamEvent) error {
+	if event.Type == protocol.EventProgress {
+		return errors.New("sink progress failure")
+	}
+	return nil
+}
+
 func TestExecutePlanCreatesWorkspacePlanWithoutSources(t *testing.T) {
 	t.Parallel()
 
@@ -58,6 +67,38 @@ func TestExecutePlanCreatesWorkspacePlanWithoutSources(t *testing.T) {
 	}
 	if len(result.Session.Sources) != 0 {
 		t.Fatalf("workspace-first task should not require sources, got %+v", result.Session.Sources)
+	}
+}
+
+func TestWorkspaceProgressEmitFailureDoesNotAbortRun(t *testing.T) {
+	t.Parallel()
+
+	svc := newTestServiceWithSink(t, failingProgressSink{})
+	readmePath := filepath.Join(svc.store.WorkspaceRoot(), "README.md")
+	if err := os.WriteFile(readmePath, []byte("# papersilm\n\nprogress smoke\n"), 0o644); err != nil {
+		t.Fatalf("WriteFile(%s): %v", readmePath, err)
+	}
+	if err := svc.store.RefreshWorkspaceState(); err != nil {
+		t.Fatalf("RefreshWorkspaceState: %v", err)
+	}
+	result, err := svc.Execute(context.Background(), protocol.ClientRequest{
+		Task:           "总结当前工作区的结构和关键文件",
+		PermissionMode: protocol.PermissionModeAuto,
+		Language:       "zh",
+		Style:          "distill",
+	})
+	if err != nil {
+		t.Fatalf("Execute(workspace with failing progress sink): %v", err)
+	}
+	if result.Session.Meta.State != protocol.SessionStateCompleted {
+		t.Fatalf("expected completed session, got %s", result.Session.Meta.State)
+	}
+	meta, err := svc.store.LoadMeta(result.Session.Meta.SessionID)
+	if err != nil {
+		t.Fatalf("LoadMeta: %v", err)
+	}
+	if meta.State != protocol.SessionStateCompleted {
+		t.Fatalf("expected persisted completed state, got %s", meta.State)
 	}
 }
 

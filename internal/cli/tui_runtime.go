@@ -70,11 +70,15 @@ func (o serviceTUIRuntimeOps) DecidePermission(ctx context.Context, snapshot pro
 	text := fmt.Sprintf("Permission decision: %s", decision.Value)
 	if err == nil {
 		after = result.Session
-		if strings.TrimSpace(result.Response) != "" {
+		if !approvalSnapshotModeIsTool(snapshot) && strings.TrimSpace(result.Response) != "" {
 			text = strings.TrimSpace(result.Response)
 		}
 	}
 	return after, text, err
+}
+
+func approvalSnapshotModeIsTool(snapshot protocol.SessionSnapshot) bool {
+	return snapshot.Approval != nil && strings.EqualFold(strings.TrimSpace(snapshot.Approval.Mode), "tool")
 }
 
 func newTUIRuntimeManager(ctx context.Context, opts TUIOptions) (*tuiRuntimeManager, protocol.SessionSnapshot, error) {

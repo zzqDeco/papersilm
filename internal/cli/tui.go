@@ -2484,7 +2484,7 @@ func executionToTranscriptEntries(input string, before, after protocol.SessionSn
 	}
 
 	if len(entries) > 0 {
-		if shouldAppendPermissionResumeResult(input, fallback) {
+		if shouldAppendPermissionResumeResult(input, before, fallback) {
 			entries = append(entries, newTranscriptEntry(
 				after.Meta.SessionID,
 				protocol.TranscriptEntryAssistant,
@@ -2507,9 +2507,12 @@ func executionToTranscriptEntries(input string, before, after protocol.SessionSn
 	return entries
 }
 
-func shouldAppendPermissionResumeResult(input, fallback string) bool {
+func shouldAppendPermissionResumeResult(input string, before protocol.SessionSnapshot, fallback string) bool {
 	fallback = strings.TrimSpace(fallback)
 	if fallback == "" || strings.HasPrefix(fallback, "Permission decision:") {
+		return false
+	}
+	if approvalSnapshotModeIsTool(before) {
 		return false
 	}
 	fields := strings.Fields(strings.TrimSpace(input))

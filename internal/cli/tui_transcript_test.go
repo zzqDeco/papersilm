@@ -643,6 +643,21 @@ func TestExecutionToTranscriptEntriesBuildsPermissionDecisionMessages(t *testing
 		t.Fatalf("expected resume result body, got %+v", entries[1])
 	}
 
+	toolBefore := before
+	toolApproval := *before.Approval
+	toolApproval.Mode = "tool"
+	toolBefore.Approval = &toolApproval
+	entries = executionToTranscriptEntries("/permission accept-once node", toolBefore, after, "assistant resumed")
+	if len(entries) != 1 {
+		t.Fatalf("expected tool-mode approval to rely on assistant event projection, got %+v", entries)
+	}
+	if entries[0].Subtype != transcriptSubtypeApprovalApproved {
+		t.Fatalf("expected approved decision entry, got %+v", entries[0])
+	}
+	if strings.Contains(entries[0].Body, "assistant resumed") {
+		t.Fatalf("tool-mode resume result should not be duplicated in decision body: %+v", entries[0])
+	}
+
 	entries = executionToTranscriptEntries("/permission reject node", before, after, "Permission decision: reject")
 	if len(entries) == 0 {
 		t.Fatalf("expected permission decision entry")
