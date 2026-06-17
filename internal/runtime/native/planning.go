@@ -67,6 +67,10 @@ func (r *Runtime) ensurePaperContext(ctx context.Context, sessionID, goal string
 func buildWorkspacePlan(goal string, approvalRequired bool, intent workspaceIntent) protocol.PlanResult {
 	now := time.Now().UTC()
 	nodeID := "workspace_task"
+	stepGoal := strings.TrimSpace(goal)
+	if intent.kind == protocol.NodeKindWorkspaceSearch && strings.TrimSpace(intent.searchQuery) != "" {
+		stepGoal = strings.TrimSpace(intent.searchQuery)
+	}
 	node := protocol.PlanNode{
 		ID:            nodeID,
 		Kind:          intent.kind,
@@ -76,7 +80,7 @@ func buildWorkspacePlan(goal string, approvalRequired bool, intent workspaceInte
 		Status:        protocol.NodeStatusReady,
 		ParallelGroup: "workspace",
 	}
-	step := protocol.PlanStep{ID: nodeID, Tool: string(intent.kind), Goal: strings.TrimSpace(goal), ExpectedArtifact: "workspace_response"}
+	step := protocol.PlanStep{ID: nodeID, Tool: string(intent.kind), Goal: stepGoal, ExpectedArtifact: "workspace_response"}
 	plan := protocol.PlanResult{
 		PlanID:           newPlanID(),
 		Goal:             strings.TrimSpace(goal),

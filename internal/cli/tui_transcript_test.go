@@ -632,6 +632,17 @@ func TestExecutionToTranscriptEntriesBuildsPermissionDecisionMessages(t *testing
 		}
 	}
 
+	entries = executionToTranscriptEntries("/permission accept-once node", before, after, "command exited 0\nok")
+	if len(entries) != 2 {
+		t.Fatalf("expected approved permission to include decision and result entries, got %+v", entries)
+	}
+	if entries[0].Subtype != transcriptSubtypeApprovalApproved || entries[1].Type != protocol.TranscriptEntryAssistant {
+		t.Fatalf("unexpected approved permission entries: %+v", entries)
+	}
+	if !strings.Contains(entries[1].Body, "command exited 0") || !strings.Contains(entries[1].Body, "ok") {
+		t.Fatalf("expected resume result body, got %+v", entries[1])
+	}
+
 	entries = executionToTranscriptEntries("/permission reject node", before, after, "Permission decision: reject")
 	if len(entries) == 0 {
 		t.Fatalf("expected permission decision entry")
