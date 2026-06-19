@@ -29,9 +29,6 @@ jobs:
 
   tui-smoke:
     runs-on: ubuntu-latest
-    env:
-      PAPERSILM_TUI_PTY_ARTIFACT_DIR: ${{ runner.temp }}/papersilm-tui-pty
-      PAPERSILM_TUI_PROCESS_ARTIFACT_DIR: ${{ runner.temp }}/papersilm-tui-process
     steps:
       - name: Checkout
         uses: actions/checkout@v5
@@ -42,6 +39,9 @@ jobs:
           go-version-file: go.mod
 
       - name: Run TUI smoke gate
+        env:
+          PAPERSILM_TUI_PTY_ARTIFACT_DIR: ${{ runner.temp }}/papersilm-tui-pty
+          PAPERSILM_TUI_PROCESS_ARTIFACT_DIR: ${{ runner.temp }}/papersilm-tui-process
         run: bash scripts/tui-smoke.sh
 
       - name: Upload TUI smoke artifacts
@@ -50,6 +50,6 @@ jobs:
         with:
           name: tui-smoke-artifacts
           path: |
-            ${{ env.PAPERSILM_TUI_PTY_ARTIFACT_DIR }}
-            ${{ env.PAPERSILM_TUI_PROCESS_ARTIFACT_DIR }}
+            ${{ runner.temp }}/papersilm-tui-pty
+            ${{ runner.temp }}/papersilm-tui-process
           if-no-files-found: ignore
