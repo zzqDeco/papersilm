@@ -22,6 +22,22 @@ jobs:
         with:
           go-version-file: go.mod
 
+      - name: Run TUI smoke gate
+        env:
+          PAPERSILM_TUI_PTY_ARTIFACT_DIR: ${{ runner.temp }}/papersilm-tui-pty
+          PAPERSILM_TUI_PROCESS_ARTIFACT_DIR: ${{ runner.temp }}/papersilm-tui-process
+        run: bash scripts/tui-smoke.sh
+
+      - name: Upload TUI smoke artifacts
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: tui-smoke-artifacts
+          path: |
+            ${{ runner.temp }}/papersilm-tui-pty
+            ${{ runner.temp }}/papersilm-tui-process
+          if-no-files-found: ignore
+
       - name: Run GoReleaser
         uses: goreleaser/goreleaser-action@v7
         with:
