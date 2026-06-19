@@ -14,7 +14,7 @@ run() {
   "$@"
 }
 
-run "visual/pty gate" go test ./internal/cli -run 'TestTUIVisual(Golden|Invariants)|TestTUIPTYSmokeScenarios|TestPTYScreenBufferHonorsEraseAndWrap' -count=1
+run "visual/pty gate" go test ./internal/cli -run 'TestTUIServiceRuntimeSmoke|TestTUIRuntimeFlow|TestTUIVisual(Golden|Invariants)|TestTUIPTYSmokeScenarios|TestPTYScreenBufferHonorsEraseAndWrap' -count=1
 run "cli tui packages" go test ./internal/cli ./internal/cli/tui
 run "all tests" go test ./...
 run "vet" go vet ./...

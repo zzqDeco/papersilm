@@ -2484,6 +2484,15 @@ func executionToTranscriptEntries(input string, before, after protocol.SessionSn
 	}
 
 	if len(entries) > 0 {
+		if shouldAppendPermissionResumeResult(input, before, fallback) {
+			entries = append(entries, newTranscriptEntry(
+				after.Meta.SessionID,
+				protocol.TranscriptEntryAssistant,
+				"Result",
+				fallback,
+				withTranscriptMarkdown(looksLikeMarkdown(fallback)),
+			))
+		}
 		return entries
 	}
 
@@ -2496,6 +2505,30 @@ func executionToTranscriptEntries(input string, before, after protocol.SessionSn
 	}
 	entries = append(entries, newTranscriptEntry(after.Meta.SessionID, entryType, title, fallback, withTranscriptMarkdown(looksLikeMarkdown(fallback))))
 	return entries
+}
+
+func shouldAppendPermissionResumeResult(input string, before protocol.SessionSnapshot, fallback string) bool {
+	fallback = strings.TrimSpace(fallback)
+	if fallback == "" || strings.HasPrefix(fallback, "Permission decision:") {
+		return false
+	}
+	if approvalSnapshotModeIsTool(before) {
+		return false
+	}
+	fields := strings.Fields(strings.TrimSpace(input))
+	if len(fields) == 0 {
+		return false
+	}
+	switch fields[0] {
+	case "/permission":
+		return len(fields) >= 2 && fields[1] != tuiPermissionReject
+	case "/approve":
+		return true
+	case "/task":
+		return len(fields) >= 2 && fields[1] == "approve"
+	default:
+		return false
+	}
 }
 
 func approvalDecisionTranscriptEntry(input string, before, after protocol.SessionSnapshot) (protocol.TranscriptEntry, bool) {
