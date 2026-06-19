@@ -26,3 +26,30 @@ jobs:
 
       - name: Build CLI
         run: go build ./cmd/papersilm
+
+  tui-smoke:
+    runs-on: ubuntu-latest
+    env:
+      PAPERSILM_TUI_PTY_ARTIFACT_DIR: ${{ runner.temp }}/papersilm-tui-pty
+      PAPERSILM_TUI_PROCESS_ARTIFACT_DIR: ${{ runner.temp }}/papersilm-tui-process
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Setup Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+
+      - name: Run TUI smoke gate
+        run: bash scripts/tui-smoke.sh
+
+      - name: Upload TUI smoke artifacts
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: tui-smoke-artifacts
+          path: |
+            ${{ env.PAPERSILM_TUI_PTY_ARTIFACT_DIR }}
+            ${{ env.PAPERSILM_TUI_PROCESS_ARTIFACT_DIR }}
+          if-no-files-found: ignore
