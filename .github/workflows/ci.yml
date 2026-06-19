@@ -10,6 +10,15 @@ permissions:
   contents: read
 
 jobs:
+  workflow-static:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Validate workflows
+        run: bash scripts/workflow-static-check.sh
+
   test-and-build:
     runs-on: ubuntu-latest
     steps:
@@ -53,3 +62,25 @@ jobs:
             ${{ runner.temp }}/papersilm-tui-pty
             ${{ runner.temp }}/papersilm-tui-process
           if-no-files-found: ignore
+
+  release-dry-run:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: Setup Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+
+      - name: Run GoReleaser dry run
+        uses: goreleaser/goreleaser-action@v7
+        with:
+          distribution: goreleaser
+          version: "~> v2"
+          args: release --snapshot --clean --skip=publish
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
