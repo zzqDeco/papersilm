@@ -260,7 +260,7 @@ func TestTUIServiceRuntimeSmokeEditPermissionPreviewAndApply(t *testing.T) {
 		t.Fatalf("expected approved edit to apply, got %q", string(after))
 	}
 	view = h.model.renderMainScreen()
-	for _, want := range []string{"✓ Approved", "README.md", "Update README.md"} {
+	for _, want := range []string{"✓ Approved", "README.md", "Replace text in README.md"} {
 		if !strings.Contains(view, want) {
 			t.Fatalf("expected %q after edit approval:\n%s", want, view)
 		}

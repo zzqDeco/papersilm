@@ -625,7 +625,7 @@ func (r *Runtime) executeStep(ctx context.Context, sessionID, goal string, step 
 		intent := workspaceIntent{kind: protocol.NodeKindWorkspaceCommand, command: extractBacktickCommand(step.Goal)}
 		record, err := r.registry.RunWorkspaceCommand(r.store, intent.command)
 		text := formatCommandRecord(record)
-		if err != nil {
+		if err != nil && !agenttool.CommandExecutionFailure(record, err) {
 			return nodeOutput(step.ID, "workspace_response", text, now), err
 		}
 		return nodeOutput(step.ID, "workspace_response", text, now), nil

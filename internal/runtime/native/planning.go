@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/zzqDeco/papersilm/internal/runtime/agenttool"
+	"github.com/zzqDeco/papersilm/internal/storage"
 	"github.com/zzqDeco/papersilm/pkg/protocol"
 )
 
@@ -292,7 +293,10 @@ func (r *Runtime) nextPermissionRequest(ctx context.Context, sessionID string, p
 	for _, step := range plan.Steps {
 		switch step.Tool {
 		case string(protocol.NodeKindWorkspaceCommand):
-			request := commandPermissionRequest(sessionID, plan.PlanID, step.ID, extractBacktickCommand(step.Goal))
+			request, err := commandPermissionRequest(r.store, sessionID, plan.PlanID, step.ID, extractBacktickCommand(step.Goal))
+			if err != nil {
+				return protocol.ApprovalRequest{}, false, err
+			}
 			return approvalFromRequest(plan, request, "plan"), true, nil
 		case string(protocol.NodeKindWorkspaceEdit):
 			files, _ := r.registry.LoadWorkspaceFiles(r.store)
@@ -622,7 +626,7 @@ func (r *Runtime) applyPermissionRequest(sessionID string, request protocol.Perm
 		record, err := r.registry.RunWorkspaceCommand(r.store, request.Command)
 		text := formatCommandRecord(record)
 		out := nodeOutput(request.NodeID, "workspace_response", text, time.Now().UTC())
-		if err != nil {
+		if err != nil && !agenttool.CommandExecutionFailure(record, err) {
 			_ = r.markStep(sessionID, "", request.NodeID, protocol.NodeStatusFailed, err.Error(), out)
 			return out, err
 		}
@@ -650,6 +654,9 @@ func applyApprovedEdit(r *Runtime, _ string, request protocol.PermissionRequest)
 		}
 	} else if contentHash(current) != request.Preview.OldContentHash {
 		return "", fmt.Errorf("file changed since preview was generated: %s", request.TargetPath)
+	}
+	if request.Preview.OldText != "" && !strings.Contains(current, request.Preview.OldText) {
+		return "", fmt.Errorf("target text not found in %s", request.TargetPath)
 	}
 	if err := r.registry.WriteWorkspaceFile(r.store, request.TargetPath, request.Preview.NewContent); err != nil {
 		return "", err
@@ -748,10 +755,10 @@ func findPermissionRequest(approval *protocol.ApprovalRequest, requestID string)
 	return protocol.PermissionRequest{}, false
 }
 
-func permissionRequestForStep(store workspaceStore, sessionID, planID string, step protocol.PlanStep) (protocol.PermissionRequest, error) {
+func permissionRequestForStep(store *storage.Store, sessionID, planID string, step protocol.PlanStep) (protocol.PermissionRequest, error) {
 	switch step.Tool {
 	case string(protocol.NodeKindWorkspaceCommand):
-		return commandPermissionRequest(sessionID, planID, step.ID, extractBacktickCommand(step.Goal)), nil
+		return commandPermissionRequest(store, sessionID, planID, step.ID, extractBacktickCommand(step.Goal))
 	case string(protocol.NodeKindWorkspaceEdit):
 		target := extractWorkspacePathMention(step.Goal)
 		return editPermissionRequest(store, sessionID, planID, step.ID, step.Goal, target)
@@ -760,44 +767,45 @@ func permissionRequestForStep(store workspaceStore, sessionID, planID string, st
 	}
 }
 
-type workspaceStore interface {
-	ReadWorkspaceFile(string) (string, error)
-	WorkspaceRoot() string
-}
-
-func commandPermissionRequest(sessionID, planID, nodeID, command string) protocol.PermissionRequest {
-	return protocol.PermissionRequest{
-		RequestID: "cmd_" + safeID(command),
+func commandPermissionRequest(store *storage.Store, sessionID, planID, nodeID, command string) (protocol.PermissionRequest, error) {
+	request, err := agenttool.BuildCommandPermission(agenttool.WorkspaceToolsConfig{
+		Store:     store,
 		SessionID: sessionID,
-		PlanID:    planID,
-		NodeID:    nodeID,
-		Tool:      string(protocol.NodeKindWorkspaceCommand),
-		Operation: "shell",
-		Title:     "Run command",
-		Subtitle:  command,
-		Question:  "Do you want to run this command?",
-		Summary:   command,
-		Command:   command,
-		Preview: protocol.PermissionPreview{
-			Kind:          "command",
-			Summary:       "cwd: current workspace",
-			CommandPrefix: agenttool.ShellCommandPrefix(command),
-		},
-		Options:   agenttool.PermissionOptions(protocol.NodeKindWorkspaceCommand),
-		CreatedAt: time.Now().UTC(),
+	}, agenttool.CommandInput{Command: command})
+	if err != nil {
+		return protocol.PermissionRequest{}, err
 	}
+	request.PlanID = planID
+	request.NodeID = nodeID
+	return request, nil
 }
 
-func editPermissionRequest(store workspaceStore, sessionID, planID, nodeID, goal, targetPath string) (protocol.PermissionRequest, error) {
+func editPermissionRequest(store *storage.Store, sessionID, planID, nodeID, goal, targetPath string) (protocol.PermissionRequest, error) {
 	targetPath = strings.TrimSpace(targetPath)
 	if targetPath == "" {
 		return protocol.PermissionRequest{}, fmt.Errorf("workspace edit requires an explicit target file path")
 	}
-	old, existed, readErr := readWorkspaceFileForEditStore(store, targetPath)
-	oldHash := ""
-	if existed {
-		oldHash = contentHash(old)
+	if oldValue, newValue, ok := inferEditReplacement(goal); ok {
+		request, conflict, err := agenttool.BuildReplaceTextPermission(agenttool.WorkspaceToolsConfig{
+			Store:     store,
+			SessionID: sessionID,
+		}, agenttool.ReplaceTextInput{
+			Path:    targetPath,
+			OldText: oldValue,
+			NewText: newValue,
+			Summary: "Replace text in " + targetPath,
+		})
+		if err != nil {
+			return protocol.PermissionRequest{}, err
+		}
+		if conflict != nil {
+			return protocol.PermissionRequest{}, fmt.Errorf("%s", conflict.Summary)
+		}
+		request.PlanID = planID
+		request.NodeID = nodeID
+		return request, nil
 	}
+	old, existed, readErr := readWorkspaceFileForEditStore(store, targetPath)
 	newContent := ""
 	contentErr := readErr
 	if contentErr == nil {
@@ -810,29 +818,20 @@ func editPermissionRequest(store workspaceStore, sessionID, planID, nodeID, goal
 	if !existed {
 		summary = "Create " + targetPath
 	}
-	return protocol.PermissionRequest{
-		RequestID:  "edit_" + safeID(targetPath),
-		SessionID:  sessionID,
-		PlanID:     planID,
-		NodeID:     nodeID,
-		Tool:       string(protocol.NodeKindWorkspaceEdit),
-		Operation:  "write",
-		Title:      "Edit file",
-		Subtitle:   targetPath,
-		Question:   fmt.Sprintf("Do you want to make this edit to %s?", filepath.Base(targetPath)),
-		Summary:    summary,
-		TargetPath: targetPath,
-		Preview: protocol.PermissionPreview{
-			Kind:            "diff",
-			Summary:         summary,
-			Diff:            agenttool.CompactUnifiedDiff(targetPath, old, newContent),
-			OldContentHash:  oldHash,
-			NewContent:      newContent,
-			ConflictMessage: errorString(contentErr),
-		},
-		Options:   agenttool.PermissionOptions(protocol.NodeKindWorkspaceEdit),
-		CreatedAt: time.Now().UTC(),
-	}, nil
+	request, err := agenttool.BuildWritePermission(agenttool.WorkspaceToolsConfig{
+		Store:     store,
+		SessionID: sessionID,
+	}, agenttool.WriteFileInput{
+		Path:    targetPath,
+		Content: newContent,
+		Summary: summary,
+	})
+	if err != nil {
+		return protocol.PermissionRequest{}, err
+	}
+	request.PlanID = planID
+	request.NodeID = nodeID
+	return request, nil
 }
 
 func inferWorkspaceIntent(goal string, files []protocol.WorkspaceFile) workspaceIntent {

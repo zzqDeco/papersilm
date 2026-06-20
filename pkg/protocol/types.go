@@ -330,13 +330,15 @@ type WorkspaceSearchHit struct {
 }
 
 type WorkspaceCommandRecord struct {
-	Command     string    `json:"command"`
-	Cwd         string    `json:"cwd"`
-	ExitCode    int       `json:"exit_code"`
-	Stdout      string    `json:"stdout,omitempty"`
-	Stderr      string    `json:"stderr,omitempty"`
-	StartedAt   time.Time `json:"started_at"`
-	CompletedAt time.Time `json:"completed_at,omitempty"`
+	Command         string    `json:"command"`
+	Cwd             string    `json:"cwd"`
+	ExitCode        int       `json:"exit_code"`
+	Stdout          string    `json:"stdout,omitempty"`
+	Stderr          string    `json:"stderr,omitempty"`
+	StdoutTruncated bool      `json:"stdout_truncated,omitempty"`
+	StderrTruncated bool      `json:"stderr_truncated,omitempty"`
+	StartedAt       time.Time `json:"started_at"`
+	CompletedAt     time.Time `json:"completed_at,omitempty"`
 }
 
 const DefaultWorkspaceID = "workspace"
@@ -521,6 +523,8 @@ type PermissionPreview struct {
 	Diff            string `json:"diff,omitempty"`
 	OldContentHash  string `json:"old_content_hash,omitempty"`
 	NewContent      string `json:"new_content,omitempty"`
+	OldText         string `json:"old_text,omitempty"`
+	NewText         string `json:"new_text,omitempty"`
 	CommandPrefix   string `json:"command_prefix,omitempty"`
 	ConflictMessage string `json:"conflict_message,omitempty"`
 }

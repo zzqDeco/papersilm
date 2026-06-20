@@ -279,13 +279,15 @@ func (s *Store) RunWorkspaceCommand(command string) (protocol.WorkspaceCommandRe
 		}
 	}
 	record := protocol.WorkspaceCommandRecord{
-		Command:     command,
-		Cwd:         s.workspaceRoot,
-		ExitCode:    exitCode,
-		Stdout:      stdout.Text("stdout"),
-		Stderr:      stderr.Text("stderr"),
-		StartedAt:   startedAt,
-		CompletedAt: time.Now().UTC(),
+		Command:         command,
+		Cwd:             s.workspaceRoot,
+		ExitCode:        exitCode,
+		Stdout:          stdout.Text("stdout"),
+		Stderr:          stderr.Text("stderr"),
+		StdoutTruncated: stdout.truncated,
+		StderrTruncated: stderr.truncated,
+		StartedAt:       startedAt,
+		CompletedAt:     time.Now().UTC(),
 	}
 	if logErr := s.appendJSONL(filepath.Join(s.commandLogDir(), "commands.jsonl"), record); logErr != nil && runErr == nil {
 		runErr = logErr
