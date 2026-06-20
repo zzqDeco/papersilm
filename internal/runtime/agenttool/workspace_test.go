@@ -3,6 +3,7 @@ package agenttool
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -116,6 +117,29 @@ func TestReplaceTextPermissionReportsMissingOldTextAsConflict(t *testing.T) {
 	}
 }
 
+func TestReplaceTextPermissionReportsDuplicateOldTextAsConflict(t *testing.T) {
+	t.Parallel()
+
+	cfg := newWorkspaceToolTestConfig(t)
+	if err := cfg.Store.WriteWorkspaceFile("README.md", "typo once\ntypo twice\n"); err != nil {
+		t.Fatalf("WriteWorkspaceFile: %v", err)
+	}
+	request, conflict, err := BuildReplaceTextPermission(cfg, ReplaceTextInput{
+		Path:    "README.md",
+		OldText: "typo",
+		NewText: "type",
+	})
+	if err != nil {
+		t.Fatalf("BuildReplaceTextPermission: %v", err)
+	}
+	if request.RequestID != "" {
+		t.Fatalf("conflict should not produce a permission request: %+v", request)
+	}
+	if conflict == nil || conflict.Status != "conflict" || !conflict.Conflict || !strings.Contains(conflict.Summary, "not unique") {
+		t.Fatalf("expected duplicate match conflict, got %+v", conflict)
+	}
+}
+
 func TestReplaceTextPermissionDetectsHashConflictOnApply(t *testing.T) {
 	t.Parallel()
 
@@ -153,6 +177,37 @@ func TestReplaceTextPermissionDetectsHashConflictOnApply(t *testing.T) {
 	}
 }
 
+func TestReplaceTextPermissionDetectsDuplicateOldTextOnApply(t *testing.T) {
+	t.Parallel()
+
+	cfg := newWorkspaceToolTestConfig(t)
+	if err := cfg.Store.WriteWorkspaceFile("README.md", "hello typo world\n"); err != nil {
+		t.Fatalf("WriteWorkspaceFile: %v", err)
+	}
+	request, conflict, err := BuildReplaceTextPermission(cfg, ReplaceTextInput{
+		Path:    "README.md",
+		OldText: "typo",
+		NewText: "type",
+	})
+	if err != nil {
+		t.Fatalf("BuildReplaceTextPermission: %v", err)
+	}
+	if conflict != nil {
+		t.Fatalf("did not expect conflict: %+v", conflict)
+	}
+	request.Preview.OldContentHash = ""
+	if err := cfg.Store.WriteWorkspaceFile("README.md", "typo once\ntypo twice\n"); err != nil {
+		t.Fatalf("WriteWorkspaceFile(duplicate): %v", err)
+	}
+	result, err := applyReplaceText(cfg, request)
+	if err != nil {
+		t.Fatalf("applyReplaceText should return a structured conflict, got err=%v", err)
+	}
+	if result.Status != "conflict" || !result.Conflict || !strings.Contains(result.Summary, "not unique") {
+		t.Fatalf("expected duplicate conflict result, got %+v", result)
+	}
+}
+
 func TestReplaceTextPermissionRejectsEscapedPath(t *testing.T) {
 	t.Parallel()
 
@@ -163,6 +218,48 @@ func TestReplaceTextPermissionRejectsEscapedPath(t *testing.T) {
 		NewText: "new",
 	}); err == nil || !strings.Contains(err.Error(), "escapes workspace") {
 		t.Fatalf("expected workspace escape error, got %v", err)
+	}
+}
+
+func TestReplaceSessionRuleDoesNotAllowWholeFileWrite(t *testing.T) {
+	t.Parallel()
+
+	cfg := newWorkspaceToolTestConfig(t)
+	if err := cfg.Store.CreateSession(protocol.SessionMeta{SessionID: cfg.SessionID}); err != nil {
+		t.Fatalf("CreateSession: %v", err)
+	}
+	if err := cfg.Store.WriteWorkspaceFile("README.md", "hello typo world\n"); err != nil {
+		t.Fatalf("WriteWorkspaceFile: %v", err)
+	}
+	replaceRequest, conflict, err := BuildReplaceTextPermission(cfg, ReplaceTextInput{
+		Path:    "README.md",
+		OldText: "typo",
+		NewText: "type",
+	})
+	if err != nil {
+		t.Fatalf("BuildReplaceTextPermission: %v", err)
+	}
+	if conflict != nil {
+		t.Fatalf("did not expect conflict: %+v", conflict)
+	}
+	if err := AddPermissionRule(cfg.Store, cfg.SessionID, replaceRequest, protocol.PermissionDecision{
+		Value: PermissionAcceptSession,
+		Scope: PermissionScopePath,
+	}); err != nil {
+		t.Fatalf("AddPermissionRule: %v", err)
+	}
+	writeRequest, err := BuildWritePermission(cfg, WriteFileInput{
+		Path:    "README.md",
+		Content: "whole rewrite\n",
+	})
+	if err != nil {
+		t.Fatalf("BuildWritePermission: %v", err)
+	}
+	if requestAllowedByRules(cfg.Store, cfg.SessionID, writeRequest) {
+		t.Fatalf("replace session rule should not auto-allow whole-file write")
+	}
+	if !requestAllowedByRules(cfg.Store, cfg.SessionID, replaceRequest) {
+		t.Fatalf("replace session rule should still auto-allow matching replace request")
 	}
 }
 
@@ -188,6 +285,15 @@ func TestWorkspaceRunCommandNonZeroExitReturnsStructuredToolResult(t *testing.T)
 	}
 	if result.Stdout != "stdout" || result.Stderr != "stderr" || !strings.Contains(result.Summary, "command exited 7") {
 		t.Fatalf("expected structured stdout/stderr summary, got %+v", result)
+	}
+}
+
+func TestCommandExecutionFailureTreatsSignalAsStructuredFailure(t *testing.T) {
+	t.Parallel()
+
+	record := protocol.WorkspaceCommandRecord{Command: "kill self", ExitCode: -1}
+	if !CommandExecutionFailure(record, errors.New("signal: killed")) {
+		t.Fatalf("expected signaled command to be treated as structured command failure")
 	}
 }
 

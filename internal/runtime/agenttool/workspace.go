@@ -5,8 +5,10 @@ import (
 	"crypto/sha256"
 	"encoding/gob"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"time"
@@ -315,8 +317,8 @@ func BuildReplaceTextPermission(cfg WorkspaceToolsConfig, input ReplaceTextInput
 	if !existed {
 		return protocol.PermissionRequest{}, conflictResult(path, "file does not exist: "+path), nil
 	}
-	if !strings.Contains(oldContent, oldText) {
-		return protocol.PermissionRequest{}, conflictResult(path, "target text not found in "+path), nil
+	if conflict := replaceTextMatchConflict(path, oldContent, oldText); conflict != nil {
+		return protocol.PermissionRequest{}, conflict, nil
 	}
 	newContent := strings.Replace(oldContent, oldText, input.NewText, 1)
 	summary := strings.TrimSpace(input.Summary)
@@ -328,7 +330,7 @@ func BuildReplaceTextPermission(cfg WorkspaceToolsConfig, input ReplaceTextInput
 		SessionID:  cfg.SessionID,
 		NodeID:     "workspace_replace_text",
 		Tool:       string(protocol.NodeKindWorkspaceEdit),
-		Operation:  "write",
+		Operation:  "replace",
 		Title:      "Edit file",
 		Subtitle:   path,
 		Question:   fmt.Sprintf("Do you want to make this edit to %s?", filepath.Base(path)),
@@ -426,8 +428,7 @@ func applyReplaceText(cfg WorkspaceToolsConfig, request protocol.PermissionReque
 		recordWorkspaceToolCall(cfg, "workspace_replace_text", request, result)
 		return result, nil
 	}
-	if !strings.Contains(current, request.Preview.OldText) {
-		result := conflictResult(request.TargetPath, "target text not found in "+request.TargetPath)
+	if result := replaceTextMatchConflict(request.TargetPath, current, request.Preview.OldText); result != nil {
 		recordWorkspaceToolCall(cfg, "workspace_replace_text", request, result)
 		return result, nil
 	}
@@ -606,6 +607,18 @@ func conflictResult(path, summary string) *ToolResult {
 	}
 }
 
+func replaceTextMatchConflict(path, content, oldText string) *ToolResult {
+	count := strings.Count(content, oldText)
+	switch {
+	case count == 0:
+		return conflictResult(path, "target text not found in "+path)
+	case count > 1:
+		return conflictResult(path, fmt.Sprintf("target text is not unique in %s: %d matches", path, count))
+	default:
+		return nil
+	}
+}
+
 func commandToolResult(record protocol.WorkspaceCommandRecord, runErr error) *ToolResult {
 	status := "completed"
 	if runErr != nil || record.ExitCode != 0 {
@@ -661,8 +674,15 @@ func CommandExecutionFailure(record protocol.WorkspaceCommandRecord, err error) 
 	if record.ExitCode == 0 {
 		return false
 	}
+	var exitErr *exec.ExitError
+	if errors.As(err, &exitErr) {
+		return true
+	}
 	message := err.Error()
-	return strings.Contains(message, "exit status") || strings.Contains(message, "command timed out")
+	return strings.Contains(message, "exit status") ||
+		strings.Contains(message, "signal:") ||
+		strings.Contains(message, "command timed out") ||
+		record.ExitCode < 0
 }
 
 func workspaceRoot(store *storage.Store) string {
