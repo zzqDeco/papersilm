@@ -67,15 +67,11 @@ func BuildAgenticModel(ctx context.Context, cfg config.ProviderConfig, timeout t
 	}
 	switch cfg.Provider {
 	case config.ProviderOpenAI:
-		var timeoutPtr *time.Duration
-		if timeout > 0 {
-			timeoutPtr = &timeout
-		}
-		return agenticopenaimodel.New(ctx, &agenticopenaimodel.Config{
+		return agenticopenaimodel.NewChatModel(ctx, &agenticopenaimodel.ChatConfig{
 			APIKey:  cfg.APIKey,
 			Model:   cfg.Model,
 			BaseURL: cfg.BaseURL,
-			Timeout: timeoutPtr,
+			Timeout: timeout,
 		})
 	default:
 		chatModel, err := BuildChatModel(ctx, cfg, timeout)
