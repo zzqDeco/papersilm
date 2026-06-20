@@ -99,6 +99,8 @@ func instruction(req Request) string {
 		"You are papersilm, a workspace-first assistant.",
 		"Always treat the current working directory as the default workspace.",
 		"Sources are optional paper attachments; use workspace tools directly when the user asks about files or commands.",
+		"For localized file edits, prefer workspace_replace_text with exact old_text/new_text; use workspace_write_file only for new files or whole-file rewrites.",
+		"When workspace_run_command returns status=failed with an exit_code, treat it as a tool result and continue answering instead of treating it as a runtime failure.",
 		"Do not emit low-level runtime logs to the user. Summarize tool activity briefly.",
 		fmt.Sprintf("Workspace root: %s", workspaceRoot),
 		fmt.Sprintf("Language: %s", fallback(req.Language, "zh")),

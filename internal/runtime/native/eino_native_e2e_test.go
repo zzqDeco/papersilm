@@ -49,6 +49,10 @@ func (m *scriptedAgenticModel) Generate(_ context.Context, input []*schema.Agent
 	}
 	user := strings.ToLower(latestUserInput(input))
 	switch {
+	case strings.Contains(user, "search"):
+		return toolCall("workspace_search", `{"query":"workspace e2e","limit":5}`), nil
+	case strings.Contains(user, "replace"):
+		return toolCall("workspace_replace_text", `{"path":"README.md","old_text":"typo","new_text":"type","summary":"replace typo"}`), nil
 	case strings.Contains(user, "read"):
 		return toolCall("workspace_read_file", `{"path":"README.md"}`), nil
 	case strings.Contains(user, "write"):
@@ -62,6 +66,8 @@ func (m *scriptedAgenticModel) Generate(_ context.Context, input []*schema.Agent
 			"summary": "eino write smoke",
 		})
 		return toolCall("workspace_write_file", string(args)), nil
+	case strings.Contains(user, "fail shell"):
+		return toolCall("workspace_run_command", `{"command":"printf stdout; printf stderr >&2; exit 7","summary":"non-zero shell smoke"}`), nil
 	case strings.Contains(user, "shell"):
 		return toolCall("workspace_run_command", `{"command":"printf %s e2e-shell","summary":"eino shell smoke"}`), nil
 	default:
@@ -188,6 +194,62 @@ func TestEinoNativeToolPermissionAcceptAndReject(t *testing.T) {
 	}
 	if !strings.Contains(rejected.Response, "rejected") || !strings.Contains(rejected.Response, "do not write yet") {
 		t.Fatalf("expected rejection feedback in response, got %q", rejected.Response)
+	}
+}
+
+func TestEinoNativeReplaceTextToolAppliesLocalizedEdit(t *testing.T) {
+	rt, store, model, _ := newNativeE2ERuntime(t)
+	sessionID := newNativeE2ESession(t, store, protocol.PermissionModeAuto)
+	if err := store.WriteWorkspaceFile("README.md", "workspace typo content\n"); err != nil {
+		t.Fatalf("WriteWorkspaceFile(README): %v", err)
+	}
+
+	result, err := rt.runEinoAssistant(context.Background(), sessionID, "replace README typo", protocol.PermissionModeAuto, "turn_replace")
+	if err != nil {
+		t.Fatalf("runEinoAssistant(replace): %v", err)
+	}
+	if !model.sawTool("workspace_replace_text") {
+		t.Fatalf("expected ChatModelAgent to receive workspace_replace_text tool")
+	}
+	if !strings.Contains(result.Response, `"status":"completed"`) || !strings.Contains(result.Response, `"changed":true`) {
+		t.Fatalf("expected completed replace tool result in response, got %q", result.Response)
+	}
+	content, err := store.ReadWorkspaceFile("README.md")
+	if err != nil {
+		t.Fatalf("ReadWorkspaceFile(README): %v", err)
+	}
+	if content != "workspace type content\n" {
+		t.Fatalf("expected localized replace to apply, got %q", content)
+	}
+	toolCalls, err := os.ReadFile(filepath.Join(store.SessionDir(sessionID), "tool_calls.jsonl"))
+	if err != nil {
+		t.Fatalf("ReadFile(tool_calls): %v", err)
+	}
+	for _, want := range []string{"workspace_replace_text", "README.md", "-workspace typo content", "+workspace type content"} {
+		if !strings.Contains(string(toolCalls), want) {
+			t.Fatalf("expected tool_calls to contain %q, got %s", want, string(toolCalls))
+		}
+	}
+}
+
+func TestEinoNativeCommandNonZeroExitDoesNotFailRun(t *testing.T) {
+	rt, store, model, _ := newNativeE2ERuntime(t)
+	sessionID := newNativeE2ESession(t, store, protocol.PermissionModeAuto)
+
+	result, err := rt.runEinoAssistant(context.Background(), sessionID, "fail shell", protocol.PermissionModeAuto, "turn_fail_shell")
+	if err != nil {
+		t.Fatalf("runEinoAssistant(fail shell) should not fail runtime: %v", err)
+	}
+	if !model.sawTool("workspace_run_command") {
+		t.Fatalf("expected ChatModelAgent to receive workspace_run_command tool")
+	}
+	if result.Session.Meta.State != protocol.SessionStateCompleted {
+		t.Fatalf("expected completed session despite shell exit code, got %s", result.Session.Meta.State)
+	}
+	for _, want := range []string{`"status":"failed"`, `"exit_code":7`, `"stdout":"stdout"`, `"stderr":"stderr"`} {
+		if !strings.Contains(result.Response, want) {
+			t.Fatalf("expected response to contain %s, got %q", want, result.Response)
+		}
 	}
 }
 

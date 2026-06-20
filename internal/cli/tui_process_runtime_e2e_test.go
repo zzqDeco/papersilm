@@ -125,11 +125,11 @@ func processTUIScenarios() []processTUIScenario {
 				assertProcessFileContains(t, run, "README.md", []string{"hello typo"}, []string{"hello type"})
 				processWriteInput(t, run, "\r")
 			},
-			Required: []string{"✓ Approved", "README.md", "Update README.md"},
+			Required: []string{"✓ Approved", "README.md", "Replace text in README.md"},
 			Validate: func(t *testing.T, run *processTUIRun, _ string) {
 				t.Helper()
 				assertProcessFileContains(t, run, "README.md", []string{"hello type"}, []string{"hello typo"})
-				waitForProcessSessionFileContains(t, run, "transcript.jsonl", []string{"Approval Required", "✓ Approved", "Update README.md"})
+				waitForProcessSessionFileContains(t, run, "transcript.jsonl", []string{"Approval Required", "✓ Approved", "Replace text in README.md"})
 			},
 		},
 		{

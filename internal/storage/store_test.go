@@ -92,6 +92,12 @@ func TestRunWorkspaceCommandCapsOutput(t *testing.T) {
 	if !strings.Contains(record.Stdout, "stdout truncated") {
 		t.Fatalf("expected truncation marker, got suffix %q", tail(record.Stdout, 80))
 	}
+	if !record.StdoutTruncated {
+		t.Fatalf("expected stdout_truncated marker in command record")
+	}
+	if record.StderrTruncated {
+		t.Fatalf("did not expect stderr_truncated for stdout-only command")
+	}
 }
 
 func tail(value string, n int) string {

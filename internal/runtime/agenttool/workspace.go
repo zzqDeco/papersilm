@@ -5,8 +5,10 @@ import (
 	"crypto/sha256"
 	"encoding/gob"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"time"
@@ -57,18 +59,39 @@ type WriteFileInput struct {
 	Summary string `json:"summary,omitempty" jsonschema_description:"Short summary of the edit."`
 }
 
+type ReplaceTextInput struct {
+	Path    string `json:"path" jsonschema_description:"Workspace-relative file path to edit."`
+	OldText string `json:"old_text" jsonschema_description:"Exact text to replace. Must appear once in the current file."`
+	NewText string `json:"new_text" jsonschema_description:"Replacement text."`
+	Summary string `json:"summary,omitempty" jsonschema_description:"Short summary of the edit."`
+}
+
 type CommandInput struct {
 	Command string `json:"command" jsonschema_description:"Shell command to run inside the workspace root."`
 	Summary string `json:"summary,omitempty" jsonschema_description:"Why the command is needed."`
 }
 
 type ToolResult struct {
-	Status  string `json:"status"`
-	Summary string `json:"summary,omitempty"`
-	Output  string `json:"output,omitempty"`
+	Status          string `json:"status"`
+	Summary         string `json:"summary,omitempty"`
+	Output          string `json:"output,omitempty"`
+	TargetPath      string `json:"target_path,omitempty"`
+	Command         string `json:"command,omitempty"`
+	Cwd             string `json:"cwd,omitempty"`
+	ExitCode        *int   `json:"exit_code,omitempty"`
+	Stdout          string `json:"stdout,omitempty"`
+	Stderr          string `json:"stderr,omitempty"`
+	StdoutTruncated bool   `json:"stdout_truncated,omitempty"`
+	StderrTruncated bool   `json:"stderr_truncated,omitempty"`
+	Changed         bool   `json:"changed,omitempty"`
+	Conflict        bool   `json:"conflict,omitempty"`
 }
 
 type writeState struct {
+	Request protocol.PermissionRequest `json:"request"`
+}
+
+type replaceState struct {
 	Request protocol.PermissionRequest `json:"request"`
 }
 
@@ -79,12 +102,13 @@ type commandState struct {
 func init() {
 	gob.Register(protocol.PermissionRequest{})
 	gob.Register(&writeState{})
+	gob.Register(&replaceState{})
 	gob.Register(&commandState{})
 	gob.Register(protocol.PermissionDecision{})
 }
 
 func BuildWorkspaceTools(cfg WorkspaceToolsConfig) ([]tool.BaseTool, error) {
-	out := make([]tool.BaseTool, 0, 5)
+	out := make([]tool.BaseTool, 0, 6)
 	listTool, err := toolutils.InferTool("workspace_list_files", "List indexed files in the current workspace.",
 		func(ctx context.Context, input ListFilesInput) ([]protocol.WorkspaceFile, error) {
 			files, err := cfg.Registry.LoadWorkspaceFiles(cfg.Store)
@@ -131,9 +155,9 @@ func BuildWorkspaceTools(cfg WorkspaceToolsConfig) ([]tool.BaseTool, error) {
 	}
 	out = append(out, searchTool)
 
-	writeTool, err := toolutils.InferTool("workspace_write_file", "Create or replace a workspace file. Requires permission in confirm mode.",
+	writeTool, err := toolutils.InferTool("workspace_write_file", "Create or replace a whole workspace file. Requires permission in confirm mode. Prefer workspace_replace_text for localized edits.",
 		func(ctx context.Context, input WriteFileInput) (*ToolResult, error) {
-			request, err := buildWritePermission(cfg, input)
+			request, err := BuildWritePermission(cfg, input)
 			if err != nil {
 				return nil, err
 			}
@@ -145,7 +169,9 @@ func BuildWorkspaceTools(cfg WorkspaceToolsConfig) ([]tool.BaseTool, error) {
 						return nil, tool.StatefulInterrupt(ctx, state.Request, state)
 					}
 					if !hasData || data.Value == PermissionReject {
-						return &ToolResult{Status: "rejected", Summary: strings.TrimSpace(data.Feedback)}, nil
+						result := &ToolResult{Status: "rejected", Summary: strings.TrimSpace(data.Feedback), TargetPath: state.Request.TargetPath}
+						recordWorkspaceToolCall(cfg, "workspace_write_file", state.Request, result)
+						return result, nil
 					}
 					if err := persistAcceptSessionRule(cfg, state.Request, data); err != nil {
 						return nil, err
@@ -161,9 +187,47 @@ func BuildWorkspaceTools(cfg WorkspaceToolsConfig) ([]tool.BaseTool, error) {
 	}
 	out = append(out, writeTool)
 
+	replaceTool, err := toolutils.InferTool("workspace_replace_text", "Replace exact text in a workspace file. Requires permission in confirm mode and revalidates the file before applying.",
+		func(ctx context.Context, input ReplaceTextInput) (*ToolResult, error) {
+			request, conflict, err := BuildReplaceTextPermission(cfg, input)
+			if err != nil {
+				return nil, err
+			}
+			if conflict != nil {
+				return conflict, nil
+			}
+			if cfg.PermissionMode == protocol.PermissionModeConfirm && !requestAllowedByRules(cfg.Store, cfg.SessionID, request) {
+				wasInterrupted, hasState, state := tool.GetInterruptState[*replaceState](ctx)
+				if wasInterrupted && hasState {
+					isTarget, hasData, data := tool.GetResumeContext[protocol.PermissionDecision](ctx)
+					if !isTarget {
+						return nil, tool.StatefulInterrupt(ctx, state.Request, state)
+					}
+					if !hasData || data.Value == PermissionReject {
+						result := &ToolResult{Status: "rejected", Summary: strings.TrimSpace(data.Feedback), TargetPath: state.Request.TargetPath}
+						recordWorkspaceToolCall(cfg, "workspace_replace_text", state.Request, result)
+						return result, nil
+					}
+					if err := persistAcceptSessionRule(cfg, state.Request, data); err != nil {
+						return nil, err
+					}
+					return applyReplaceText(cfg, state.Request)
+				}
+				return nil, tool.StatefulInterrupt(ctx, request, &replaceState{Request: request})
+			}
+			return applyReplaceText(cfg, request)
+		})
+	if err != nil {
+		return nil, err
+	}
+	out = append(out, replaceTool)
+
 	commandTool, err := toolutils.InferTool("workspace_run_command", "Run a shell command inside the current workspace. Requires permission in confirm mode.",
 		func(ctx context.Context, input CommandInput) (*ToolResult, error) {
-			request := buildCommandPermission(cfg, input)
+			request, err := BuildCommandPermission(cfg, input)
+			if err != nil {
+				return nil, err
+			}
 			if cfg.PermissionMode == protocol.PermissionModeConfirm && !requestAllowedByRules(cfg.Store, cfg.SessionID, request) {
 				wasInterrupted, hasState, state := tool.GetInterruptState[*commandState](ctx)
 				if wasInterrupted && hasState {
@@ -172,7 +236,9 @@ func BuildWorkspaceTools(cfg WorkspaceToolsConfig) ([]tool.BaseTool, error) {
 						return nil, tool.StatefulInterrupt(ctx, state.Request, state)
 					}
 					if !hasData || data.Value == PermissionReject {
-						return &ToolResult{Status: "rejected", Summary: strings.TrimSpace(data.Feedback)}, nil
+						result := &ToolResult{Status: "rejected", Summary: strings.TrimSpace(data.Feedback), Command: state.Request.Command}
+						recordWorkspaceToolCall(cfg, "workspace_run_command", state.Request, result)
+						return result, nil
 					}
 					if err := persistAcceptSessionRule(cfg, state.Request, data); err != nil {
 						return nil, err
@@ -191,7 +257,7 @@ func BuildWorkspaceTools(cfg WorkspaceToolsConfig) ([]tool.BaseTool, error) {
 	return out, nil
 }
 
-func buildWritePermission(cfg WorkspaceToolsConfig, input WriteFileInput) (protocol.PermissionRequest, error) {
+func BuildWritePermission(cfg WorkspaceToolsConfig, input WriteFileInput) (protocol.PermissionRequest, error) {
 	path := strings.TrimSpace(input.Path)
 	if path == "" {
 		return protocol.PermissionRequest{}, fmt.Errorf("workspace_write_file requires path")
@@ -235,8 +301,60 @@ func buildWritePermission(cfg WorkspaceToolsConfig, input WriteFileInput) (proto
 	}, nil
 }
 
-func buildCommandPermission(cfg WorkspaceToolsConfig, input CommandInput) protocol.PermissionRequest {
+func BuildReplaceTextPermission(cfg WorkspaceToolsConfig, input ReplaceTextInput) (protocol.PermissionRequest, *ToolResult, error) {
+	path := strings.TrimSpace(input.Path)
+	if path == "" {
+		return protocol.PermissionRequest{}, nil, fmt.Errorf("workspace_replace_text requires path")
+	}
+	oldText := input.OldText
+	if oldText == "" {
+		return protocol.PermissionRequest{}, nil, fmt.Errorf("workspace_replace_text requires old_text")
+	}
+	oldContent, existed, err := readFileForEdit(cfg.Store, path)
+	if err != nil {
+		return protocol.PermissionRequest{}, nil, err
+	}
+	if !existed {
+		return protocol.PermissionRequest{}, conflictResult(path, "file does not exist: "+path), nil
+	}
+	if conflict := replaceTextMatchConflict(path, oldContent, oldText); conflict != nil {
+		return protocol.PermissionRequest{}, conflict, nil
+	}
+	newContent := strings.Replace(oldContent, oldText, input.NewText, 1)
+	summary := strings.TrimSpace(input.Summary)
+	if summary == "" {
+		summary = "Replace text in " + path
+	}
+	return protocol.PermissionRequest{
+		RequestID:  requestID("replace", path+"\n"+contentHash(oldContent)+"\n"+oldText+"\n"+input.NewText),
+		SessionID:  cfg.SessionID,
+		NodeID:     "workspace_replace_text",
+		Tool:       string(protocol.NodeKindWorkspaceEdit),
+		Operation:  "replace",
+		Title:      "Edit file",
+		Subtitle:   path,
+		Question:   fmt.Sprintf("Do you want to make this edit to %s?", filepath.Base(path)),
+		Summary:    summary,
+		TargetPath: path,
+		Preview: protocol.PermissionPreview{
+			Kind:           "diff",
+			Summary:        summary,
+			Diff:           CompactUnifiedDiff(path, oldContent, newContent),
+			OldContentHash: contentHash(oldContent),
+			NewContent:     newContent,
+			OldText:        oldText,
+			NewText:        input.NewText,
+		},
+		Options:   PermissionOptions(protocol.NodeKindWorkspaceEdit),
+		CreatedAt: time.Now().UTC(),
+	}, nil, nil
+}
+
+func BuildCommandPermission(cfg WorkspaceToolsConfig, input CommandInput) (protocol.PermissionRequest, error) {
 	command := strings.TrimSpace(input.Command)
+	if command == "" {
+		return protocol.PermissionRequest{}, fmt.Errorf("workspace_run_command requires command")
+	}
 	summary := strings.TrimSpace(input.Summary)
 	if summary == "" {
 		summary = command
@@ -254,12 +372,12 @@ func buildCommandPermission(cfg WorkspaceToolsConfig, input CommandInput) protoc
 		Command:   command,
 		Preview: protocol.PermissionPreview{
 			Kind:          "command",
-			Summary:       fmt.Sprintf("cwd: %s", cfg.Store.WorkspaceRoot()),
+			Summary:       fmt.Sprintf("cwd: %s", workspaceRoot(cfg.Store)),
 			CommandPrefix: ShellCommandPrefix(command),
 		},
 		Options:   PermissionOptions(protocol.NodeKindWorkspaceCommand),
 		CreatedAt: time.Now().UTC(),
-	}
+	}, nil
 }
 
 func applyWrite(cfg WorkspaceToolsConfig, request protocol.PermissionRequest) (*ToolResult, error) {
@@ -272,26 +390,64 @@ func applyWrite(cfg WorkspaceToolsConfig, request protocol.PermissionRequest) (*
 	}
 	if request.Preview.OldContentHash == "" {
 		if existed {
-			return nil, fmt.Errorf("file was created since preview was generated: %s", request.TargetPath)
+			result := conflictResult(request.TargetPath, "file was created since preview was generated: "+request.TargetPath)
+			recordWorkspaceToolCall(cfg, "workspace_write_file", request, result)
+			return result, nil
 		}
 	} else if contentHash(current) != request.Preview.OldContentHash {
-		return nil, fmt.Errorf("file changed since preview was generated: %s", request.TargetPath)
+		result := conflictResult(request.TargetPath, "file changed since preview was generated: "+request.TargetPath)
+		recordWorkspaceToolCall(cfg, "workspace_write_file", request, result)
+		return result, nil
 	}
 	if err := cfg.Registry.WriteWorkspaceFile(cfg.Store, request.TargetPath, request.Preview.NewContent); err != nil {
 		return nil, err
 	}
-	return &ToolResult{Status: "completed", Summary: request.Preview.Summary}, nil
+	result := &ToolResult{Status: "completed", Summary: request.Preview.Summary, TargetPath: request.TargetPath, Changed: true}
+	recordWorkspaceToolCall(cfg, "workspace_write_file", request, result)
+	return result, nil
+}
+
+func applyReplaceText(cfg WorkspaceToolsConfig, request protocol.PermissionRequest) (*ToolResult, error) {
+	if request.TargetPath == "" || request.Preview.Kind != "diff" {
+		return nil, fmt.Errorf("approved replace request is missing diff preview")
+	}
+	if request.Preview.OldText == "" {
+		return nil, fmt.Errorf("approved replace request is missing old_text")
+	}
+	current, existed, err := readFileForEdit(cfg.Store, request.TargetPath)
+	if err != nil {
+		return nil, err
+	}
+	if !existed {
+		result := conflictResult(request.TargetPath, "file does not exist: "+request.TargetPath)
+		recordWorkspaceToolCall(cfg, "workspace_replace_text", request, result)
+		return result, nil
+	}
+	if request.Preview.OldContentHash != "" && contentHash(current) != request.Preview.OldContentHash {
+		result := conflictResult(request.TargetPath, "file changed since preview was generated: "+request.TargetPath)
+		recordWorkspaceToolCall(cfg, "workspace_replace_text", request, result)
+		return result, nil
+	}
+	if result := replaceTextMatchConflict(request.TargetPath, current, request.Preview.OldText); result != nil {
+		recordWorkspaceToolCall(cfg, "workspace_replace_text", request, result)
+		return result, nil
+	}
+	if err := cfg.Registry.WriteWorkspaceFile(cfg.Store, request.TargetPath, strings.Replace(current, request.Preview.OldText, request.Preview.NewText, 1)); err != nil {
+		return nil, err
+	}
+	result := &ToolResult{Status: "completed", Summary: request.Preview.Summary, TargetPath: request.TargetPath, Changed: true}
+	recordWorkspaceToolCall(cfg, "workspace_replace_text", request, result)
+	return result, nil
 }
 
 func applyCommand(cfg WorkspaceToolsConfig, request protocol.PermissionRequest) (*ToolResult, error) {
 	record, err := cfg.Registry.RunWorkspaceCommand(cfg.Store, request.Command)
-	result := &ToolResult{
-		Status:  "completed",
-		Summary: formatCommandRecord(record),
-		Output:  strings.TrimSpace(strings.Join([]string{record.Stdout, record.Stderr}, "\n")),
-	}
+	result := commandToolResult(record, err)
+	recordWorkspaceToolCall(cfg, "workspace_run_command", request, result)
 	if err != nil {
-		result.Status = "failed"
+		if CommandExecutionFailure(record, err) {
+			return result, nil
+		}
 		return result, err
 	}
 	return result, nil
@@ -439,6 +595,101 @@ func readFileForEdit(store *storage.Store, targetPath string) (string, bool, err
 		return "", false, nil
 	}
 	return "", false, err
+}
+
+func conflictResult(path, summary string) *ToolResult {
+	return &ToolResult{
+		Status:     "conflict",
+		Summary:    summary,
+		TargetPath: path,
+		Conflict:   true,
+		Changed:    false,
+	}
+}
+
+func replaceTextMatchConflict(path, content, oldText string) *ToolResult {
+	count := strings.Count(content, oldText)
+	switch {
+	case count == 0:
+		return conflictResult(path, "target text not found in "+path)
+	case count > 1:
+		return conflictResult(path, fmt.Sprintf("target text is not unique in %s: %d matches", path, count))
+	default:
+		return nil
+	}
+}
+
+func commandToolResult(record protocol.WorkspaceCommandRecord, runErr error) *ToolResult {
+	status := "completed"
+	if runErr != nil || record.ExitCode != 0 {
+		status = "failed"
+	}
+	exitCode := record.ExitCode
+	return &ToolResult{
+		Status:          status,
+		Summary:         formatCommandRecord(record),
+		Output:          strings.TrimSpace(strings.Join([]string{record.Stdout, record.Stderr}, "\n")),
+		Command:         record.Command,
+		Cwd:             record.Cwd,
+		ExitCode:        &exitCode,
+		Stdout:          record.Stdout,
+		Stderr:          record.Stderr,
+		StdoutTruncated: record.StdoutTruncated,
+		StderrTruncated: record.StderrTruncated,
+		Changed:         false,
+	}
+}
+
+func recordWorkspaceToolCall(cfg WorkspaceToolsConfig, toolName string, request protocol.PermissionRequest, result *ToolResult) {
+	if cfg.Store == nil || strings.TrimSpace(cfg.SessionID) == "" || result == nil {
+		return
+	}
+	if _, err := os.Stat(cfg.Store.SessionDir(cfg.SessionID)); err != nil {
+		return
+	}
+	_ = cfg.Store.AppendToolCall(cfg.SessionID, map[string]any{
+		"tool":               toolName,
+		"request_id":         request.RequestID,
+		"target_path":        request.TargetPath,
+		"command":            request.Command,
+		"summary":            result.Summary,
+		"status":             result.Status,
+		"tool_result_status": result.Status,
+		"changed":            result.Changed,
+		"conflict":           result.Conflict,
+		"exit_code":          result.ExitCode,
+		"stdout":             result.Stdout,
+		"stderr":             result.Stderr,
+		"stdout_truncated":   result.StdoutTruncated,
+		"stderr_truncated":   result.StderrTruncated,
+		"diff":               request.Preview.Diff,
+		"created_at":         time.Now().UTC(),
+	})
+}
+
+func CommandExecutionFailure(record protocol.WorkspaceCommandRecord, err error) bool {
+	if err == nil || strings.TrimSpace(record.Command) == "" {
+		return false
+	}
+	if record.ExitCode == 0 {
+		return false
+	}
+	var exitErr *exec.ExitError
+	if errors.As(err, &exitErr) {
+		return true
+	}
+	message := err.Error()
+	return strings.Contains(message, "exit status") ||
+		strings.Contains(message, "signal:") ||
+		strings.Contains(message, "command timed out") ||
+		record.ExitCode < 0
+}
+
+func workspaceRoot(store *storage.Store) string {
+	if store == nil {
+		return "current workspace"
+	}
+	return store.WorkspaceRoot()
 }
 
 func contentHash(content string) string {

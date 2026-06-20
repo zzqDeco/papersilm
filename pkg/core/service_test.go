@@ -669,7 +669,7 @@ func TestWorkspaceEditReplacementUsesCurrentContent(t *testing.T) {
 	}
 }
 
-func TestApprovedCommandFailureMarksNodeFailed(t *testing.T) {
+func TestApprovedCommandNonZeroExitCompletesWithWorkspaceResult(t *testing.T) {
 	t.Parallel()
 
 	svc, _ := newTestService(t)
@@ -678,18 +678,22 @@ func TestApprovedCommandFailureMarksNodeFailed(t *testing.T) {
 	if err != nil {
 		t.Fatalf("LoadPendingApproval: %v", err)
 	}
-	if _, err := svc.DecidePermission(context.Background(), sessionID, protocol.PermissionDecision{
+	result, err := svc.DecidePermission(context.Background(), sessionID, protocol.PermissionDecision{
 		RequestID: approval.ActiveRequestID,
 		Value:     "accept-once",
-	}); err == nil {
-		t.Fatalf("expected command failure")
+	})
+	if err != nil {
+		t.Fatalf("DecidePermission(non-zero command): %v", err)
+	}
+	if !strings.Contains(result.Response, "command exited 7") {
+		t.Fatalf("expected command result response, got %q", result.Response)
 	}
 	execState, err := svc.store.LoadExecutionState(sessionID)
 	if err != nil {
 		t.Fatalf("LoadExecutionState: %v", err)
 	}
-	if execState == nil || len(execState.Nodes) == 0 || execState.Nodes[0].Status != protocol.NodeStatusFailed {
-		t.Fatalf("expected failed node after command error, got %+v", execState)
+	if execState == nil || len(execState.Nodes) == 0 || execState.Nodes[0].Status != protocol.NodeStatusCompleted {
+		t.Fatalf("expected completed node after command exit result, got %+v", execState)
 	}
 	approval, err = svc.store.LoadPendingApproval(sessionID)
 	if err != nil {
@@ -702,23 +706,26 @@ func TestApprovedCommandFailureMarksNodeFailed(t *testing.T) {
 	if err != nil {
 		t.Fatalf("LoadMeta: %v", err)
 	}
-	if meta.State != protocol.SessionStateFailed || meta.ApprovalPending {
-		t.Fatalf("expected failed session without pending approval, got %+v", meta)
+	if meta.State == protocol.SessionStateFailed || meta.ApprovalPending {
+		t.Fatalf("expected non-failed session without pending approval, got %+v", meta)
 	}
 }
 
-func TestExecutePlanFailureMarksSessionFailed(t *testing.T) {
+func TestExecutePlanCommandNonZeroExitReturnsWorkspaceResult(t *testing.T) {
 	t.Parallel()
 
 	svc, _ := newTestService(t)
-	_, err := svc.Execute(context.Background(), protocol.ClientRequest{
+	result, err := svc.Execute(context.Background(), protocol.ClientRequest{
 		Task:           "run command `sh -c 'exit 7'`",
 		PermissionMode: protocol.PermissionModeAuto,
 		Language:       "zh",
 		Style:          "distill",
 	})
-	if err == nil {
-		t.Fatalf("expected command failure")
+	if err != nil {
+		t.Fatalf("Execute(non-zero command): %v", err)
+	}
+	if !strings.Contains(result.Response, "command exited 7") {
+		t.Fatalf("expected command result response, got %q", result.Response)
 	}
 	sessionID, loadErr := svc.store.LatestSessionID()
 	if loadErr != nil {
@@ -728,8 +735,8 @@ func TestExecutePlanFailureMarksSessionFailed(t *testing.T) {
 	if loadErr != nil {
 		t.Fatalf("LoadMeta: %v", loadErr)
 	}
-	if meta.State != protocol.SessionStateFailed {
-		t.Fatalf("expected failed session state, got %s", meta.State)
+	if meta.State == protocol.SessionStateFailed {
+		t.Fatalf("expected non-failed session state, got %s", meta.State)
 	}
 }
 
