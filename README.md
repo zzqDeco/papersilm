@@ -86,7 +86,9 @@ Runtime smoke matrix for contributors:
 - `go test ./...`
 - `go vet ./...`
 - `go build -o bin/papersilm ./cmd/papersilm`
+- `bash scripts/workflow-static-check.sh`
 - `bash scripts/tui-smoke.sh`
+- `goreleaser release --snapshot --clean --skip=publish`
 - `papersilm -p "summarize current workspace" --permission-mode auto`
 - `papersilm -p "run command \`pwd\`" --permission-mode confirm --output-format json`
 
@@ -99,6 +101,15 @@ screens, scenario metadata, and session summaries. Set
 `PAPERSILM_TUI_PTY_ARTIFACT_DIR=/path/to/pty` and
 `PAPERSILM_TUI_PROCESS_ARTIFACT_DIR=/path/to/process` to choose where failure
 artifacts are written.
+
+Release PRs must pass the `workflow-static`, `test-and-build`, `tui-smoke`, and
+`release-dry-run` GitHub Actions jobs before merge. The static workflow check pins
+`actionlint` and validates `.github/workflows/*.yml` before GitHub can fail at
+workflow parse time. The release dry run executes GoReleaser with
+`release --snapshot --clean --skip=publish` to validate archives, checksums, and
+build metadata without publishing. Configure these job names as required checks in
+GitHub branch protection manually; this repository does not mutate GitHub settings
+from CI.
 
 Confirm-mode approvals are tool scoped. Workspace writes and shell commands create `PermissionRequest` payloads, resume through Eino `ResumeWithParams`, and support `accept-once`, `accept-session`, and `reject` decisions. Session-scoped allow rules are stored under the current workspace session, not in global config.
 
