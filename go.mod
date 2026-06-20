@@ -8,11 +8,11 @@ require (
 	github.com/charmbracelet/bubbletea v1.3.10
 	github.com/charmbracelet/glamour v1.0.0
 	github.com/charmbracelet/lipgloss v1.1.1-0.20250404203927-76690c660834
-	github.com/cloudwego/eino v0.9.0-beta.1
+	github.com/cloudwego/eino v0.9.9
 	github.com/cloudwego/eino-ext/components/document/loader/file v0.0.0-20260311121809-88ebb0eecbdb
 	github.com/cloudwego/eino-ext/components/document/parser/pdf v0.0.0-20260311121809-88ebb0eecbdb
 	github.com/cloudwego/eino-ext/components/document/transformer/splitter/recursive v0.0.0-20260311121809-88ebb0eecbdb
-	github.com/cloudwego/eino-ext/components/model/agenticopenai v0.2.0-beta.1
+	github.com/cloudwego/eino-ext/components/model/agenticopenai v0.2.2
 	github.com/cloudwego/eino-ext/components/model/ark v0.1.65
 	github.com/cloudwego/eino-ext/components/model/deepseek v0.1.2
 	github.com/cloudwego/eino-ext/components/model/ollama v0.1.8
@@ -46,7 +46,7 @@ require (
 	github.com/clipperhouse/stringish v0.1.1 // indirect
 	github.com/clipperhouse/uax29/v2 v2.5.0 // indirect
 	github.com/cloudwego/base64x v0.1.6 // indirect
-	github.com/cloudwego/eino-ext/libs/acl/openai v0.1.17 // indirect
+	github.com/cloudwego/eino-ext/libs/acl/openai v0.1.18-0.20260527084435-846f52bd97c6 // indirect
 	github.com/cohesion-org/deepseek-go v1.3.2 // indirect
 	github.com/dlclark/regexp2 v1.11.5 // indirect
 	github.com/dslipak/pdf v0.0.2 // indirect
