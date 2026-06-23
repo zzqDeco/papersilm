@@ -301,6 +301,7 @@ func TestWorkspaceRunCommandNonZeroExitReturnsStructuredToolResult(t *testing.T)
 		"tool":               "workspace_run_command",
 		"tool_result_status": "failed",
 		"command":            "printf stdout; printf stderr >&2; exit 7",
+		"cwd":                cfg.Store.WorkspaceRoot(),
 		"exit_code":          float64(7),
 		"stdout":             "stdout",
 		"stderr":             "stderr",

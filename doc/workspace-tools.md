@@ -84,10 +84,9 @@ artifact may see:
 - `conflict`
 - `tool_result_status`
 
-The TUI main screen should show compact rows such as `Edited README.md`,
-`Command exited 1`, or `Search found 3 matches`. Full diff, command output,
-feedback, and tool-call metadata belong in transcript and session files. Current
-stream events and transcript entries do not promise these detailed fields.
+Full diff, command output, feedback, and tool-call metadata belong in transcript
+and session files rather than the main TUI timeline. Current stream events and
+transcript entries do not promise these detailed fields.
 
 ## Release Smoke Checklist
 

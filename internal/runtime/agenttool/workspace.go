@@ -652,6 +652,7 @@ func recordWorkspaceToolCall(cfg WorkspaceToolsConfig, toolName string, request 
 		"request_id":         request.RequestID,
 		"target_path":        request.TargetPath,
 		"command":            request.Command,
+		"cwd":                result.Cwd,
 		"summary":            result.Summary,
 		"status":             result.Status,
 		"tool_result_status": result.Status,
