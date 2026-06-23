@@ -3,11 +3,13 @@
 本目录用于存放 `papersilm` 的技术文档。当前采用与 `starxo` 相同的两层组织方式：
 
 - `doc/README.md`：项目级文档入口与维护约定
+- `doc/workspace-tools.md`：Eino-native workspace tool 的用户可见契约、审批语义与 release smoke 清单
 - `doc/src/<源文件相对路径>.plan.md`：与源码路径镜像的一对一文件级技术说明
 
 ## 当前覆盖范围
 
 - 当前已覆盖 `cmd/`、`internal/`、`pkg/` 下全部非测试 Go 文件
+- 当前专题文档覆盖 workspace read/search/edit/shell tool 的稳定行为契约
 - `*_test.go` 暂不纳入本轮文件级技术文档
 - 若新增、移动或删除非测试 Go 文件，应同步增删对应的 `doc/src/*.plan.md`
 

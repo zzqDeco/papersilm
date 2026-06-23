@@ -113,6 +113,8 @@ from CI.
 
 Confirm-mode approvals are tool scoped. Workspace writes and shell commands create `PermissionRequest` payloads, resume through Eino `ResumeWithParams`, and support `accept-once`, `accept-session`, and `reject` decisions. Session-scoped allow rules are stored under the current workspace session, not in global config.
 
+Workspace tool behavior is documented in [doc/workspace-tools.md](doc/workspace-tools.md). The stable Eino tool-call contract is that localized edits use `workspace_replace_text`, whole-file changes use `workspace_write_file`, `workspace_run_command` returns structured results for non-zero shell exits instead of failing the whole agent turn, and session allow rules preserve the request operation (`replace`, `write`, or `shell`).
+
 ## Usage
 
 Print mode with one paper:
