@@ -268,6 +268,9 @@ func TestWorkspaceRunCommandNonZeroExitReturnsStructuredToolResult(t *testing.T)
 
 	cfg := newWorkspaceToolTestConfig(t)
 	cfg.PermissionMode = protocol.PermissionModeAuto
+	if err := cfg.Store.CreateSession(protocol.SessionMeta{SessionID: cfg.SessionID}); err != nil {
+		t.Fatalf("CreateSession: %v", err)
+	}
 	invokable := findWorkspaceInvokableTool(t, cfg, "workspace_run_command")
 	raw, err := invokable.InvokableRun(context.Background(), `{"command":"printf stdout; printf stderr >&2; exit 7","summary":"nonzero smoke"}`)
 	if err != nil {
@@ -285,6 +288,28 @@ func TestWorkspaceRunCommandNonZeroExitReturnsStructuredToolResult(t *testing.T)
 	}
 	if result.Stdout != "stdout" || result.Stderr != "stderr" || !strings.Contains(result.Summary, "command exited 7") {
 		t.Fatalf("expected structured stdout/stderr summary, got %+v", result)
+	}
+	toolCalls, err := os.ReadFile(filepath.Join(cfg.Store.SessionDir(cfg.SessionID), "tool_calls.jsonl"))
+	if err != nil {
+		t.Fatalf("ReadFile(tool_calls): %v", err)
+	}
+	var recorded map[string]any
+	if err := json.Unmarshal([]byte(strings.TrimSpace(string(toolCalls))), &recorded); err != nil {
+		t.Fatalf("unmarshal tool_calls record %q: %v", string(toolCalls), err)
+	}
+	for key, want := range map[string]any{
+		"tool":               "workspace_run_command",
+		"tool_result_status": "failed",
+		"command":            "printf stdout; printf stderr >&2; exit 7",
+		"exit_code":          float64(7),
+		"stdout":             "stdout",
+		"stderr":             "stderr",
+		"changed":            false,
+		"conflict":           false,
+	} {
+		if got := recorded[key]; got != want {
+			t.Fatalf("recorded[%s] = %#v, want %#v; record=%+v", key, got, want, recorded)
+		}
 	}
 }
 

@@ -39,7 +39,7 @@ Default session scopes are:
 Edit permission requests include a diff preview. The preview stores the file
 hash observed at approval time and the content required to apply the edit.
 
-On resume, `papersilm` revalidates before writing:
+In the Eino workspace tool apply path, `papersilm` revalidates before writing:
 
 - whole-file writes fail with `status=conflict` if the file changed after the
   preview was generated;
@@ -49,6 +49,9 @@ On resume, `papersilm` revalidates before writing:
 
 When a conflict is returned, the agent should re-read the file, regenerate the
 edit preview, and ask again if the next attempt still has side effects.
+Older planned approval paths can still surface stale previews as run errors;
+clients should treat the `status=conflict` contract as specific to
+`workspace_replace_text` and `workspace_write_file` tool results.
 
 ## Command Results
 
@@ -65,11 +68,11 @@ For normal process exits:
 The agent should continue reasoning from a `status=failed` tool result instead
 of treating it as an Eino runtime failure.
 
-## JSON And Transcript Fields
+## Tool Call Records
 
-The public protocol shape remains stable. Workspace tool details are represented
-as optional payload fields in stream events, transcript entries, and
-`tool_calls.jsonl` records. Clients may see:
+The public protocol shape remains stable. Detailed workspace tool metadata is
+persisted in the session `tool_calls.jsonl` file. Clients reading that session
+artifact may see:
 
 - `target_path`
 - `command`
@@ -83,7 +86,8 @@ as optional payload fields in stream events, transcript entries, and
 
 The TUI main screen should show compact rows such as `Edited README.md`,
 `Command exited 1`, or `Search found 3 matches`. Full diff, command output,
-feedback, and tool-call metadata belong in transcript and session files.
+feedback, and tool-call metadata belong in transcript and session files. Current
+stream events and transcript entries do not promise these detailed fields.
 
 ## Release Smoke Checklist
 
@@ -101,6 +105,6 @@ git diff --check
 Manual smoke should include:
 
 - `papersilm -p "search current workspace for README" --permission-mode auto`
-- `papersilm -p "replace typo in README.md with type" --permission-mode confirm`
+- `papersilm -p "update \`README.md\` replace \`typo\` with \`type\`" --permission-mode confirm`
 - `papersilm -p "run command \`printf stdout; printf stderr >&2; exit 7\`" --permission-mode confirm --output-format json`
 - TUI approval, reject with feedback, and accept-session for a command prefix

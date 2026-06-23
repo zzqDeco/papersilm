@@ -164,24 +164,17 @@ func TestOutputWriterStreamJSONEmitsProtocolEventsOnly(t *testing.T) {
 	}
 }
 
-func TestOutputWriterStreamJSONPreservesWorkspaceToolResultFields(t *testing.T) {
+func TestOutputWriterStreamJSONPreservesOpaquePayloadFields(t *testing.T) {
 	t.Parallel()
 
 	event := protocol.StreamEvent{
 		Type:      protocol.EventResult,
-		SessionID: "sess_tool_result",
-		Message:   "Command exited 7",
+		SessionID: "sess_payload",
+		Message:   "result",
 		Payload: map[string]any{
-			"tool_result_status": "failed",
-			"command":            "printf stdout; printf stderr >&2; exit 7",
-			"cwd":                "/tmp/papersilm-workspace",
-			"exit_code":          7,
-			"stdout":             "stdout",
-			"stderr":             "stderr",
-			"stdout_truncated":   false,
-			"stderr_truncated":   false,
-			"changed":            false,
-			"conflict":           false,
+			"optional_status": "failed",
+			"optional_code":   7,
+			"optional_flag":   false,
 		},
 		CreatedAt: time.Unix(1, 0).UTC(),
 	}
@@ -206,14 +199,9 @@ func TestOutputWriterStreamJSONPreservesWorkspaceToolResultFields(t *testing.T) 
 		t.Fatalf("unexpected stream event type: %+v", decoded)
 	}
 	for key, want := range map[string]any{
-		"tool_result_status": "failed",
-		"command":            "printf stdout; printf stderr >&2; exit 7",
-		"cwd":                "/tmp/papersilm-workspace",
-		"exit_code":          float64(7),
-		"stdout":             "stdout",
-		"stderr":             "stderr",
-		"changed":            false,
-		"conflict":           false,
+		"optional_status": "failed",
+		"optional_code":   float64(7),
+		"optional_flag":   false,
 	} {
 		if got := decoded.Payload[key]; got != want {
 			t.Fatalf("payload[%s] = %#v, want %#v; payload=%+v", key, got, want, decoded.Payload)
