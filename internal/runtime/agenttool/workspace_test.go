@@ -314,6 +314,105 @@ func TestWorkspaceRunCommandNonZeroExitReturnsStructuredToolResult(t *testing.T)
 	}
 }
 
+func TestWorkspaceReadOnlyToolsRecordFullToolCalls(t *testing.T) {
+	t.Parallel()
+
+	cfg := newWorkspaceToolTestConfig(t)
+	cfg.PermissionMode = protocol.PermissionModeAuto
+	if err := cfg.Store.CreateSession(protocol.SessionMeta{SessionID: cfg.SessionID}); err != nil {
+		t.Fatalf("CreateSession: %v", err)
+	}
+	if err := cfg.Store.WriteWorkspaceFile("README.md", "alpha marker\nsecond line\n"); err != nil {
+		t.Fatalf("WriteWorkspaceFile README: %v", err)
+	}
+	if err := cfg.Store.WriteWorkspaceFile("notes.md", "marker in notes\n"); err != nil {
+		t.Fatalf("WriteWorkspaceFile notes: %v", err)
+	}
+
+	readTool := findWorkspaceInvokableTool(t, cfg, "workspace_read_file")
+	if _, err := readTool.InvokableRun(context.Background(), `{"path":"README.md"}`); err != nil {
+		t.Fatalf("read InvokableRun: %v", err)
+	}
+	searchTool := findWorkspaceInvokableTool(t, cfg, "workspace_search")
+	if _, err := searchTool.InvokableRun(context.Background(), `{"query":"marker","limit":10}`); err != nil {
+		t.Fatalf("search InvokableRun: %v", err)
+	}
+	listTool := findWorkspaceInvokableTool(t, cfg, "workspace_list_files")
+	if _, err := listTool.InvokableRun(context.Background(), `{"limit":10}`); err != nil {
+		t.Fatalf("list InvokableRun: %v", err)
+	}
+
+	records := readToolCallRecords(t, cfg)
+	byTool := map[string]map[string]any{}
+	for _, record := range records {
+		byTool[record["tool"].(string)] = record
+	}
+	readRecord := byTool["workspace_read_file"]
+	if readRecord["target_path"] != "README.md" || !strings.Contains(readRecord["output"].(string), "alpha marker") {
+		t.Fatalf("read record lost file content: %+v", readRecord)
+	}
+	searchRecord := byTool["workspace_search"]
+	if searchRecord["query"] != "marker" || searchRecord["match_count"] != float64(2) {
+		t.Fatalf("search record lost query/count: %+v", searchRecord)
+	}
+	hits, ok := searchRecord["hits"].([]any)
+	if !ok || len(hits) != 2 {
+		t.Fatalf("search record lost hits: %+v", searchRecord)
+	}
+	listRecord := byTool["workspace_list_files"]
+	files, ok := listRecord["files"].([]any)
+	if !ok || len(files) < 2 {
+		t.Fatalf("list record lost files: %+v", listRecord)
+	}
+	if listRecord["match_count"] != float64(len(files)) {
+		t.Fatalf("list record lost file count: %+v", listRecord)
+	}
+	filePaths := map[string]bool{}
+	for _, item := range files {
+		file, ok := item.(map[string]any)
+		if !ok {
+			t.Fatalf("unexpected file record shape: %+v", item)
+		}
+		filePaths[file["path"].(string)] = true
+	}
+	if !filePaths["README.md"] || !filePaths["notes.md"] {
+		t.Fatalf("list record missing workspace files: %+v", listRecord)
+	}
+}
+
+func TestWorkspaceReplaceConflictRecordsToolCall(t *testing.T) {
+	t.Parallel()
+
+	cfg := newWorkspaceToolTestConfig(t)
+	cfg.PermissionMode = protocol.PermissionModeAuto
+	if err := cfg.Store.CreateSession(protocol.SessionMeta{SessionID: cfg.SessionID}); err != nil {
+		t.Fatalf("CreateSession: %v", err)
+	}
+	if err := cfg.Store.WriteWorkspaceFile("README.md", "hello world\n"); err != nil {
+		t.Fatalf("WriteWorkspaceFile: %v", err)
+	}
+	replaceTool := findWorkspaceInvokableTool(t, cfg, "workspace_replace_text")
+	raw, err := replaceTool.InvokableRun(context.Background(), `{"path":"README.md","old_text":"missing","new_text":"type"}`)
+	if err != nil {
+		t.Fatalf("replace InvokableRun should return structured conflict: %v", err)
+	}
+	var result ToolResult
+	if err := json.Unmarshal([]byte(raw), &result); err != nil {
+		t.Fatalf("unmarshal conflict result %q: %v", raw, err)
+	}
+	if result.Status != "conflict" || !strings.Contains(result.Summary, "target text not found") {
+		t.Fatalf("expected conflict reason in tool result, got %+v", result)
+	}
+	records := readToolCallRecords(t, cfg)
+	if len(records) != 1 {
+		t.Fatalf("expected one tool call record, got %+v", records)
+	}
+	record := records[0]
+	if record["tool"] != "workspace_replace_text" || record["tool_result_status"] != "conflict" || !strings.Contains(record["summary"].(string), "target text not found") {
+		t.Fatalf("conflict record lost reason: %+v", record)
+	}
+}
+
 func TestCommandExecutionFailureTreatsSignalAsStructuredFailure(t *testing.T) {
 	t.Parallel()
 
@@ -361,4 +460,25 @@ func findWorkspaceInvokableTool(t *testing.T, cfg WorkspaceToolsConfig, name str
 	}
 	t.Fatalf("tool %s not found", name)
 	return nil
+}
+
+func readToolCallRecords(t *testing.T, cfg WorkspaceToolsConfig) []map[string]any {
+	t.Helper()
+	raw, err := os.ReadFile(filepath.Join(cfg.Store.SessionDir(cfg.SessionID), "tool_calls.jsonl"))
+	if err != nil {
+		t.Fatalf("ReadFile(tool_calls): %v", err)
+	}
+	lines := strings.Split(strings.TrimSpace(string(raw)), "\n")
+	records := make([]map[string]any, 0, len(lines))
+	for _, line := range lines {
+		if strings.TrimSpace(line) == "" {
+			continue
+		}
+		var record map[string]any
+		if err := json.Unmarshal([]byte(line), &record); err != nil {
+			t.Fatalf("unmarshal tool_calls line %q: %v", line, err)
+		}
+		records = append(records, record)
+	}
+	return records
 }

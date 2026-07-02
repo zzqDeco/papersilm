@@ -224,6 +224,9 @@ func workspaceToolProjection(toolName, callID, text string) (string, map[string]
 	if rawMap, ok := raw.(map[string]any); ok {
 		copyProjectionFields(payload, rawMap)
 	}
+	if resultSummary := strings.TrimSpace(asString(payload["summary"])); resultSummary != "" {
+		payload["result_summary"] = resultSummary
+	}
 
 	var summary string
 	switch toolName {

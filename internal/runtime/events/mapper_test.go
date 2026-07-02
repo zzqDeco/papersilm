@@ -169,6 +169,18 @@ func TestFromAgentEventProjectsWorkspaceEditResults(t *testing.T) {
 			if mapped[0].Message != tc.message {
 				t.Fatalf("message = %q, want %q", mapped[0].Message, tc.message)
 			}
+			payload, ok := mapped[0].Payload.(map[string]any)
+			if !ok {
+				t.Fatalf("expected map payload, got %T", mapped[0].Payload)
+			}
+			if tc.name == "conflict" {
+				if payload["summary"] != "Edit conflict in README.md" {
+					t.Fatalf("expected compact conflict summary, got %+v", payload)
+				}
+				if payload["result_summary"] != "replace typo" {
+					t.Fatalf("expected original conflict reason to be preserved, got %+v", payload)
+				}
+			}
 		})
 	}
 }
