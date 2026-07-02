@@ -37,7 +37,8 @@ Default session scopes are:
 ## Edit Preview And Apply
 
 Edit permission requests include a diff preview. The preview stores the file
-hash observed at approval time and the content required to apply the edit.
+hash observed when the permission request is created and the content required to
+apply the edit.
 
 In the Eino workspace tool apply path, `papersilm` revalidates before writing:
 
@@ -84,9 +85,11 @@ artifact may see:
 - `conflict`
 - `tool_result_status`
 
-Full diff, command output, feedback, and tool-call metadata belong in transcript
-and session files rather than the main TUI timeline. Current stream events and
-transcript entries do not promise these detailed fields.
+Stream events and transcript entries may include a compact workspace tool
+projection with optional metadata such as `tool`, `tool_call_id`, `target_path`,
+`command`, `cwd`, `exit_code`, `changed`, `conflict`, and `match_count`. Full
+diff, command output, feedback, and tool-call metadata belong in `tool_calls.jsonl`
+rather than the main TUI timeline.
 
 ## Release Smoke Checklist
 
@@ -104,6 +107,7 @@ git diff --check
 Manual smoke should include:
 
 - `papersilm -p "search current workspace for README" --permission-mode auto`
-- `papersilm -p "update \`README.md\` replace \`typo\` with \`type\`" --permission-mode confirm`
-- `papersilm -p "run command \`printf stdout; printf stderr >&2; exit 7\`" --permission-mode confirm --output-format json`
+- ``papersilm -p "update `README.md` replace `typo` with `type`" --permission-mode confirm``
+- ``papersilm -p "run command `printf stdout; printf stderr >&2; exit 7`" --permission-mode auto --output-format json``
+- ``papersilm -p "run command `printf %s approval-smoke`" --permission-mode confirm --output-format json``
 - TUI approval, reject with feedback, and accept-session for a command prefix

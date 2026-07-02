@@ -135,6 +135,100 @@ func TestProgressEventsGroupIntoSingleActivityRow(t *testing.T) {
 	}
 }
 
+func TestWorkspaceToolProjectionRendersCompactActivityRow(t *testing.T) {
+	t.Parallel()
+
+	model := newTestTUIModel()
+	model.items = nil
+	model.messageViewport.Reset()
+
+	event := protocol.StreamEvent{
+		Type:      protocol.EventProgress,
+		SessionID: "sess_test",
+		Message:   "Command exited 7",
+		Payload: map[string]any{
+			"subtype":            "workspace_tool",
+			"tool":               "workspace_run_command",
+			"tool_call_id":       "call_cmd",
+			"tool_result_status": "failed",
+			"command":            "printf stdout; printf stderr >&2; exit 7",
+			"cwd":                "/tmp/workspace",
+			"exit_code":          7,
+			"summary":            "Command exited 7",
+		},
+		CreatedAt: time.Now().UTC(),
+	}
+	entry, ok := transcriptEntryFromEvent(event)
+	if !ok {
+		t.Fatalf("expected workspace tool projection to enter transcript")
+	}
+	if entry.Subtype != "workspace_tool" || entry.Payload["tool"] != "workspace_run_command" {
+		t.Fatalf("workspace projection metadata was not preserved: %+v", entry)
+	}
+
+	model.appendTranscript(entry, true)
+	if len(model.items) != 1 {
+		t.Fatalf("expected one timeline item, got %+v", model.items)
+	}
+	rendered := model.renderTimelineContent(80)
+	for _, want := range []string{"Command exited 7"} {
+		if !containsString(rendered, want) {
+			t.Fatalf("timeline missing %q: %s", want, rendered)
+		}
+	}
+	for _, bad := range []string{"Assistant", "{", "tool=", "node=", "Permission decision:", "stdout", "stderr"} {
+		if containsString(rendered, bad) {
+			t.Fatalf("workspace projection leaked %q into timeline: %s", bad, rendered)
+		}
+	}
+	if !containsString(model.renderTranscriptContent(80), "Command exited 7") {
+		t.Fatalf("expected transcript to retain compact workspace projection")
+	}
+}
+
+func TestWorkspaceToolProjectionDoesNotJoinPlanProgressGroup(t *testing.T) {
+	t.Parallel()
+
+	model := newTestTUIModel()
+	model.items = nil
+	model.messageViewport.Reset()
+
+	model.appendTranscript(protocol.TranscriptEntry{
+		ID:           "p1",
+		SessionID:    "sess_test",
+		Type:         protocol.TranscriptEntryProgress,
+		Subtype:      string(protocol.EventProgress),
+		Title:        "Progress",
+		Body:         "node execution started",
+		Visibility:   protocol.TranscriptVisibilityActivity,
+		Presentation: protocol.TranscriptPresentationGrouped,
+		CreatedAt:    time.Now().UTC(),
+	}, false)
+	model.appendTranscript(protocol.TranscriptEntry{
+		ID:           "tool1",
+		SessionID:    "sess_test",
+		Type:         protocol.TranscriptEntryProgress,
+		Subtype:      "workspace_tool",
+		Title:        "Progress",
+		Body:         "Edited README.md",
+		Visibility:   protocol.TranscriptVisibilityActivity,
+		Presentation: protocol.TranscriptPresentationRow,
+		Payload: map[string]any{
+			"subtype": "workspace_tool",
+			"tool":    "workspace_replace_text",
+			"summary": "Edited README.md",
+		},
+		CreatedAt: time.Now().UTC(),
+	}, false)
+
+	if len(model.items) != 2 {
+		t.Fatalf("expected workspace projection to render as a separate row, got %+v", model.items)
+	}
+	if !containsString(model.items[1].Body, "Edited README.md") || containsString(model.items[1].Body, "updates") {
+		t.Fatalf("unexpected workspace projection row: %+v", model.items[1])
+	}
+}
+
 func TestFailedProgressDetailStaysVisibleInActivityRow(t *testing.T) {
 	t.Parallel()
 

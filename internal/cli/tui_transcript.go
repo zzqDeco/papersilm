@@ -124,16 +124,22 @@ func transcriptEntryFromEvent(event protocol.StreamEvent) (protocol.TranscriptEn
 		if body == "" {
 			body = "progress"
 		}
+		subtype := string(event.Type)
+		if isWorkspaceToolPayload(event.Payload) {
+			subtype = "workspace_tool"
+			presentation = protocol.TranscriptPresentationRow
+		}
 		return protocol.TranscriptEntry{
 			ID:           fmt.Sprintf("event_%s_%d", event.Type, event.CreatedAt.UnixNano()),
 			SessionID:    event.SessionID,
 			Type:         protocol.TranscriptEntryProgress,
-			Subtype:      string(event.Type),
+			Subtype:      subtype,
 			Title:        "Progress",
 			Body:         body,
 			CreatedAt:    event.CreatedAt,
 			Visibility:   visibility,
 			Presentation: presentation,
+			Payload:      transcriptPayload(event.Payload),
 		}, true
 	case protocol.EventApprovalRequired:
 		if summary := approvalSummary(event.Payload); summary != "" {
@@ -206,6 +212,18 @@ func transcriptEntryFromEvent(event protocol.StreamEvent) (protocol.TranscriptEn
 			Presentation: presentation,
 		}, true
 	}
+}
+
+func transcriptPayload(payload interface{}) map[string]any {
+	values, ok := payload.(map[string]any)
+	if !ok {
+		return nil
+	}
+	out := make(map[string]any, len(values))
+	for key, value := range values {
+		out[key] = value
+	}
+	return out
 }
 
 func transcriptEventDisplay(eventType protocol.StreamEventType) (protocol.TranscriptVisibility, protocol.TranscriptPresentation) {
