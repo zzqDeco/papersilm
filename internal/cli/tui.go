@@ -1021,6 +1021,13 @@ func (m *tuiModel) appendTranscriptProjection(entry protocol.TranscriptEntry) (b
 	if hiddenActivityBoundary(entry) {
 		m.resetActivityGrouping()
 	}
+	if isWorkspaceToolTranscriptEntry(entry) {
+		m.resetActivityGrouping()
+		item := timelineItemFromTranscriptEntry(entry)
+		item.Kind = tuiItemProgress
+		m.appendItem(item)
+		return true, true
+	}
 	message, ok := m.messagePipeline.Project(entry)
 	if !ok {
 		return false, false
@@ -2264,6 +2271,9 @@ func hiddenActivityBoundary(entry protocol.TranscriptEntry) bool {
 }
 
 func activitySummary(entry protocol.TranscriptEntry, stats map[string]int, count int, _ time.Time) string {
+	if isWorkspaceToolTranscriptEntry(entry) {
+		return strings.TrimSpace(entry.Body)
+	}
 	verb := activityVerb(entry, stats)
 	last := strings.TrimSpace(entry.Body)
 	if last == "" {
@@ -3264,6 +3274,9 @@ func progressSummary(payload interface{}) string {
 		}
 		return strings.Join(parts, " · ")
 	case map[string]interface{}:
+		if isWorkspaceToolPayload(v) {
+			return anyString(v["summary"])
+		}
 		parts := []string{anyString(v["status"])}
 		if tool := anyString(v["tool"]); tool != "" {
 			parts = append(parts, "tool="+tool)
@@ -3284,6 +3297,21 @@ func progressSummary(payload interface{}) string {
 	default:
 		return ""
 	}
+}
+
+func isWorkspaceToolTranscriptEntry(entry protocol.TranscriptEntry) bool {
+	return entry.Subtype == "workspace_tool" || isWorkspaceToolPayload(entry.Payload)
+}
+
+func isWorkspaceToolPayload(payload interface{}) bool {
+	values, ok := payload.(map[string]any)
+	if !ok {
+		return false
+	}
+	if anyString(values["subtype"]) == "workspace_tool" {
+		return true
+	}
+	return strings.HasPrefix(anyString(values["tool"]), "workspace_") && anyString(values["summary"]) != ""
 }
 
 func payloadSummary(payload interface{}) string {

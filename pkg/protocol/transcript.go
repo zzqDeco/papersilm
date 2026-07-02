@@ -62,6 +62,7 @@ type TranscriptEntry struct {
 	Visibility   TranscriptVisibility   `json:"visibility,omitempty"`
 	Presentation TranscriptPresentation `json:"presentation,omitempty"`
 	SourceRef    string                 `json:"source_ref,omitempty"`
+	Payload      map[string]any         `json:"payload,omitempty"`
 	Markdown     bool                   `json:"markdown,omitempty"`
 	CreatedAt    time.Time              `json:"created_at"`
 }

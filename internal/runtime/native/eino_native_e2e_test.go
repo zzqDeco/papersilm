@@ -230,6 +230,13 @@ func TestEinoNativeReplaceTextToolAppliesLocalizedEdit(t *testing.T) {
 			t.Fatalf("expected tool_calls to contain %q, got %s", want, string(toolCalls))
 		}
 	}
+	events, err := store.LoadRecentEvents(sessionID, 20)
+	if err != nil {
+		t.Fatalf("LoadRecentEvents: %v", err)
+	}
+	if !streamEventsContainWorkspaceToolProjection(events, "workspace_replace_text", "Edited README.md") {
+		t.Fatalf("expected compact replace projection event, got %+v", events)
+	}
 }
 
 func TestEinoNativeCommandNonZeroExitDoesNotFailRun(t *testing.T) {
@@ -250,6 +257,13 @@ func TestEinoNativeCommandNonZeroExitDoesNotFailRun(t *testing.T) {
 		if !strings.Contains(result.Response, want) {
 			t.Fatalf("expected response to contain %s, got %q", want, result.Response)
 		}
+	}
+	events, err := store.LoadRecentEvents(sessionID, 20)
+	if err != nil {
+		t.Fatalf("LoadRecentEvents: %v", err)
+	}
+	if !streamEventsContainWorkspaceToolProjection(events, "workspace_run_command", "Command exited 7") {
+		t.Fatalf("expected compact command projection event, got %+v", events)
 	}
 }
 
@@ -426,6 +440,22 @@ func agenticMessageText(msg *schema.AgenticMessage) string {
 func streamEventsContain(events []protocol.StreamEvent, eventType protocol.StreamEventType, needle string) bool {
 	for _, event := range events {
 		if event.Type == eventType && strings.Contains(event.Message, needle) {
+			return true
+		}
+	}
+	return false
+}
+
+func streamEventsContainWorkspaceToolProjection(events []protocol.StreamEvent, toolName, message string) bool {
+	for _, event := range events {
+		if event.Type != protocol.EventProgress || event.Message != message {
+			continue
+		}
+		payload, ok := event.Payload.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		if payload["subtype"] == "workspace_tool" && payload["tool"] == toolName {
 			return true
 		}
 	}

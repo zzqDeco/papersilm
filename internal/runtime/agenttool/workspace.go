@@ -122,6 +122,13 @@ func BuildWorkspaceTools(cfg WorkspaceToolsConfig) ([]tool.BaseTool, error) {
 			if len(files) > limit {
 				files = files[:limit]
 			}
+			recordWorkspaceToolObservation(cfg, "workspace_list_files", map[string]any{
+				"status":             "completed",
+				"tool_result_status": "completed",
+				"summary":            fmt.Sprintf("listed %d files", len(files)),
+				"match_count":        len(files),
+				"files":              files,
+			})
 			return files, nil
 		})
 	if err != nil {
@@ -135,7 +142,15 @@ func BuildWorkspaceTools(cfg WorkspaceToolsConfig) ([]tool.BaseTool, error) {
 			if err != nil {
 				return nil, err
 			}
-			return &ToolResult{Status: "completed", Summary: input.Path, Output: content}, nil
+			result := &ToolResult{Status: "completed", Summary: input.Path, Output: content, TargetPath: input.Path}
+			recordWorkspaceToolObservation(cfg, "workspace_read_file", map[string]any{
+				"status":             result.Status,
+				"tool_result_status": result.Status,
+				"summary":            result.Summary,
+				"target_path":        result.TargetPath,
+				"output":             result.Output,
+			})
+			return result, nil
 		})
 	if err != nil {
 		return nil, err
@@ -148,7 +163,19 @@ func BuildWorkspaceTools(cfg WorkspaceToolsConfig) ([]tool.BaseTool, error) {
 			if limit <= 0 || limit > 50 {
 				limit = 20
 			}
-			return cfg.Registry.SearchWorkspace(ctx, cfg.Store, input.Query, limit)
+			hits, err := cfg.Registry.SearchWorkspace(ctx, cfg.Store, input.Query, limit)
+			if err != nil {
+				return nil, err
+			}
+			recordWorkspaceToolObservation(cfg, "workspace_search", map[string]any{
+				"status":             "completed",
+				"tool_result_status": "completed",
+				"summary":            fmt.Sprintf("search %q found %d matches", input.Query, len(hits)),
+				"query":              input.Query,
+				"match_count":        len(hits),
+				"hits":               hits,
+			})
+			return hits, nil
 		})
 	if err != nil {
 		return nil, err
@@ -194,6 +221,10 @@ func BuildWorkspaceTools(cfg WorkspaceToolsConfig) ([]tool.BaseTool, error) {
 				return nil, err
 			}
 			if conflict != nil {
+				recordWorkspaceToolCall(cfg, "workspace_replace_text", protocol.PermissionRequest{
+					NodeID:     "workspace_replace_text",
+					TargetPath: conflict.TargetPath,
+				}, conflict)
 				return conflict, nil
 			}
 			if cfg.PermissionMode == protocol.PermissionModeConfirm && !requestAllowedByRules(cfg.Store, cfg.SessionID, request) {
@@ -659,6 +690,7 @@ func recordWorkspaceToolCall(cfg WorkspaceToolsConfig, toolName string, request 
 		"changed":            result.Changed,
 		"conflict":           result.Conflict,
 		"exit_code":          result.ExitCode,
+		"output":             result.Output,
 		"stdout":             result.Stdout,
 		"stderr":             result.Stderr,
 		"stdout_truncated":   result.StdoutTruncated,
@@ -666,6 +698,26 @@ func recordWorkspaceToolCall(cfg WorkspaceToolsConfig, toolName string, request 
 		"diff":               request.Preview.Diff,
 		"created_at":         time.Now().UTC(),
 	})
+}
+
+func recordWorkspaceToolObservation(cfg WorkspaceToolsConfig, toolName string, values map[string]any) {
+	if cfg.Store == nil || strings.TrimSpace(cfg.SessionID) == "" {
+		return
+	}
+	if _, err := os.Stat(cfg.Store.SessionDir(cfg.SessionID)); err != nil {
+		return
+	}
+	record := map[string]any{
+		"tool":       toolName,
+		"created_at": time.Now().UTC(),
+	}
+	for key, value := range values {
+		record[key] = value
+	}
+	if _, ok := record["tool_result_status"]; !ok {
+		record["tool_result_status"] = record["status"]
+	}
+	_ = cfg.Store.AppendToolCall(cfg.SessionID, record)
 }
 
 func CommandExecutionFailure(record protocol.WorkspaceCommandRecord, err error) bool {

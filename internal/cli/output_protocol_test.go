@@ -208,3 +208,59 @@ func TestOutputWriterStreamJSONPreservesOpaquePayloadFields(t *testing.T) {
 		}
 	}
 }
+
+func TestOutputWriterStreamJSONPreservesWorkspaceToolProjectionPayload(t *testing.T) {
+	t.Parallel()
+
+	event := protocol.StreamEvent{
+		Type:      protocol.EventProgress,
+		SessionID: "sess_workspace_tool",
+		Message:   "Command exited 7",
+		Payload: map[string]any{
+			"subtype":            "workspace_tool",
+			"tool":               "workspace_run_command",
+			"tool_call_id":       "call_cmd",
+			"tool_result_status": "failed",
+			"command":            "printf stdout; printf stderr >&2; exit 7",
+			"cwd":                "/tmp/workspace",
+			"exit_code":          7,
+			"stdout_truncated":   false,
+			"stderr_truncated":   true,
+		},
+		CreatedAt: time.Unix(1, 0).UTC(),
+	}
+	var out bytes.Buffer
+	if err := NewOutputWriter(&out, protocol.OutputFormatStreamJSON).Emit(event); err != nil {
+		t.Fatalf("Emit(stream-json): %v", err)
+	}
+	line := strings.TrimSpace(out.String())
+	for _, forbidden := range []string{"InterruptInfo", "TypedAgentEvent", `"stdout":`, `"stderr":`} {
+		if strings.Contains(line, forbidden) {
+			t.Fatalf("stream-json leaked forbidden text %q: %s", forbidden, line)
+		}
+	}
+	var decoded struct {
+		Type    protocol.StreamEventType `json:"type"`
+		Message string                   `json:"message"`
+		Payload map[string]any           `json:"payload"`
+	}
+	if err := json.Unmarshal([]byte(line), &decoded); err != nil {
+		t.Fatalf("Unmarshal(stream event): %v\n%s", err, line)
+	}
+	if decoded.Type != protocol.EventProgress || decoded.Message != "Command exited 7" {
+		t.Fatalf("unexpected stream event: %+v", decoded)
+	}
+	for key, want := range map[string]any{
+		"subtype":            "workspace_tool",
+		"tool":               "workspace_run_command",
+		"tool_call_id":       "call_cmd",
+		"tool_result_status": "failed",
+		"cwd":                "/tmp/workspace",
+		"exit_code":          float64(7),
+		"stderr_truncated":   true,
+	} {
+		if got := decoded.Payload[key]; got != want {
+			t.Fatalf("payload[%s] = %#v, want %#v; payload=%+v", key, got, want, decoded.Payload)
+		}
+	}
+}
